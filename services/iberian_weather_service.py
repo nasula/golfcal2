@@ -92,12 +92,12 @@ class IberianWeatherService(WeatherService, LoggerMixin):
                 return api_key
 
             # Try config file
-            config_path = Path(__file__).parent.parent / 'config' / 'api_keys.yaml'
+            config_path = Path(__file__).parent.parent / 'config' / 'config.yaml'
             if config_path.exists():
                 with open(config_path, 'r') as f:
                     config = yaml.safe_load(f)
-                    if config and 'weather' in config and 'aemet' in config['weather']:
-                        api_key = config['weather']['aemet']
+                    if config and 'api_keys' in config and 'weather' in config['api_keys'] and 'aemet' in config['api_keys']['weather']:
+                        api_key = config['api_keys']['weather']['aemet']
                         if api_key:  # Check if it's not empty
                             return api_key
             

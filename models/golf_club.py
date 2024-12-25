@@ -107,7 +107,7 @@ class WiseGolfClub(GolfClub):
 
     def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
         """Fetch players for a reservation from WiseGolf REST API."""
-        from golfcal.api.wise_golf import WiseGolfAPI
+        from golfcal2.api.wise_golf import WiseGolfAPI
         
         # Get the REST URL from the club's configuration
         rest_url = self.url.replace("ajax.", "api.")  # Convert ajax URL to REST API URL
@@ -126,49 +126,47 @@ class WiseGolfClub(GolfClub):
             date=reservation_date
         )
         
-        # Find all players in the same reservation based on matching start time and resourceId
-        matching_player = next(
-            (player for player in response.get("reservationsGolfPlayers", []) 
-             if player.get("orderId") == reservation["orderId"]), 
-            None
-        )
-        if not matching_player:
-            return []
-
-        reservation_time_id = matching_player.get("reservationTimeId")
-
-        # Find the reservation row corresponding to the matching player's reservationTimeId
-        matching_row = next(
-            (row for row in response.get("rows", []) 
-             if row.get("reservationTimeId") == reservation_time_id), 
-            None
-        )
-        if not matching_row:
-            return []
-
-        # Extract the start time and resourceId to identify the reservation slot
-        start_time = matching_row.get("start")
-        resource_id = matching_row.get("resources", [{}])[0].get("resourceId")
-
-        # Find all reservationTimeIds that have the same start time and resourceId
-        matching_reservation_time_ids = {
-            row.get("reservationTimeId") for row in response.get("rows", [])
-            if row.get("start") == start_time and 
-               row.get("resources", [{}])[0].get("resourceId") == resource_id
-        }
-
-        # Collect all players who are in these reservationTimeIds
-        matching_players = [
-            {
-                "name": f"{player.get('firstName', 'Varattu')} {player.get('familyName', '')}".strip(),
-                "clubAbbreviation": player.get("clubAbbreviation", "Unknown"),
-                "handicapActive": player.get("handicapActive", 0)
+        # Extract players from the response
+        if response and 'rows' in response and 'reservationsGolfPlayers' in response:
+            # Find our reservation's row to get start time and resource
+            our_row = next(
+                (row for row in response['rows'] 
+                 if row.get('reservationTimeId') == reservation.get('reservationTimeId')),
+                None
+            )
+            if not our_row:
+                return []
+            
+            # Get our start time and resource ID
+            our_start = our_row.get('start')
+            our_resource_id = our_row.get('resources', [{}])[0].get('resourceId')
+            
+            # Find all reservation time IDs that share our start time and resource
+            related_time_ids = {
+                row.get('reservationTimeId')
+                for row in response['rows']
+                if (row.get('start') == our_start and 
+                    row.get('resources', [{}])[0].get('resourceId') == our_resource_id)
             }
-            for player in response.get("reservationsGolfPlayers", [])
-            if player.get("reservationTimeId") in matching_reservation_time_ids
-        ]
-
-        return matching_players
+            
+            # Get all players from these related reservations
+            players = []
+            for player in response['reservationsGolfPlayers']:
+                if player.get('reservationTimeId') in related_time_ids:
+                    # Skip empty players but keep "Varattu"
+                    if not player.get('firstName') and not player.get('familyName'):
+                        continue
+                        
+                    players.append({
+                        'firstName': player.get('firstName', ''),
+                        'familyName': player.get('familyName', ''),
+                        'clubName': player.get('clubName', ''),
+                        'handicapActive': player.get('handicapActive'),
+                        'clubAbbreviation': player.get('clubAbbreviation', '')
+                    })
+            return players
+        
+        return []
 
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""
@@ -197,7 +195,7 @@ class WiseGolf0Club(GolfClub):
 
     def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
         """Fetch players for a reservation from WiseGolf0 REST API."""
-        from golfcal.api.wise_golf import WiseGolf0API
+        from golfcal2.api.wise_golf import WiseGolf0API
         
         # Get the REST URL from the club's configuration
         rest_url = self.club_details.get('restUrl')  # Use restUrl directly from club_details
@@ -220,57 +218,49 @@ class WiseGolf0Club(GolfClub):
             product_id=reservation["productId"],
             date=reservation_date
         )
-        self.logger.debug(f"Got player response: {response}")
         
-        # Find all players in the same reservation based on matching start time and resourceId
-        matching_player = next(
-            (player for player in response.get("reservationsGolfPlayers", []) 
-             if player.get("orderId") == reservation["orderId"]), 
-            None
-        )
-        if not matching_player:
-            self.logger.warning(f"No matching player found for orderId: {reservation.get('orderId')}")
-            return []
-
-        reservation_time_id = matching_player.get("reservationTimeId")
-        self.logger.debug(f"Found matching player with reservationTimeId: {reservation_time_id}")
-
-        # Find the reservation row corresponding to the matching player's reservationTimeId
-        matching_row = next(
-            (row for row in response.get("rows", []) 
-             if row.get("reservationTimeId") == reservation_time_id), 
-            None
-        )
-        if not matching_row:
-            self.logger.warning(f"No matching row found for reservationTimeId: {reservation_time_id}")
-            return []
-
-        # Extract the start time and resourceId to identify the reservation slot
-        start_time = matching_row.get("start")
-        resource_id = matching_row.get("resources", [{}])[0].get("resourceId")
-        self.logger.debug(f"Found matching row with start_time: {start_time}, resource_id: {resource_id}")
-
-        # Find all reservationTimeIds that have the same start time and resourceId
-        matching_reservation_time_ids = {
-            row.get("reservationTimeId") for row in response.get("rows", [])
-            if row.get("start") == start_time and 
-               row.get("resources", [{}])[0].get("resourceId") == resource_id
-        }
-        self.logger.debug(f"Found {len(matching_reservation_time_ids)} matching reservation time IDs")
-
-        # Collect all players who are in these reservationTimeIds
-        matching_players = [
-            {
-                "name": f"{player.get('firstName', 'Varattu')} {player.get('familyName', '')}".strip(),
-                "clubAbbreviation": player.get("clubAbbreviation", "Unknown"),
-                "handicapActive": player.get("handicapActive", 0)
+        # Extract players from the response
+        if response and 'rows' in response and 'reservationsGolfPlayers' in response:
+            # Find our reservation's row to get start time and resource
+            our_row = next(
+                (row for row in response['rows'] 
+                 if row.get('reservationTimeId') == reservation.get('reservationTimeId')),
+                None
+            )
+            if not our_row:
+                return []
+            
+            # Get our start time and resource ID
+            our_start = our_row.get('start')
+            our_resource_id = our_row.get('resources', [{}])[0].get('resourceId')
+            
+            # Find all reservation time IDs that share our start time and resource
+            related_time_ids = {
+                row.get('reservationTimeId')
+                for row in response['rows']
+                if (row.get('start') == our_start and 
+                    row.get('resources', [{}])[0].get('resourceId') == our_resource_id)
             }
-            for player in response.get("reservationsGolfPlayers", [])
-            if player.get("reservationTimeId") in matching_reservation_time_ids
-        ]
-        self.logger.debug(f"Found {len(matching_players)} matching players")
-
-        return matching_players
+            
+            # Get all players from these related reservations
+            players = []
+            for player in response['reservationsGolfPlayers']:
+                if player.get('reservationTimeId') in related_time_ids:
+                    # Skip empty or "Varattu" players
+                    if not player.get('firstName') and not player.get('familyName'):
+                        continue
+                    if player.get('familyName') == "Varattu":
+                        continue
+                        
+                    players.append({
+                        'name': f"{player.get('firstName', '')} {player.get('familyName', '')}".strip(),
+                        'club': player.get('clubName', ''),
+                        'handicap': player.get('handicapActive'),
+                        'club_abbreviation': player.get('clubAbbreviation', '')
+                    })
+            return players
+        
+        return []
 
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf0 reservation."""
