@@ -1,0 +1,153 @@
+"""
+WiseGolf API client for golf calendar application.
+"""
+
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+from urllib.parse import urljoin
+
+import requests
+
+from golfcal.utils.logging_utils import LoggerMixin
+
+class WiseGolfAPIError(Exception):
+    """WiseGolf API error."""
+    pass
+
+class WiseGolfAPI(LoggerMixin):
+    """Base class for WiseGolf API clients."""
+    
+    def __init__(self, base_url: str, auth_details: Dict[str, str]):
+        """
+        Initialize WiseGolf API client.
+        
+        Args:
+            base_url: Base URL for API
+            auth_details: Authentication details
+        """
+        self.base_url = base_url.rstrip("/")
+        self.auth_details = auth_details
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Accept": "application/json, text/plain, */*"
+        })
+    
+    def _make_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, str]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        timeout: int = 30
+    ) -> Dict[str, Any]:
+        """
+        Make HTTP request to API.
+        
+        Args:
+            method: HTTP method
+            endpoint: API endpoint
+            params: Query parameters
+            data: Request body
+            timeout: Request timeout in seconds
+            
+        Returns:
+            Response data
+            
+        Raises:
+            WiseGolfAPIError: If request fails
+        """
+        url = urljoin(self.base_url, endpoint)
+        
+        try:
+            response = self.session.request(
+                method=method,
+                url=url,
+                params=params,
+                json=data,
+                timeout=timeout
+            )
+            response.raise_for_status()
+            
+            try:
+                response_data = response.json()
+            except ValueError:
+                raise WiseGolfAPIError("Invalid JSON response")
+            
+            if not response_data.get("success", True):
+                errors = response_data.get("errors", [])
+                raise WiseGolfAPIError(f"API error: {errors}")
+            
+            return response_data
+        
+        except requests.exceptions.RequestException as e:
+            raise WiseGolfAPIError(f"Request failed: {str(e)}")
+
+class WiseGolf0API(WiseGolfAPI):
+    """WiseGolf0 API client."""
+    
+    def __init__(self, base_url: str, auth_details: Dict[str, str]):
+        """
+        Initialize WiseGolf0 API client.
+        
+        Args:
+            base_url: Base URL for API
+            auth_details: Authentication details with cookie_value
+        """
+        super().__init__(base_url, auth_details)
+        
+        # Set cookie for authentication
+        cookie_value = auth_details.get("cookie_value")
+        if not cookie_value:
+            raise WiseGolfAPIError("No cookie value provided")
+        
+        self.session.headers.update({
+            "Cookie": f"wisenetwork_session={cookie_value}"
+        })
+    
+    def get_reservations(self) -> List[Dict[str, Any]]:
+        """
+        Get user's reservations.
+        
+        Returns:
+            List of reservation dictionaries
+            
+        Raises:
+            WiseGolfAPIError: If request fails
+        """
+        endpoint = "/pd/simulaattorit/18/simulaattorit/"
+        params = {
+            "controller": "ajax",
+            "reservations": "getusergolfreservations"
+        }
+        
+        response = self._make_request("GET", endpoint, params=params)
+        
+        if not isinstance(response, dict) or "rows" not in response:
+            raise WiseGolfAPIError("Invalid response format")
+        
+        return response["rows"]
+    
+    def get_player_details(self, reservation_id: str) -> List[Dict[str, Any]]:
+        """
+        Get player details for reservation.
+        
+        Args:
+            reservation_id: Reservation ID
+            
+        Returns:
+            List of player dictionaries
+            
+        Raises:
+            WiseGolfAPIError: If request fails
+        """
+        endpoint = "/api/golf/reservations/getreservationtimes"
+        params = {
+            "reservationTimeId": reservation_id
+        }
+        
+        response = self._make_request("GET", endpoint, params=params)
+        
+        if not isinstance(response, dict):
+            raise WiseGolfAPIError("Invalid response format")
+        
+        return response.get("reservationsGolfPlayers", []) 

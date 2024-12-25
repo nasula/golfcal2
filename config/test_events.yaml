@@ -1,0 +1,133 @@
+# Test events for Met.no (Oslo Golf Club)
+# 1-hour blocks for under 48 hours
+- name: "Oslo GC Tomorrow"
+  location: "Oslo Golf Club"
+  coordinates:
+    lat: 59.8940
+    lon: 10.8282
+  users:
+    - "Jarkko"
+  start_time: "tomorrow 10:00"
+  end_time: "tomorrow 14:00"
+  timezone: "Europe/Oslo"
+  address: "Grønmo, 1279 Oslo, Norway"
+
+# 6-hour blocks for over 48 hours
+- name: "Oslo GC Next Week"
+  location: "Oslo Golf Club"
+  coordinates:
+    lat: 59.8940
+    lon: 10.8282
+  users:
+    - "Jarkko"
+  start_time: "7 days 09:00"
+  end_time: "7 days 15:00"
+  timezone: "Europe/Oslo"
+  address: "Grønmo, 1279 Oslo, Norway"
+
+# Test events for Iberian service
+# Tomorrow
+- name: "PDR Tomorrow"
+  location: "Praia D'El Rey Golf Club"
+  coordinates:
+    lat: 39.3722
+    lon: -9.2858
+  users:
+    - "Jarkko"
+  start_time: "tomorrow 08:00"
+  end_time: "tomorrow 12:00"
+  timezone: "Europe/Lisbon"
+  address: "Vale de Janelas, 2514-999 Óbidos, Portugal"
+
+# Three days from now
+- name: "PGA Catalunya 3 Days"
+  location: "PGA Catalunya"
+  coordinates:
+    lat: 41.8789
+    lon: 2.7649
+  users:
+    - "Jarkko"
+  start_time: "3 days 09:30"
+  end_time: "3 days 14:30"
+  timezone: "Europe/Madrid"
+  address: "Carretera N-II km 701, 17455 Caldes de Malavella, Girona, Spain"
+
+# Test events for Mediterranean service (OpenWeather)
+# Tomorrow morning
+- name: "Lykia Links Tomorrow AM"
+  location: "Lykia Links Golf Club"
+  coordinates:
+    lat: 36.7584
+    lon: 31.5876
+  users:
+    - "Jarkko"
+  start_time: "tomorrow 07:00"
+  end_time: "tomorrow 11:00"
+  timezone: "Europe/Istanbul"
+  address: "Denizyaka Mah, Köprüçay Cd. No:12, 07600 Serik/Antalya, Turkey"
+
+# Tomorrow afternoon (testing 3-hour blocks)
+- name: "Lykia Links Tomorrow PM"
+  location: "Lykia Links Golf Club"
+  coordinates:
+    lat: 36.7584
+    lon: 31.5876
+  users:
+    - "Jarkko"
+  start_time: "tomorrow 13:00"
+  end_time: "tomorrow 17:00"
+  timezone: "Europe/Istanbul"
+  address: "Denizyaka Mah, Köprüçay Cd. No:12, 07600 Serik/Antalya, Turkey"
+
+# Three days from now (testing block transitions)
+- name: "Cullinan Links 3 Days"
+  location: "Cullinan Links Golf Club"
+  coordinates:
+    lat: 36.860432
+    lon: 30.969687
+  users:
+    - "Jarkko"
+  start_time: "3 days 11:30"
+  end_time: "3 days 16:30"
+  timezone: "Europe/Istanbul"
+  address: "Üçkumtepesi Mevkii, Belek, Antalya, Türkiye"
+
+# Test events for Spanish weather service
+# Catalunya tomorrow
+- name: "PGA Catalunya Tomorrow"
+  location: "PGA Catalunya"
+  coordinates:
+    lat: 41.8789
+    lon: 2.7649
+  users:
+    - "Jarkko"
+  start_time: "tomorrow 09:30"
+  end_time: "tomorrow 14:30"
+  timezone: "Europe/Madrid"
+  address: "Carretera N-II km 701, 17455 Caldes de Malavella, Girona, Spain"
+
+# Tenerife South tomorrow
+- name: "Golf Costa Adeje Tomorrow"
+  location: "Golf Costa Adeje"
+  coordinates:
+    lat: 28.0876
+    lon: -16.7408
+  users:
+    - "Jarkko"
+  start_time: "tomorrow 09:30"
+  end_time: "tomorrow 14:30"
+  timezone: "Atlantic/Canary"
+  address: "Calle Alcojora, s/n, 38670 Adeje, Santa Cruz de Tenerife, Spain"
+
+# Tenerife North tomorrow
+- name: "Real Club de Golf de Tenerife Tomorrow"
+  location: "Real Club de Golf de Tenerife"
+  coordinates:
+    lat: 28.4697
+    lon: -16.3739
+  users:
+    - "Jarkko"
+  start_time: "tomorrow 09:30"
+  end_time: "tomorrow 14:30"
+  timezone: "Atlantic/Canary"
+  address: "Calle Campo de Golf, 1, 38350 Tacoronte, Santa Cruz de Tenerife, Spain" 

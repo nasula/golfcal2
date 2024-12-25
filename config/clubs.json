@@ -1,0 +1,59 @@
+{
+  "SHG": {
+    "type": "wisegolf",
+    "url": "https://ajax.shg.fi/?reservations=getusergolfreservations",
+    "public_url": "https://api.shg.fi/api/1.0/reservations/?",
+    "restUrl": "https://api.shg.fi/api/1.0/reservations/?",
+    "ajaxUrl": "https://ajax.shg.fi/",
+    "cookie_name": "token",
+    "auth_type": "token_appauth",
+    "crm": "wisegolf",
+    "address": "Rinnekodintie 23, 02980 ESPOO, Finland",
+    "clubAbbreviation": "SHG",
+    "product_Ids": {
+      "53": {
+        "description": "18 holes",
+        "group": "A"
+      },
+      "140": {
+        "description": "9 holes",
+        "group": "A"
+      }
+    }
+  },
+  "Vantaankoski": {
+    "type": "wisegolf0",
+    "clubId": "Vantaankoski",
+    "ajaxUrl": "https://ajax.vantaankoskengolfhalli.fi/",
+    "restUrl": "https://api.vantaankoskengolfhalli.fi/api/1.0",
+    "shopURL": "https://kauppa.vantaankoskengolfhalli.fi",
+    "cookie_name": "wisenetwork_session",
+    "name": "Vantaankoski",
+    "auth_type": "cookie",
+    "crm": "wisegolf0",
+    "address": "Martinkyläntie 9, 01770 Vantaa, Finland",
+    "clubAbbreviation": "VKG",
+    "coordinates": {
+      "lat": 60.2772,
+      "lon": 24.8472
+    }
+  },
+  "teetime": {
+    "type": "teetime",
+    "url": "https://www.teetime.fi/backend/player/flight",
+    "cookie_name": "token",
+    "auth_type": "query",
+    "crm": "teetime",
+    "address": "somewhere",
+    "clubAbbreviation": "TT"
+  },
+  "PGC": {
+    "type": "nexgolf",
+    "url": "https://pgc.nexgolf.fi/pgc/member/api/flight/own",
+    "cookie_name": "NGLOCALE=fi; JSESSIONID",
+    "auth_type": "cookie",
+    "crm": "nexgolf",
+    "address": "Golfkuja 5, 02580 Siuntio, Finland",
+    "clubAbbreviation": "PGC"
+  }
+} 
