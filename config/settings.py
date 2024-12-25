@@ -44,17 +44,27 @@ class AppConfig:
         if env_path:
             return env_path
         
+        # Get workspace directory
+        workspace_dir = Path(__file__).parent.parent
+        
         # Then check global config
         if self.global_config and 'ics_files' in self.global_config:
             user_path = self.global_config['ics_files'].get(user_name)
             if user_path:
+                # If path is relative, make it relative to workspace
+                if not os.path.isabs(user_path):
+                    return str(workspace_dir / user_path)
                 return user_path
         
         # Finally check user config
         if user_name in self.users:
             user_config = self.users[user_name]
             if 'ics_file_path' in user_config:
-                return user_config['ics_file_path']
+                user_path = user_config['ics_file_path']
+                # If path is relative, make it relative to workspace
+                if not os.path.isabs(user_path):
+                    return str(workspace_dir / user_path)
+                return user_path
         
         return None
 
@@ -120,6 +130,7 @@ def load_config(config_dir: Optional[str] = None, dev_mode: bool = False, verbos
             config_dir = os.path.dirname(os.path.abspath(__file__))
     
     config_path = Path(config_dir)
+    workspace_dir = config_path.parent
     
     # Load global configuration
     global_config = {}
@@ -128,12 +139,11 @@ def load_config(config_dir: Optional[str] = None, dev_mode: bool = False, verbos
         with open(config_file, "r", encoding="utf-8") as f:
             global_config = yaml.safe_load(f)
             
-            # Convert relative paths to absolute paths
+            # Convert relative paths to absolute paths using workspace directory
             if 'ics_files' in global_config:
-                home_dir = str(Path.home())
                 for user, path in global_config['ics_files'].items():
                     if not os.path.isabs(path):
-                        global_config['ics_files'][user] = os.path.join(home_dir, path)
+                        global_config['ics_files'][user] = str(workspace_dir / path)
     
     # Load users configuration
     users_file = config_path / "users.json"
@@ -180,7 +190,15 @@ def validate_config(config: AppConfig) -> bool:
         True if configuration is valid, False otherwise
     """
     try:
-        # Check required directories
+        # Get workspace directory (where the package is installed)
+        workspace_dir = Path(__file__).parent.parent
+        
+        # Check required directories using workspace as base for relative paths
+        if not os.path.isabs(config.ics_dir):
+            config.ics_dir = str(workspace_dir / config.ics_dir)
+        if not os.path.isabs(config.config_dir):
+            config.config_dir = str(workspace_dir / config.config_dir)
+            
         Path(config.ics_dir).mkdir(parents=True, exist_ok=True)
         Path(config.config_dir).mkdir(parents=True, exist_ok=True)
         

@@ -192,28 +192,19 @@ class Reservation(LoggerMixin):
             try:
                 player_data_list = club.fetch_players(data, membership)
                 for player_data in player_data_list:
-                    players.append(Player(
-                        name=f"{player_data['firstName']} {player_data['familyName']}".strip(),
-                        club=player_data.get('clubAbbreviation', 'Unknown'),
-                        handicap=float(player_data.get('handicapActive', 54))
-                    ))
+                    players.append(Player.from_wisegolf(player_data))
             except Exception as e:
                 temp_instance.logger.error(f"Failed to fetch players from REST API: {e}")
+                temp_instance.logger.debug(f"Player data that caused error: {player_data_list if 'player_data_list' in locals() else 'No data fetched'}")
         
         # If no players found from REST API, try the old way
         if not players and "players" in data:
             for player_data in data["players"]:
-                # Skip empty or "Varattu" players
+                # Skip empty players but keep "Varattu"
                 if not player_data.get("firstName") and not player_data.get("familyName"):
                     continue
-                if player_data.get("familyName") == "Varattu":
-                    continue
                     
-                players.append(Player(
-                    name=f"{player_data['firstName']} {player_data['familyName']}".strip(),
-                    club=player_data.get('clubAbbreviation', 'Unknown'),
-                    handicap=float(player_data.get('handicapActive', 54))
-                ))
+                players.append(Player.from_wisegolf(player_data))
         
         # If still no valid players found, add the user as the only player
         if not players:
@@ -300,13 +291,17 @@ class Reservation(LoggerMixin):
             try:
                 player_data_list = club.fetch_players(data, membership)
                 for player_data in player_data_list:
-                    # Check if we have all required fields
-                    if all(key in player_data for key in ['firstName', 'familyName', 'clubAbbreviation', 'handicapActive']):
-                        players.append(Player(
-                            name=f"{player_data['firstName']} {player_data['familyName']}".strip(),
-                            club=player_data.get('clubAbbreviation', 'Unknown'),
-                            handicap=float(player_data.get('handicapActive', 54))
-                        ))
+                    # Skip empty or "Varattu" players
+                    if not player_data.get('name'):
+                        continue
+                    if player_data.get('name') == "Varattu":
+                        continue
+                        
+                    players.append(Player(
+                        name=player_data['name'],
+                        club=player_data.get('club_abbreviation', 'Unknown'),
+                        handicap=float(player_data.get('handicap', 54))
+                    ))
             except Exception as e:
                 temp_instance.logger.error(f"Failed to fetch players from REST API: {e}")
                 temp_instance.logger.debug(f"Player data that caused error: {player_data_list if 'player_data_list' in locals() else 'No data fetched'}")

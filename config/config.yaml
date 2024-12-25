@@ -28,13 +28,9 @@ api_keys:
 
 # Logging configuration
 logging:
-  # Default to WARNING level, use INFO with -v, DEBUG with -dev
-  level: "WARNING"
-  file: "logs/golfcal.log"
-  # Log levels by mode:
-  dev_level: "DEBUG"  # When running with -dev
-  verbose_level: "INFO"  # When running with -v
-  default_level: "WARNING"  # Default level
+  dev_level: "DEBUG"
+  verbose_level: "INFO"
+  default_level: "WARNING"
 
 # Default durations for clubs if not specified in club config
 default_durations:

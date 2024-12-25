@@ -43,8 +43,9 @@ class CalendarService(LoggerMixin):
         if os.path.isabs(self.config.ics_dir):
             self.ics_dir = Path(self.config.ics_dir)
         else:
-            home_dir = Path.home()
-            self.ics_dir = home_dir / self.config.ics_dir
+            # Use workspace directory as base for relative paths
+            workspace_dir = Path(__file__).parent.parent
+            self.ics_dir = workspace_dir / self.config.ics_dir
         
         # Create output directory if it doesn't exist
         self.ics_dir.mkdir(parents=True, exist_ok=True)
@@ -221,6 +222,10 @@ class CalendarService(LoggerMixin):
         if configured_path:
             # Use the configured file path
             file_path = Path(configured_path)
+            if self.dev_mode:
+                # Insert -dev before the extension
+                stem = file_path.stem
+                file_path = file_path.with_name(f"{stem}-dev{file_path.suffix}")
             # Ensure the parent directory exists
             file_path.parent.mkdir(parents=True, exist_ok=True)
         else:

@@ -149,7 +149,8 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, is_dev: bo
         logger.debug("Loading configuration...")
         config = load_config()
         logger.debug("Creating services...")
-        calendar_service = CalendarService(config, dev_mode=args.dev)
+        dev_mode = args.dev or is_dev
+        calendar_service = CalendarService(config, dev_mode=dev_mode)
         
         users = get_users_to_process(args, config, logger)
         if not users:
