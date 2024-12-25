@@ -11,8 +11,8 @@ import requests
 import pytz
 import math
 
-from golfcal.utils.logging_utils import LoggerMixin
-from golfcal.services.weather_service import WeatherService
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.services.weather_service import WeatherService
 
 class MetWeatherService(WeatherService, LoggerMixin):
     """Service for handling weather data from MET.no API."""

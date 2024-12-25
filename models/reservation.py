@@ -2,14 +2,14 @@
 Reservation model for golf calendar application.
 """
 
+from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, Any, List, Optional
 from zoneinfo import ZoneInfo
 
-from golfcal.models.golf_club import GolfClub
-from golfcal.models.user import User, Membership
-from golfcal.utils.logging_utils import LoggerMixin
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.models.golf_club import GolfClub
+from golfcal2.models.user import User, Membership
 
 @dataclass
 class Player:

@@ -7,7 +7,7 @@ import math
 
 import pytz
 
-from golfcal.utils.logging_utils import LoggerMixin
+from golfcal2.utils.logging_utils import LoggerMixin
 
 class WeatherCode(str, Enum):
     """Standard weather codes used across all weather services."""
@@ -250,9 +250,9 @@ class WeatherService:
         raise NotImplementedError
 
 # Import specific services after base class definition to avoid circular imports
-from golfcal.services.met_weather_service import MetWeatherService
-from golfcal.services.iberian_weather_service import IberianWeatherService
-from golfcal.services.mediterranean_weather_service import MediterraneanWeatherService
+from golfcal2.services.met_weather_service import MetWeatherService
+from golfcal2.services.iberian_weather_service import IberianWeatherService
+from golfcal2.services.mediterranean_weather_service import MediterraneanWeatherService
 
 class WeatherManager(LoggerMixin):
     """Manager for handling weather data from different services."""

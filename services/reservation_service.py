@@ -10,13 +10,13 @@ from zoneinfo import ZoneInfo
 import requests
 from icalendar import Event, Calendar
 
-from golfcal.models.golf_club import GolfClubFactory
-from golfcal.models.reservation import Reservation
-from golfcal.models.user import User, Membership
-from golfcal.utils.logging_utils import LoggerMixin
-from golfcal.config.settings import AppConfig
-from golfcal.services.auth_service import AuthService
-from golfcal.services.weather_service import WeatherManager
+from golfcal2.models.golf_club import GolfClubFactory
+from golfcal2.models.reservation import Reservation
+from golfcal2.models.user import User, Membership
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.config.settings import AppConfig
+from golfcal2.services.auth_service import AuthService
+from golfcal2.services.weather_service import WeatherManager
 import config_data  # Import from scripts directory
 
 class ReservationService(LoggerMixin):

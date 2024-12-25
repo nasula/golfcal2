@@ -10,7 +10,8 @@ import logging
 
 def get_club_abbreviation(club_name: str) -> str:
     """Get club abbreviation from clubs.json configuration."""
-    config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config')
+    # Get the package's config directory
+    config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
     clubs_file = os.path.join(config_dir, 'clubs.json')
     
     with open(clubs_file, 'r') as f:

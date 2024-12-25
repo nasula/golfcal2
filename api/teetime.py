@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional
 
 import requests
 
-from golfcal.utils.logging_utils import LoggerMixin
+from golfcal2.utils.logging_utils import LoggerMixin
 
 class TeeTimeAPI(LoggerMixin):
     """TeeTime API client."""
