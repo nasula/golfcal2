@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
-from golfcal.utils.logging_utils import get_logger
+from golfcal2.utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

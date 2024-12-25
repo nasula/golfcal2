@@ -12,8 +12,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-from golfcal.utils.logging_utils import LoggerMixin
-from golfcal.services.auth_service import AuthService
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.services.auth_service import AuthService
 
 class APIError(Exception):
     """Base API error."""

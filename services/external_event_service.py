@@ -7,10 +7,11 @@ from typing import Dict, Any, List, Optional, Set
 from zoneinfo import ZoneInfo
 import yaml
 import os
+from pathlib import Path
 
 from icalendar import Calendar, Event, vText, vDatetime
-from golfcal.utils.logging_utils import LoggerMixin
-from golfcal.services.weather_service import WeatherService
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.services.weather_service import WeatherService
 
 # Define timezone constants
 UTC_TZ = ZoneInfo('UTC')
@@ -23,26 +24,29 @@ class ExternalEventService(LoggerMixin):
         self.weather_service = weather_service
         self.seen_uids: Set[str] = set()  # Track seen UIDs for deduplication
         self.default_timezone = ZoneInfo('Europe/Helsinki')  # Default timezone if not specified
+        
+        # Get config directory path relative to this file
+        self.config_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'config'
     
     def load_events(self, dev_mode: bool = False) -> List[Dict[str, Any]]:
         """Load external events from YAML file."""
         try:
             # Load regular events
-            path = 'golfcal/config/external_events.yaml'
             events = []
+            events_file = self.config_dir / 'external_events.yaml'
             
-            if os.path.exists(path):
-                with open(path, 'r', encoding='utf-8') as file:
-                    self.logger.info(f"Loading external events from {path}")
+            if events_file.exists():
+                with open(events_file, 'r', encoding='utf-8') as file:
+                    self.logger.info(f"Loading external events from {events_file}")
                     data = yaml.safe_load(file)
                     events.extend(data.get('events', []))
             
             # Load test events in dev mode
             if dev_mode:
-                test_path = 'golfcal/config/test_events.yaml'
-                if os.path.exists(test_path):
-                    with open(test_path, 'r', encoding='utf-8') as file:
-                        self.logger.info(f"Loading test events from {test_path}")
+                test_file = self.config_dir / 'test_events.yaml'
+                if test_file.exists():
+                    with open(test_file, 'r', encoding='utf-8') as file:
+                        self.logger.info(f"Loading test events from {test_file}")
                         data = yaml.safe_load(file)
                         events.extend(data or [])
             
@@ -50,7 +54,7 @@ class ExternalEventService(LoggerMixin):
             return events
             
         except FileNotFoundError:
-            self.logger.warning(f"No external events file found at {path}")
+            self.logger.warning(f"No external events file found at {events_file}")
             return []
         except yaml.YAMLError as e:
             self.logger.error(f"Error parsing external events file: {e}")

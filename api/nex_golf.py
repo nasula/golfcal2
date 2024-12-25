@@ -8,7 +8,7 @@ from urllib.parse import urljoin
 
 import requests
 
-from golfcal.utils.logging_utils import LoggerMixin
+from golfcal2.utils.logging_utils import LoggerMixin
 
 class NexGolfAPIError(Exception):
     """NexGolf API error."""

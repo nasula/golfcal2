@@ -8,11 +8,11 @@ import sys
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from golfcal.config.settings import load_config, AppConfig
-from golfcal.services.calendar_service import CalendarService
-from golfcal.services.reservation_service import ReservationService
-from golfcal.utils.logging_utils import setup_logging, get_logger
-from golfcal.models.user import User
+from golfcal2.config.settings import load_config, AppConfig
+from golfcal2.services.calendar_service import CalendarService
+from golfcal2.services.reservation_service import ReservationService
+from golfcal2.utils.logging_utils import setup_logging, get_logger
+from golfcal2.models.user import User
 
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser for CLI."""
@@ -149,7 +149,7 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, is_dev: bo
         logger.debug("Loading configuration...")
         config = load_config()
         logger.debug("Creating services...")
-        calendar_service = CalendarService(config, dev_mode=is_dev)
+        calendar_service = CalendarService(config, dev_mode=args.dev)
         
         users = get_users_to_process(args, config, logger)
         if not users:
@@ -330,73 +330,32 @@ def check_command(args: argparse.Namespace, logger: logging.Logger) -> int:
         logger.error(f"Failed to check reservations: {e}")
         return 1
 
-def run(args: Optional[List[str]] = None) -> int:
-    """Run the golf calendar application.
-    
-    Args:
-        args: Command line arguments. If None, uses sys.argv[1:]
-        
-    Returns:
-        0 on success, 1 on failure
-        
-    The application supports the following commands:
-    - process: Process reservations and create calendar files
-    - list: List reservations with optional filtering
-    - check: Check reservations for potential issues
-    
-    Global options:
-    - --user: Process only specified user (development/testing)
-    - --dev: Add -dev suffix to calendar files
-    - --verbose: Enable verbose logging
-    - --log-file: Path to log file
-    """
-    args = args or sys.argv[1:]
+def main() -> int:
+    """Main entry point for the CLI."""
     parser = create_parser()
+    args = parser.parse_args()
     
-    # Show help if no arguments provided
-    if not args:
-        parser.print_help()
-        return 1
-        
-    parsed_args = parser.parse_args(args)
+    # Set up logging based on command line arguments
+    setup_logging(
+        level='WARNING',
+        log_file=args.log_file,
+        dev_mode=args.dev,
+        verbose=args.verbose
+    )
     
-    # Setup logging
-    log_level = "DEBUG" if parsed_args.verbose else "INFO"
-    log_file = parsed_args.log_file if hasattr(parsed_args, "log_file") else None
-    setup_logging(level=log_level, log_file=log_file)
-    
-    # Get logger for this module
     logger = get_logger(__name__)
     
-    # Validate days parameter if present
-    if hasattr(parsed_args, "days") and parsed_args.days <= 0:
-        logger.error("The days parameter must be a positive number")
+    if not args.command:
+        parser.print_help()
         return 1
     
     # Execute command
-    command_handlers = {
-        "process": lambda args, logger: process_command(args, logger, args.dev),
-        "list": list_command,
-        "check": check_command
-    }
-    
-    if not parsed_args.command:
-        logger.error("No command specified")
-        parser.print_help()
-        return 1
-    
-    handler = command_handlers.get(parsed_args.command)
-    if not handler:
-        logger.error(f"Unknown command: {parsed_args.command}")
-        return 1
-    
-    try:
-        logger.debug(f"Executing handler for {parsed_args.command}")
-        return handler(parsed_args, logger)
-    except Exception as e:
-        logger.error(f"Command failed with error: {e}", exc_info=True)
-        return 1
-
-def main() -> int:
-    """Entry point for the application."""
-    return run(args=sys.argv[1:]) 
+    if args.command == "process":
+        return process_command(args, logger, is_dev=args.dev)
+    elif args.command == "list":
+        return list_command(args, logger)
+    elif args.command == "check":
+        return check_command(args, logger)
+    else:
+        logger.error(f"Unknown command: {args.command}")
+        return 1 

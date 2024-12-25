@@ -14,12 +14,12 @@ from icalendar import Calendar, Event, vText, vDatetime
 from dateutil.parser import parse
 from dateutil.tz import UTC
 
-from golfcal.utils.logging_utils import LoggerMixin
-from golfcal.config.settings import AppConfig
-from golfcal.models.reservation import Reservation
-from golfcal.models.user import User
-from golfcal.services.weather_service import WeatherManager
-from golfcal.services.external_event_service import ExternalEventService
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.config.settings import AppConfig
+from golfcal2.models.reservation import Reservation
+from golfcal2.models.user import User
+from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.external_event_service import ExternalEventService
 
 class CalendarService(LoggerMixin):
     """Service for handling calendar operations."""
@@ -32,17 +32,19 @@ class CalendarService(LoggerMixin):
         
         # Initialize timezone settings
         self.utc_tz = pytz.UTC
-        self.local_tz = pytz.timezone('Europe/Helsinki')  # Finland timezone
+        self.local_tz = pytz.timezone(self.config.timezone)
         
         # Initialize services
         self.weather_service = WeatherManager(self.local_tz, self.utc_tz)
         self.external_event_service = ExternalEventService(self.weather_service)
         self.seen_uids = set()  # Track seen UIDs for deduplication
         
-        # Use absolute path for ics directory
-        script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
-        workspace_dir = script_dir.parent.parent
-        self.ics_dir = workspace_dir / config.ics_dir
+        # Set up ICS directory
+        if os.path.isabs(self.config.ics_dir):
+            self.ics_dir = Path(self.config.ics_dir)
+        else:
+            home_dir = Path.home()
+            self.ics_dir = home_dir / self.config.ics_dir
         
         # Create output directory if it doesn't exist
         self.ics_dir.mkdir(parents=True, exist_ok=True)
@@ -213,9 +215,19 @@ class CalendarService(LoggerMixin):
     
     def _write_calendar(self, calendar: Calendar, user_name: str) -> None:
         """Write calendar to file."""
-        suffix = "-dev" if self.dev_mode else ""
-        file_name = f"{user_name.replace(' ', '_')}_golf_reservations{suffix}.ics"
-        file_path = self.ics_dir / file_name
+        # Get the file path from configuration
+        configured_path = self.config.get_ics_path(user_name)
+        
+        if configured_path:
+            # Use the configured file path
+            file_path = Path(configured_path)
+            # Ensure the parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # Use the default file naming convention
+            suffix = "-dev" if self.dev_mode else ""
+            file_name = f"{user_name.replace(' ', '_')}_golf_reservations{suffix}.ics"
+            file_path = self.ics_dir / file_name
         
         try:
             # Ensure all events are properly added

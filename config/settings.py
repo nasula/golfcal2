@@ -1,22 +1,28 @@
 """
-Configuration management for golf calendar application.
+Configuration settings for golf calendar application.
 """
 
-import json
 import os
+import json
+import yaml
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+from golfcal2.utils.logging_utils import LoggerMixin
 
 @dataclass
 class AppConfig:
     """Application configuration."""
     users: Dict[str, Any]
     clubs: Dict[str, Any]
+    global_config: Dict[str, Any]
     timezone: str = "Europe/Helsinki"
     ics_dir: str = "ics"
+    ics_file_path: Optional[str] = None
     config_dir: str = "config"
-    log_level: str = "INFO"
+    log_level: str = "WARNING"
     log_file: Optional[str] = None
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -31,12 +37,72 @@ class AppConfig:
         """Support 'in' operator."""
         return hasattr(self, key)
 
-def load_config(config_dir: Optional[str] = None) -> AppConfig:
+    def get_ics_path(self, user_name: str) -> Optional[str]:
+        """Get ICS file path for a user."""
+        # First check environment variable
+        env_path = os.getenv("GOLFCAL_ICS_FILE_PATH")
+        if env_path:
+            return env_path
+        
+        # Then check global config
+        if self.global_config and 'ics_files' in self.global_config:
+            user_path = self.global_config['ics_files'].get(user_name)
+            if user_path:
+                return user_path
+        
+        # Finally check user config
+        if user_name in self.users:
+            user_config = self.users[user_name]
+            if 'ics_file_path' in user_config:
+                return user_config['ics_file_path']
+        
+        return None
+
+    def setup_logging(self, dev_mode: bool = False, verbose: bool = False) -> None:
+        """Set up logging based on configuration and mode."""
+        # Get log level based on mode
+        if dev_mode:
+            level = self.global_config.get('logging', {}).get('dev_level', 'DEBUG')
+        elif verbose:
+            level = self.global_config.get('logging', {}).get('verbose_level', 'INFO')
+        else:
+            level = self.global_config.get('logging', {}).get('default_level', 'WARNING')
+
+        # Convert string level to logging constant
+        numeric_level = getattr(logging, level.upper(), logging.WARNING)
+
+        # Configure logging
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        if self.log_file:
+            logging.basicConfig(
+                level=numeric_level,
+                format=log_format,
+                handlers=[
+                    logging.FileHandler(self.log_file),
+                    logging.StreamHandler()
+                ]
+            )
+        else:
+            logging.basicConfig(
+                level=numeric_level,
+                format=log_format
+            )
+
+        # Only show library logs in debug mode
+        if not dev_mode:
+            # Suppress logs from libraries unless they're WARNING or higher
+            logging.getLogger('urllib3').setLevel(logging.WARNING)
+            logging.getLogger('requests').setLevel(logging.WARNING)
+            logging.getLogger('icalendar').setLevel(logging.WARNING)
+
+def load_config(config_dir: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig:
     """
-    Load configuration from JSON files.
+    Load configuration from JSON and YAML files.
     
     Args:
         config_dir: Optional path to configuration directory
+        dev_mode: Whether to run in development mode
+        verbose: Whether to enable verbose logging
         
     Returns:
         AppConfig object
@@ -54,7 +120,20 @@ def load_config(config_dir: Optional[str] = None) -> AppConfig:
             config_dir = os.path.dirname(os.path.abspath(__file__))
     
     config_path = Path(config_dir)
-    print(f"Loading configuration from {config_path}")
+    
+    # Load global configuration
+    global_config = {}
+    config_file = config_path / "config.yaml"
+    if config_file.exists():
+        with open(config_file, "r", encoding="utf-8") as f:
+            global_config = yaml.safe_load(f)
+            
+            # Convert relative paths to absolute paths
+            if 'ics_files' in global_config:
+                home_dir = str(Path.home())
+                for user, path in global_config['ics_files'].items():
+                    if not os.path.isabs(path):
+                        global_config['ics_files'][user] = os.path.join(home_dir, path)
     
     # Load users configuration
     users_file = config_path / "users.json"
@@ -69,23 +148,26 @@ def load_config(config_dir: Optional[str] = None) -> AppConfig:
     if not clubs_file.exists():
         raise FileNotFoundError(f"Clubs configuration file not found: {clubs_file}")
     
-    print(f"Loading clubs from {clubs_file}")
     with open(clubs_file, "r", encoding="utf-8") as f:
         clubs = json.load(f)
-        print(f"Loaded clubs: {list(clubs.keys())}")
-        for club_name, club_config in clubs.items():
-            print(f"Club {club_name} config: {club_config}")
     
-    # Create configuration object with environment variables
-    return AppConfig(
+    # Create configuration object with environment variables and global config
+    config = AppConfig(
         users=users,
         clubs=clubs,
-        timezone=os.getenv("GOLFCAL_TIMEZONE", "Europe/Helsinki"),
-        ics_dir=os.getenv("GOLFCAL_ICS_DIR", "ics"),
+        global_config=global_config,
+        timezone=os.getenv("GOLFCAL_TIMEZONE", global_config.get('timezone', "Europe/Helsinki")),
+        ics_dir=os.getenv("GOLFCAL_ICS_DIR", global_config.get('directories', {}).get('ics', "ics")),
+        ics_file_path=os.getenv("GOLFCAL_ICS_FILE_PATH"),
         config_dir=str(config_path),
-        log_level=os.getenv("GOLFCAL_LOG_LEVEL", "INFO"),
-        log_file=os.getenv("GOLFCAL_LOG_FILE")
+        log_level=os.getenv("GOLFCAL_LOG_LEVEL", global_config.get('logging', {}).get('level', "WARNING")),
+        log_file=os.getenv("GOLFCAL_LOG_FILE", global_config.get('logging', {}).get('file'))
     )
+
+    # Set up logging based on mode
+    config.setup_logging(dev_mode=dev_mode, verbose=verbose)
+
+    return config
 
 def validate_config(config: AppConfig) -> bool:
     """

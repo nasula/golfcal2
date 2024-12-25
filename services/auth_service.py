@@ -4,7 +4,7 @@ Authentication service for golf calendar application.
 
 from typing import Dict, Any, Optional
 import logging
-from golfcal.models.user import Membership
+from golfcal2.models.user import Membership
 
 class AuthStrategy:
     def create_headers(self, cookie_name: str, auth_details: Dict[str, str]) -> Dict[str, str]:

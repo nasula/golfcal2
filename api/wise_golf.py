@@ -7,8 +7,8 @@ from typing import Dict, Any, List
 from urllib.parse import urljoin
 import time
 
-from golfcal.api.base_api import BaseAPI, APIError, APIResponseError
-from golfcal.services.auth_service import AuthService
+from golfcal2.api.base_api import BaseAPI, APIError, APIResponseError
+from golfcal2.services.auth_service import AuthService
 
 class WiseGolfAPIError(APIError):
     """WiseGolf API error."""

@@ -13,8 +13,8 @@ from dataclasses import dataclass
 
 import requests
 
-from golfcal.utils.logging_utils import LoggerMixin
-from golfcal.services.weather_service import WeatherService, WeatherCode
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.services.weather_service import WeatherService, WeatherCode
 
 class MediterraneanWeatherService(WeatherService, LoggerMixin):
     """Weather service using OpenWeather API."""

@@ -13,8 +13,8 @@ from pathlib import Path
 import requests
 import math
 
-from golfcal.utils.logging_utils import LoggerMixin
-from golfcal.services.weather_service import WeatherService, WeatherCode, get_weather_symbol
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.services.weather_service import WeatherService, WeatherCode, get_weather_symbol
 
 class IberianWeatherService(WeatherService, LoggerMixin):
     """Weather service using AEMET (Spain) and IPMA (Portugal) APIs."""

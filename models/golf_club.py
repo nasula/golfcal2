@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from zoneinfo import ZoneInfo
 
-from golfcal.models.user import Membership
-from golfcal.utils.logging_utils import LoggerMixin
-from golfcal.services.auth_service import AuthService
+from golfcal2.models.user import Membership
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.services.auth_service import AuthService
 
 @dataclass
 class GolfClub(ABC, LoggerMixin):
@@ -100,7 +100,7 @@ class WiseGolfClub(GolfClub):
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from WiseGolf API."""
-        from golfcal.api.wise_golf import WiseGolfAPI
+        from golfcal2.api.wise_golf import WiseGolfAPI
         
         api = WiseGolfAPI(self.url, self.auth_service, self.club_details, membership)
         return api.get_reservations()
@@ -186,7 +186,7 @@ class WiseGolf0Club(GolfClub):
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from WiseGolf0 API."""
-        from golfcal.api.wise_golf import WiseGolf0API
+        from golfcal2.api.wise_golf import WiseGolf0API
         
         self.logger.debug(f"Creating WiseGolf0API instance with URL: {self.url}")
         api = WiseGolf0API(self.url, self.auth_service, self.club_details, membership)
@@ -295,7 +295,7 @@ class NexGolfClub(GolfClub):
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from NexGolf API."""
-        from golfcal.api.nex_golf import NexGolfAPI
+        from golfcal2.api.nex_golf import NexGolfAPI
         
         api = NexGolfAPI(self.url, membership.auth_details)
         return api.get_reservations()
@@ -316,7 +316,7 @@ class TeeTimeClub(GolfClub):
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from TeeTime API."""
-        from golfcal.api.teetime import TeeTimeAPI
+        from golfcal2.api.teetime import TeeTimeAPI
         
         self.logger.debug("TeeTimeClub: Starting fetch_reservations")
         self.logger.debug(f"TeeTimeClub: Club URL: {self.url}")
