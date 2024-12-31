@@ -1,0 +1,21 @@
+{
+  "Example User": {
+    "name": "Example User",
+    "email": "user@example.com",
+    "handicap": 24.5,
+    "memberships": [
+      {
+        "club": "Example Golf Club",
+        "clubAbbreviation": "EGC",
+        "duration": {
+          "hours": 4,
+          "minutes": 30
+        },
+        "auth_details": {
+          "username": "your_username",
+          "password": "your_password"
+        }
+      }
+    ]
+  }
+} 

@@ -1,0 +1,33 @@
+{
+    "Example Golf Club": {
+        "type": "wisegolf",
+        "name": "Example Golf Club",
+        "variant": "Main Course",
+        "address": "123 Golf Street, Example City",
+        "timezone": "Europe/Helsinki",
+        "coordinates": {
+            "lat": 60.1234,
+            "lon": 24.5678
+        },
+        "url": "https://example-golf-club.com",
+        "ajaxUrl": "https://ajax.example-golf-club.com",
+        "restUrl": "https://api.example-golf-club.com",
+        "auth_type": "cookie",
+        "crm": "wisegolf"
+    },
+    "Example Golf Club 2": {
+        "type": "wisegolf0",
+        "name": "Example Golf Club 2",
+        "variant": "Links Course",
+        "address": "456 Golf Avenue, Example Town",
+        "timezone": "Europe/Helsinki",
+        "coordinates": {
+            "lat": 60.8765,
+            "lon": 24.4321
+        },
+        "shopURL": "https://shop.example-golf-club2.com",
+        "restUrl": "https://api.example-golf-club2.com",
+        "auth_type": "token",
+        "crm": "wisegolf0"
+    }
+} 

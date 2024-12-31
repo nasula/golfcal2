@@ -62,7 +62,7 @@ class ReservationService(LoggerMixin):
         self,
         user_name: str,
         user_config: Dict[str, Any],
-        past_days: int = 7
+        past_days: int = 1
     ) -> Tuple[Calendar, List[Reservation]]:
         """
         Process reservations for user.
@@ -201,7 +201,7 @@ class ReservationService(LoggerMixin):
         self,
         active_only: bool = False,
         upcoming_only: bool = False,
-        days: int = 7
+        days: int = 1
     ) -> List[Reservation]:
         """
         List reservations with filters.
@@ -279,9 +279,9 @@ class ReservationService(LoggerMixin):
         if reservation.start_time > now:
             return True
         
-        # Include past reservations within past_days
-        days_old = (now.date() - reservation.start_time.date()).days
-        return 0 <= days_old <= past_days
+        # Include past reservations within past_days (24 hours)
+        hours_old = (now - reservation.start_time).total_seconds() / 3600
+        return 0 <= hours_old <= 24
     
     def _is_active(self, reservation: Reservation, now: datetime) -> bool:
         """
