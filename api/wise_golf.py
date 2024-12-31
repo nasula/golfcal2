@@ -146,7 +146,7 @@ class WiseGolf0API(BaseAPI):
         try:
             # Get date range for reservations
             now = datetime.now()
-            start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+            start_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
             end_date = (now + timedelta(days=30)).strftime("%Y-%m-%d")
             
             # Build request URL with correct parameter names

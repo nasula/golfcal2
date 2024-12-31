@@ -1,3 +1,13 @@
+# Configuration files with sensitive data
+config/config.yaml
+config/users.json
+config/clubs.json
+
+# Generated files
+ics/*.ics
+data/
+logs/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -20,17 +30,9 @@ wheels/
 .installed.cfg
 *.egg
 
-# Logs and databases
-*.log
-*.db
-*.sqlite3
-*.ics
-
-# Environment
-.env
-.venv
-env/
+# Virtual Environment
 venv/
+env/
 ENV/
 
 # IDE
@@ -38,7 +40,4 @@ ENV/
 .vscode/
 *.swp
 *.swo
-
-# Config files with sensitive data
-config/api_keys.yaml
-config/users.json 
+*~ 
