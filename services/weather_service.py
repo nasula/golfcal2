@@ -183,14 +183,18 @@ class WeatherService:
         
         # Add rain amount and probability if available
         rain_info = ""
-        if 'precipitation_amount' in weather and weather['precipitation_amount'] > 0:
+        if 'precipitation_amount' in weather and weather.get('precipitation_amount', 0) > 0:
             rain_info = f"💧{weather['precipitation_amount']}mm"
-        elif 'probability_of_precipitation' in weather and weather['probability_of_precipitation'] > 0:
+        elif ('probability_of_precipitation' in weather and 
+            weather.get('probability_of_precipitation') is not None and 
+            weather['probability_of_precipitation'] > 0):
             rain_info = f"💧{weather['probability_of_precipitation']}%"
         
         # Add thunder probability if available
         thunder_prob = ""
-        if 'probability_of_thunder' in weather and weather['probability_of_thunder'] > 0:
+        if ('probability_of_thunder' in weather and 
+            weather.get('probability_of_thunder') is not None and 
+            weather['probability_of_thunder'] > 0):
             thunder_prob = f"⚡{weather['probability_of_thunder']}%"
         
         return f"{symbol} {temp} {wind}{rain_info}{thunder_prob}"
@@ -255,16 +259,36 @@ from golfcal2.services.iberian_weather_service import IberianWeatherService
 from golfcal2.services.mediterranean_weather_service import MediterraneanWeatherService
 
 class WeatherManager(LoggerMixin):
-    """Manager for handling weather data from different services."""
-
+    """Manages multiple weather services and selects the appropriate one based on location."""
+    
     def __init__(self, local_tz, utc_tz):
         """Initialize weather services."""
         super().__init__()
+        
+        # Store timezone settings
         self.local_tz = local_tz
         self.utc_tz = utc_tz
-        self.met_service = MetWeatherService()
-        self.iberian_service = IberianWeatherService(local_tz, utc_tz)
+        
+        # Initialize services
+        self.met_service = MetWeatherService(local_tz, utc_tz)
         self.mediterranean_service = MediterraneanWeatherService(local_tz, utc_tz)
+        self.iberian_service = IberianWeatherService(local_tz, utc_tz)
+        
+        # Define service regions
+        self.regions = {
+            'norway': {
+                'service': self.met_service,
+                'bounds': (57.0, 71.5, 4.0, 31.5)  # lat_min, lat_max, lon_min, lon_max
+            },
+            'mediterranean': {
+                'service': self.mediterranean_service,
+                'bounds': (35.0, 45.0, 20.0, 45.0)
+            },
+            'iberian': {
+                'service': self.iberian_service,
+                'bounds': (36.0, 44.0, -9.5, 3.5)
+            }
+        }
 
     def get_weather(
         self, 
