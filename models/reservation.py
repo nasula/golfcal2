@@ -76,6 +76,29 @@ class Reservation(LoggerMixin):
         """Calculate total handicap of all players."""
         return round(sum(p.handicap for p in self.players), 1)
 
+    @property
+    def uid(self) -> str:
+        """
+        Get unique event ID based on club, time, resource, and user.
+        
+        The UID format is: {club_name}_{date}_{time}_{resource_id}_{user_name}
+        This ensures uniqueness while allowing deduplication of the same reservation.
+        """
+        # Get resource ID from raw data
+        resource_id = self.raw_data.get('resourceId', '0')
+        if not resource_id and 'resources' in self.raw_data:
+            # Try to get resource ID from resources array
+            resources = self.raw_data.get('resources', [{}])
+            if resources:
+                resource_id = resources[0].get('resourceId', '0')
+        
+        # Format date and time components
+        date_str = self.start_time.strftime('%Y%m%d')
+        time_str = self.start_time.strftime('%H%M')
+        
+        # Create unique ID that includes all necessary components
+        return f"{self.club.name}_{date_str}_{time_str}_{resource_id}_{self.user.name}"
+
     def get_event_summary(self) -> str:
         """Get event summary for calendar."""
         # Format time in 24-hour format
@@ -116,28 +139,6 @@ class Reservation(LoggerMixin):
     def get_event_location(self) -> str:
         """Get event location for calendar."""
         return self.club.get_event_location()
-
-    def get_event_uid(self) -> str:
-        """
-        Get unique event ID based on club, time, resource, and user.
-        
-        The UID format is: {club_name}_{date}_{time}_{resource_id}_{user_name}
-        This ensures uniqueness while allowing deduplication of the same reservation.
-        """
-        # Get resource ID from raw data
-        resource_id = self.raw_data.get('resourceId', '0')
-        if not resource_id and 'resources' in self.raw_data:
-            # Try to get resource ID from resources array
-            resources = self.raw_data.get('resources', [{}])
-            if resources:
-                resource_id = resources[0].get('resourceId', '0')
-        
-        # Format date and time components
-        date_str = self.start_time.strftime('%Y%m%d')
-        time_str = self.start_time.strftime('%H%M')
-        
-        # Create unique ID that includes all necessary components
-        return f"{self.club.name}_{date_str}_{time_str}_{resource_id}_{self.user.name}"
 
     def format_for_display(self) -> str:
         """Format reservation for display in terminal."""
