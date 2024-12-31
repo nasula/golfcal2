@@ -9,12 +9,10 @@ import yaml
 import os
 from pathlib import Path
 
-from icalendar import Calendar, Event, vText, vDatetime
+from icalendar import Event
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.services.weather_service import WeatherService
-
-# Define timezone constants
-UTC_TZ = ZoneInfo('UTC')
+from golfcal2.services.calendar.builders import ExternalEventBuilder
 
 class ExternalEventService(LoggerMixin):
     """Service for handling external golf events."""
@@ -24,6 +22,7 @@ class ExternalEventService(LoggerMixin):
         self.weather_service = weather_service
         self.seen_uids: Set[str] = set()  # Track seen UIDs for deduplication
         self.default_timezone = ZoneInfo('Europe/Helsinki')  # Default timezone if not specified
+        self.event_builder = ExternalEventBuilder(weather_service)
         
         # Get config directory path relative to this file
         self.config_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'config'
@@ -69,7 +68,7 @@ class ExternalEventService(LoggerMixin):
                 events.extend(self._process_recurring_event(event_data, person_name))
             else:
                 # Single event
-                event = self.create_event(event_data, person_name)
+                event = self._create_event(event_data, person_name)
                 if event:
                     events.append(event)
         return events
@@ -92,7 +91,7 @@ class ExternalEventService(LoggerMixin):
             instance_data['end'] = (current_date + original_duration).isoformat()
             
             # Create and add the event
-            event = self.create_event(instance_data, person_name)
+            event = self._create_event(instance_data, person_name)
             if event:
                 events.append(event)
             
@@ -108,13 +107,9 @@ class ExternalEventService(LoggerMixin):
         
         return events
 
-    def create_event(self, event_data: Dict[str, Any], person_name: str) -> Optional[Event]:
+    def _create_event(self, event_data: Dict[str, Any], person_name: str) -> Optional[Event]:
         """Create an event from external event data."""
         try:
-            # Check if person is included in event
-            if 'users' in event_data and person_name not in event_data['users']:
-                return None
-
             # Get event timezone
             event_timezone = ZoneInfo(event_data.get('timezone', 'Europe/Helsinki'))
             
@@ -130,82 +125,22 @@ class ExternalEventService(LoggerMixin):
                 end = datetime.strptime(event_data['end'], '%Y-%m-%dT%H:%M:%S')
                 end = end.replace(tzinfo=event_timezone)
             
-            duration_minutes = int((end - start).total_seconds() / 60)
-            
-            # Create event
-            event = Event()
-            event.add('summary', f"Golf: {event_data['name']}")
-            event.add('dtstart', vDatetime(start))
-            event.add('dtend', vDatetime(end))
-            event.add('dtstamp', vDatetime(datetime.now(event_timezone)))
-            
-            # Create unique ID using coordinates if available
-            uid = self._generate_unique_id(event_data, start, person_name)
-            event.add('uid', vText(uid))
+            # Create event using builder
+            event = self.event_builder.build(event_data, person_name, start, end)
             
             # Skip if we've already seen this event
-            if uid in self.seen_uids:
-                self.logger.debug(f"Skipping duplicate external event with UID: {uid}")
+            if event and event.get('uid') in self.seen_uids:
+                self.logger.debug(f"Skipping duplicate external event with UID: {event.get('uid')}")
                 return None
-            self.seen_uids.add(uid)
             
-            # Add location if available
-            if 'location' in event_data:
-                event.add('location', vText(self._get_location(event_data)))
-            
-            # Add weather if coordinates are provided
-            if 'coordinates' in event_data:
-                try:
-                    weather_data = self.weather_service.get_weather(
-                        club=f"EXT_{event_data['name']}",
-                        teetime=start,
-                        coordinates=event_data['coordinates'],
-                        duration_minutes=duration_minutes
-                    )
-                    # Format weather data
-                    if weather_data:
-                        event.add('description', vText(f"Weather:\n{weather_data}"))
-                    else:
-                        event.add('description', vText("No weather forecast available"))
-                except Exception as e:
-                    self.logger.error(f"Failed to fetch weather for external event: {e}")
-                    event.add('description', vText("No weather forecast available"))
-            else:
-                event.add('description', vText(f"External golf event at {event_data['location']}"))
+            if event:
+                self.seen_uids.add(event.get('uid'))
             
             return event
             
         except Exception as e:
             self.logger.error(f"Failed to create external event: {e}")
             return None
-    
-    def _generate_unique_id(self, event_data: Dict[str, Any], start: datetime, person_name: str) -> str:
-        """
-        Generate a unique ID for an external event.
-        
-        The UID format is: EXT_{name}_{date}_{time}_{location_hash}_{user_name}
-        This ensures uniqueness while allowing deduplication of the same event.
-        """
-        # Format date and time components
-        date_str = start.strftime('%Y%m%d')
-        time_str = start.strftime('%H%M')
-        
-        # Create a location hash from coordinates or address
-        if 'coordinates' in event_data:
-            location_id = f"{event_data['coordinates']['lat']}_{event_data['coordinates']['lon']}"
-        else:
-            # Use first 8 chars of location as identifier
-            location_id = event_data['location'][:8].replace(' ', '_')
-        
-        # Create unique ID that includes all necessary components
-        return f"EXT_{event_data['name']}_{date_str}_{time_str}_{location_id}_{person_name}"
-    
-    def _get_location(self, event_data: Dict[str, Any]) -> str:
-        """Format location string from event data."""
-        location = event_data['location']
-        if 'address' in event_data:
-            location = f"{location}, {event_data['address']}"
-        return location 
 
     def _parse_dynamic_time(self, time_str: str, timezone: ZoneInfo) -> datetime:
         """Parse a dynamic time string like 'tomorrow 10:00' or '3 days 09:30'."""
