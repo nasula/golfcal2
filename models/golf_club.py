@@ -1,5 +1,9 @@
 # golfclub.py
 
+"""
+Golf club models.
+"""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -9,6 +13,7 @@ from zoneinfo import ZoneInfo
 from golfcal2.models.user import Membership
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.services.auth_service import AuthService
+from golfcal2.models.mixins import PlayerFetchMixin
 
 @dataclass
 class GolfClub(ABC, LoggerMixin):
@@ -95,7 +100,7 @@ class GolfClub(ABC, LoggerMixin):
             end_time = end_time.replace(tzinfo=start_time.tzinfo)
         return end_time
 
-class WiseGolfClub(GolfClub):
+class WiseGolfClub(GolfClub, PlayerFetchMixin):
     """WiseGolf golf club implementation."""
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
@@ -114,59 +119,7 @@ class WiseGolfClub(GolfClub):
         if not rest_url.endswith("/api/1.0"):
             rest_url += "/api/1.0"
         
-        # Create API instance with REST URL
-        api = WiseGolfAPI(rest_url, self.auth_service, self.club_details, membership)
-        
-        # Get the date from the reservation
-        reservation_date = datetime.strptime(reservation["dateTimeStart"], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
-        
-        # Fetch players from the REST API
-        response = api.get_players(
-            product_id=reservation["productId"],
-            date=reservation_date
-        )
-        
-        # Extract players from the response
-        if response and 'rows' in response and 'reservationsGolfPlayers' in response:
-            # Find our reservation's row to get start time and resource
-            our_row = next(
-                (row for row in response['rows'] 
-                 if row.get('reservationTimeId') == reservation.get('reservationTimeId')),
-                None
-            )
-            if not our_row:
-                return []
-            
-            # Get our start time and resource ID
-            our_start = our_row.get('start')
-            our_resource_id = our_row.get('resources', [{}])[0].get('resourceId')
-            
-            # Find all reservation time IDs that share our start time and resource
-            related_time_ids = {
-                row.get('reservationTimeId')
-                for row in response['rows']
-                if (row.get('start') == our_start and 
-                    row.get('resources', [{}])[0].get('resourceId') == our_resource_id)
-            }
-            
-            # Get all players from these related reservations
-            players = []
-            for player in response['reservationsGolfPlayers']:
-                if player.get('reservationTimeId') in related_time_ids:
-                    # Skip empty players but keep "Varattu"
-                    if not player.get('firstName') and not player.get('familyName'):
-                        continue
-                        
-                    players.append({
-                        'firstName': player.get('firstName', ''),
-                        'familyName': player.get('familyName', ''),
-                        'clubName': player.get('clubName', ''),
-                        'handicapActive': player.get('handicapActive'),
-                        'clubAbbreviation': player.get('clubAbbreviation', '')
-                    })
-            return players
-        
-        return []
+        return self.fetch_players_from_rest(reservation, membership, WiseGolfAPI, rest_url)
 
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""
@@ -179,7 +132,7 @@ class WiseGolfClub(GolfClub):
             "%Y-%m-%d %H:%M:%S"
         ).replace(tzinfo=self.timezone)
 
-class WiseGolf0Club(GolfClub):
+class WiseGolf0Club(GolfClub, PlayerFetchMixin):
     """WiseGolf0 golf club implementation."""
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
@@ -206,61 +159,7 @@ class WiseGolf0Club(GolfClub):
         self.logger.debug(f"Creating WiseGolf0API instance with REST URL: {rest_url}")
         self.logger.debug(f"Club details: {self.club_details}")
         
-        # Create API instance with REST URL
-        api = WiseGolf0API(rest_url, self.auth_service, self.club_details, membership)
-        
-        # Get the date from the reservation
-        reservation_date = datetime.strptime(reservation["dateTimeStart"], "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
-        self.logger.debug(f"Fetching players for date: {reservation_date}, product_id: {reservation.get('productId')}")
-        
-        # Fetch players from the REST API
-        response = api.get_players(
-            product_id=reservation["productId"],
-            date=reservation_date
-        )
-        
-        # Extract players from the response
-        if response and 'rows' in response and 'reservationsGolfPlayers' in response:
-            # Find our reservation's row to get start time and resource
-            our_row = next(
-                (row for row in response['rows'] 
-                 if row.get('reservationTimeId') == reservation.get('reservationTimeId')),
-                None
-            )
-            if not our_row:
-                return []
-            
-            # Get our start time and resource ID
-            our_start = our_row.get('start')
-            our_resource_id = our_row.get('resources', [{}])[0].get('resourceId')
-            
-            # Find all reservation time IDs that share our start time and resource
-            related_time_ids = {
-                row.get('reservationTimeId')
-                for row in response['rows']
-                if (row.get('start') == our_start and 
-                    row.get('resources', [{}])[0].get('resourceId') == our_resource_id)
-            }
-            
-            # Get all players from these related reservations
-            players = []
-            for player in response['reservationsGolfPlayers']:
-                if player.get('reservationTimeId') in related_time_ids:
-                    # Skip empty or "Varattu" players
-                    if not player.get('firstName') and not player.get('familyName'):
-                        continue
-                    if player.get('familyName') == "Varattu":
-                        continue
-                        
-                    players.append({
-                        'name': f"{player.get('firstName', '')} {player.get('familyName', '')}".strip(),
-                        'club': player.get('clubName', ''),
-                        'handicap': player.get('handicapActive'),
-                        'club_abbreviation': player.get('clubAbbreviation', '')
-                    })
-            return players
-        
-        return []
+        return self.fetch_players_from_rest(reservation, membership, WiseGolf0API, rest_url)
 
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf0 reservation."""

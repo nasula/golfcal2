@@ -62,36 +62,67 @@ class ExternalEventService(LoggerMixin):
     def process_events(self, person_name: str, dev_mode: bool = False) -> List[Event]:
         """Process external events for a person."""
         events = []
+        
+        # Calculate cutoff time (24 hours ago) with timezone
+        now = datetime.now(self.default_timezone)
+        cutoff_time = now - timedelta(hours=24)
+        self.logger.debug(f"Using cutoff time: {cutoff_time}")
+        
         for event_data in self.load_events(dev_mode):
             # Handle repeating events
             if 'repeat' in event_data:
-                events.extend(self._process_recurring_event(event_data, person_name))
+                events.extend(self._process_recurring_event(event_data, person_name, cutoff_time))
             else:
                 # Single event
-                event = self._create_event(event_data, person_name)
+                event = self._create_event(event_data, person_name, cutoff_time)
                 if event:
                     events.append(event)
         return events
 
-    def _process_recurring_event(self, event_data: Dict[str, Any], person_name: str) -> List[Event]:
+    def _process_recurring_event(
+        self,
+        event_data: Dict[str, Any],
+        person_name: str,
+        cutoff_time: datetime
+    ) -> List[Event]:
         """Process a recurring event and return all instances."""
         events = []
-        start_date = datetime.fromisoformat(event_data['start'])
-        end_date = datetime.fromisoformat(event_data['repeat']['until'])
+        # Get event timezone
+        event_timezone = ZoneInfo(event_data.get('timezone', 'Europe/Helsinki'))
+        
+        # Parse dates with timezone
+        start_date = datetime.fromisoformat(event_data['start']).replace(tzinfo=event_timezone)
+        end_date = datetime.fromisoformat(event_data['repeat']['until']).replace(tzinfo=event_timezone)
         current_date = start_date
         
         while current_date <= end_date:
+            # Skip if older than 24 hours
+            if current_date < cutoff_time:
+                self.logger.debug(f"Skipping old recurring event: {current_date}")
+                # Move to next occurrence
+                if event_data['repeat']['frequency'] == 'weekly':
+                    current_date += timedelta(days=7)
+                elif event_data['repeat']['frequency'] == 'monthly':
+                    # Move to same day next month
+                    if current_date.month == 12:
+                        current_date = current_date.replace(year=current_date.year + 1, month=1)
+                    else:
+                        current_date = current_date.replace(month=current_date.month + 1)
+                continue
+            
             # Create event data for this instance
             instance_data = event_data.copy()
-            instance_data['start'] = current_date.isoformat()
+            # Store datetime without timezone info for strptime parsing
+            instance_data['start'] = current_date.strftime('%Y-%m-%dT%H:%M:%S')
             
             # Calculate end time for this instance
-            original_duration = (datetime.fromisoformat(event_data['end']) - 
-                             datetime.fromisoformat(event_data['start']))
-            instance_data['end'] = (current_date + original_duration).isoformat()
+            original_duration = (datetime.fromisoformat(event_data['end']).replace(tzinfo=event_timezone) - 
+                             datetime.fromisoformat(event_data['start']).replace(tzinfo=event_timezone))
+            end_time = current_date + original_duration
+            instance_data['end'] = end_time.strftime('%Y-%m-%dT%H:%M:%S')
             
             # Create and add the event
-            event = self._create_event(instance_data, person_name)
+            event = self._create_event(instance_data, person_name, cutoff_time)
             if event:
                 events.append(event)
             
@@ -107,7 +138,12 @@ class ExternalEventService(LoggerMixin):
         
         return events
 
-    def _create_event(self, event_data: Dict[str, Any], person_name: str) -> Optional[Event]:
+    def _create_event(
+        self,
+        event_data: Dict[str, Any],
+        person_name: str,
+        cutoff_time: datetime
+    ) -> Optional[Event]:
         """Create an event from external event data."""
         try:
             # Get event timezone
@@ -119,11 +155,24 @@ class ExternalEventService(LoggerMixin):
                 start = self._parse_dynamic_time(event_data['start_time'], event_timezone)
                 end = self._parse_dynamic_time(event_data['end_time'], event_timezone)
             else:
-                # Handle fixed dates
-                start = datetime.strptime(event_data['start'], '%Y-%m-%dT%H:%M:%S')
+                # Handle fixed dates - use fromisoformat for better timezone handling
+                try:
+                    # First try parsing with fromisoformat in case we have timezone info
+                    start = datetime.fromisoformat(event_data['start'])
+                    end = datetime.fromisoformat(event_data['end'])
+                except ValueError:
+                    # Fallback to strptime if the string doesn't have timezone info
+                    start = datetime.strptime(event_data['start'], '%Y-%m-%dT%H:%M:%S')
+                    end = datetime.strptime(event_data['end'], '%Y-%m-%dT%H:%M:%S')
+                
+                # Ensure timezone is set
                 start = start.replace(tzinfo=event_timezone)
-                end = datetime.strptime(event_data['end'], '%Y-%m-%dT%H:%M:%S')
                 end = end.replace(tzinfo=event_timezone)
+            
+            # Skip if older than 24 hours
+            if start < cutoff_time:
+                self.logger.debug(f"Skipping old external event: {start}")
+                return None
             
             # Create event using builder
             event = self.event_builder.build(event_data, person_name, start, end)
