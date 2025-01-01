@@ -2,84 +2,94 @@
 Logging utilities for golf calendar application.
 """
 
-import gzip
-import logging
-import logging.handlers
 import os
+import logging
 from typing import Optional
+from pathlib import Path
 
-# Constants for log rotation
-MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
-BACKUP_COUNT = 5  # Keep 5 backup files
-
-class CompressedRotatingFileHandler(logging.handlers.RotatingFileHandler):
-    """A rotating file handler that automatically compresses rotated log files."""
-    
-    def rotation_filename(self, default_name: str) -> str:
-        return default_name + ".gz"
-    
-    def rotate(self, source: str, dest: str) -> None:
-        if os.path.exists(source):
-            with open(source, 'rb') as f_in:
-                with gzip.open(dest, 'wb') as f_out:
-                    f_out.writelines(f_in)
-            os.remove(source)
-
-def setup_logging(level: str = 'WARNING', log_file: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> None:
-    """Setup application-wide logging configuration.
+def setup_logging(
+    level: str = 'INFO',
+    log_file: Optional[str] = None,
+    dev_mode: bool = False,
+    verbose: bool = False,
+    component_levels: Optional[dict] = None
+) -> None:
+    """Set up logging configuration.
     
     Args:
-        level: Default log level. Defaults to 'WARNING'.
-        log_file: Optional path to a log file.
-        dev_mode: If True, sets level to DEBUG
-        verbose: If True and not dev_mode, sets level to INFO
+        level: Base logging level (default: INFO)
+        log_file: Optional log file path
+        dev_mode: Whether to run in development mode
+        verbose: Whether to enable verbose logging
+        component_levels: Optional dict of component-specific log levels
+            Example: {
+                'golfcal2.api': 'DEBUG',
+                'golfcal2.api.nex_golf': 'DEBUG',
+                'golfcal2.services.weather': 'DEBUG'
+            }
     """
-    # Determine effective log level
-    if dev_mode:
-        effective_level = 'DEBUG'
-    elif verbose:
-        effective_level = 'INFO'
-    else:
-        effective_level = level
+    # Set up root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG if verbose else level)
     
-    handlers = []
+    # Create formatters
+    detailed_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    simple_formatter = logging.Formatter('%(levelname)s - %(message)s')
     
     # Console handler
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(effective_level)
-    console_handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    ))
-    handlers.append(console_handler)
+    console_handler.setFormatter(simple_formatter)
+    console_handler.setLevel(logging.DEBUG if verbose else level)
+    root_logger.addHandler(console_handler)
     
-    # File handler if log file specified
+    # File handler if specified
     if log_file:
-        file_handler = CompressedRotatingFileHandler(
-            log_file,
-            maxBytes=MAX_LOG_SIZE,
-            backupCount=BACKUP_COUNT
-        )
-        file_handler.setLevel(effective_level)
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s,%(msecs)03d - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        ))
-        handlers.append(file_handler)
+        # Ensure log directory exists
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(detailed_formatter)
+        file_handler.setLevel(logging.DEBUG if verbose else level)
+        root_logger.addHandler(file_handler)
     
-    # Configure root logger
-    logging.basicConfig(
-        level=effective_level,
-        handlers=handlers,
-        force=True  # Override any existing handlers
-    )
+    # Set component-specific levels
+    if component_levels:
+        for component, level in component_levels.items():
+            logging.getLogger(component).setLevel(level)
     
-    # Set specific log levels for different components
+    # Set default component levels for better debugging
+    if verbose or dev_mode:
+        # API logging
+        logging.getLogger('golfcal2.api').setLevel(logging.DEBUG)
+        logging.getLogger('golfcal2.api.wise_golf').setLevel(logging.DEBUG)
+        logging.getLogger('golfcal2.api.nex_golf').setLevel(logging.DEBUG)
+        logging.getLogger('golfcal2.api.teetime').setLevel(logging.DEBUG)
+        
+        # Service logging
+        logging.getLogger('golfcal2.services.weather').setLevel(logging.DEBUG)
+        logging.getLogger('golfcal2.services.reservation').setLevel(logging.DEBUG)
+        logging.getLogger('golfcal2.services.calendar').setLevel(logging.DEBUG)
+        
+        # Model logging
+        logging.getLogger('golfcal2.models').setLevel(logging.DEBUG)
+    
+    # Suppress some noisy loggers
     logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('golfcal2').setLevel(effective_level)
+    logging.getLogger('requests').setLevel(logging.WARNING)
 
 def get_logger(name: str) -> logging.Logger:
-    """Get a logger instance with the specified name."""
+    """Get logger for module.
+    
+    Args:
+        name: Module name (usually __name__)
+        
+    Returns:
+        Logger instance
+    """
     return logging.getLogger(name)
 
 class LoggerMixin:
