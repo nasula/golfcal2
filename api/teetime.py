@@ -9,8 +9,13 @@ from typing import Dict, Any, List, Optional
 import requests
 
 from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.models.mixins import RequestHandlerMixin
 
-class TeeTimeAPI(LoggerMixin):
+class TeeTimeAPIError(Exception):
+    """TeeTime API error."""
+    pass
+
+class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
     """TeeTime API client."""
     
     def __init__(self, base_url: str, auth_details: Dict[str, str]):
@@ -27,11 +32,11 @@ class TeeTimeAPI(LoggerMixin):
             'Connection': 'keep-alive'
         })
         
-        # For now, don't use If-None-Match to ensure we always get fresh data
-        # if 'cookie' in auth_details:
-        #     self.session.headers['If-None-Match'] = f'"{auth_details["cookie"]}"'
-        #     self.logger.debug(f"TeeTimeAPI: Added If-None-Match header: {self.session.headers['If-None-Match']}")
-    
+        # Add token to headers if present
+        if 'token' in auth_details:
+            self.token = auth_details['token']
+            self.session.headers['Authorization'] = f'Bearer {self.token}'
+
     def get_reservations(self) -> List[Dict[str, Any]]:
         """Get reservations from TeeTime API."""
         try:
@@ -51,44 +56,28 @@ class TeeTimeAPI(LoggerMixin):
                 params['token'] = self.auth_details['token']
             
             # Make the request
-            response = self.session.get(self.base_url, params=params)
-            
-            if response.status_code == 404:
-                self.logger.error(f"TeeTimeAPI: 404 Not Found for URL: {response.url}")
-                return []
-            
-            # Handle 304 Not Modified
-            if response.status_code == 304:
-                return []
-            
-            response.raise_for_status()
-            
-            # Parse response
-            data = response.json()
-            
-            if not isinstance(data, list):
-                self.logger.warning(f"TeeTimeAPI: Unexpected response format: {data}")
-                return []
+            response = self._make_request("GET", "", params=params)
             
             # Filter out non-confirmed reservations
-            reservations = [r for r in data if r.get('confirmed') == 'CONFIRMED']
+            if isinstance(response, list):
+                return [r for r in response if r.get('confirmed') == 'CONFIRMED']
             
-            return reservations
-            
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"TeeTimeAPI: Request failed: {str(e)}")
-            self.logger.error(f"TeeTimeAPI: Request URL was: {self.base_url}")
-            self.logger.error(f"TeeTimeAPI: Request params were: {params}")
             return []
+            
+        except APITimeoutError as e:
+            raise TeeTimeAPIError(f"Request timed out: {str(e)}")
+        except APIResponseError as e:
+            raise TeeTimeAPIError(f"Request failed: {str(e)}")
+        except APIAuthError as e:
+            raise TeeTimeAPIError(f"Authentication failed: {str(e)}")
         except Exception as e:
-            self.logger.error(f"TeeTimeAPI: Unexpected error: {str(e)}", exc_info=True)
-            return []
-    
+            raise TeeTimeAPIError(f"Unexpected error: {str(e)}")
+
     def get_club_info(self, club_number: str) -> Optional[Dict[str, Any]]:
         """Get club information from TeeTime API."""
         try:
             # Build request URL
-            url = f"{self.base_url}/club/{club_number}"
+            endpoint = f"/club/{club_number}"
             params = {}
             
             # Add token to params if present
@@ -96,28 +85,18 @@ class TeeTimeAPI(LoggerMixin):
                 params['token'] = self.auth_details['token']
             
             # Make request
-            response = self.session.get(url, params=params)
+            response = self._make_request("GET", endpoint, params=params)
             
-            if response.status_code == 404:
-                self.logger.error(f"TeeTimeAPI: Club not found: {club_number}")
-                return None
+            if isinstance(response, dict):
+                return response
             
-            response.raise_for_status()
-            
-            # Parse response
-            data = response.json()
-            
-            if not isinstance(data, dict):
-                self.logger.warning(f"TeeTimeAPI: Unexpected response format: {data}")
-                return None
-            
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"TeeTimeAPI: Request failed: {str(e)}")
-            self.logger.error(f"TeeTimeAPI: Request URL was: {url}")
-            self.logger.error(f"TeeTimeAPI: Request params were: {params}")
             return None
+            
+        except APITimeoutError as e:
+            raise TeeTimeAPIError(f"Request timed out: {str(e)}")
+        except APIResponseError as e:
+            raise TeeTimeAPIError(f"Request failed: {str(e)}")
+        except APIAuthError as e:
+            raise TeeTimeAPIError(f"Authentication failed: {str(e)}")
         except Exception as e:
-            self.logger.error(f"TeeTimeAPI: Unexpected error: {str(e)}", exc_info=True)
-            return None 
+            raise TeeTimeAPIError(f"Unexpected error: {str(e)}") 
