@@ -141,14 +141,7 @@ class WiseGolf0API(BaseAPI):
     
     def get_reservations(self) -> List[Dict[str, Any]]:
         """Get user's reservations."""
-        start_time = time.time()
-        
         try:
-            # Get date range for reservations
-            now = datetime.now()
-            start_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-            end_date = (now + timedelta(days=30)).strftime("%Y-%m-%d")
-            
             # Build request URL with correct parameter names
             params = {
                 "controller": "ajax",
@@ -165,7 +158,7 @@ class WiseGolf0API(BaseAPI):
             self.logger.debug(f"Headers: {dict(self.session.headers)}")
             self.logger.debug(f"Params: {params}")
             
-            # Make the request
+            # Make the request to the shop URL path
             endpoint = "/pd/simulaattorit/18/simulaattorit/"
             self.logger.info(f"WiseGolf0API: Making request to {self.base_url}{endpoint} with params: {params}")
             response = self._make_request("GET", endpoint, params=params)
@@ -188,8 +181,7 @@ class WiseGolf0API(BaseAPI):
             return []
             
         except Exception as e:
-            end_time = time.time()
-            self.logger.error(f"WiseGolf0API: Error fetching reservations after {end_time - start_time:.2f} seconds: {e}", exc_info=True)
+            self.logger.error(f"WiseGolf0API: Error fetching reservations: {e}", exc_info=True)
             self.logger.error(f"WiseGolf0API: Base URL: {self.base_url}")
             self.logger.error(f"WiseGolf0API: Headers: {dict(self.session.headers)}")
             self.logger.error(f"WiseGolf0API: Auth details: {self.auth_details}")
@@ -229,12 +221,22 @@ class WiseGolf0API(BaseAPI):
         if order_id:
             params["orderid"] = order_id
         
-        self.logger.debug(f"WiseGolf0API: Making request to {self.base_url}/api/1.0/reservations/ with params: {params}")
+        # Use the REST URL path for player details
+        endpoint = "/api/1.0/reservations/"
+        self.logger.debug(f"WiseGolf0API: Making request to {self.base_url}{endpoint} with params: {params}")
         self.logger.debug(f"WiseGolf0API: Using cookies: {self.session.cookies}")
         
-        response = self._make_request("GET", "/api/1.0/reservations/", params=params)
-        self.logger.debug(f"WiseGolf0API: Got response: {response}")
-        return response
+        response = self._make_request("GET", endpoint, params=params)
+        self.logger.debug(f"WiseGolf0API: Got response type: {type(response)}")
+        self.logger.debug(f"WiseGolf0API: Got response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
+        
+        # Extract relevant data from response
+        if isinstance(response, dict) and 'reservationsGolfPlayers' in response:
+            self.logger.debug(f"WiseGolf0API: Found {len(response['reservationsGolfPlayers'])} players")
+            return response
+        
+        self.logger.warning("WiseGolf0API: No players found in response")
+        return {"reservationsGolfPlayers": []}
     
     def get_player_details(self, reservation_id: str) -> List[Dict[str, Any]]:
         """Get player details for reservation."""

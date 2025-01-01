@@ -290,30 +290,74 @@ class Reservation(LoggerMixin):
         # Try to fetch players from REST API if the club supports it and it's a future event
         if is_future_event and hasattr(club, 'fetch_players'):
             try:
+                temp_instance.logger.debug(f"Fetching players for reservation: {data}")
                 player_data_list = club.fetch_players(data, membership)
+                temp_instance.logger.debug(f"Got player data list: {player_data_list}")
+                
                 for player_data in player_data_list:
                     # Skip empty or "Varattu" players
-                    if not player_data.get('name'):
+                    if not player_data.get('name') and not (player_data.get('firstName') or player_data.get('familyName')):
                         continue
                     if player_data.get('name') == "Varattu":
                         continue
-                        
+                    
+                    # Get player name - try different formats
+                    name = player_data.get('name', '')
+                    if not name and (player_data.get('firstName') or player_data.get('familyName')):
+                        name = f"{player_data.get('firstName', '')} {player_data.get('familyName', '')}".strip()
+                    
+                    # Get club abbreviation - try different formats
+                    club_abbr = (
+                        player_data.get('club_abbreviation') or
+                        player_data.get('clubAbbreviation') or
+                        player_data.get('clubName', 'Unknown')
+                    )
+                    
+                    # Get handicap - try different formats
+                    try:
+                        handicap = float(
+                            player_data.get('handicap') or
+                            player_data.get('handicapActive') or
+                            54
+                        )
+                    except (ValueError, TypeError):
+                        handicap = 54
+                    
                     players.append(Player(
-                        name=player_data['name'],
-                        club=player_data.get('club_abbreviation', 'Unknown'),
-                        handicap=float(player_data.get('handicap', 54))
+                        name=name,
+                        club=club_abbr,
+                        handicap=handicap
                     ))
+                    temp_instance.logger.debug(f"Added player: {name} ({club_abbr}, {handicap})")
+                
             except Exception as e:
                 temp_instance.logger.error(f"Failed to fetch players from REST API: {e}")
                 temp_instance.logger.debug(f"Player data that caused error: {player_data_list if 'player_data_list' in locals() else 'No data fetched'}")
         
         # If no players found from REST API, use the reservation data itself
-        if not players and all(key in data for key in ["firstName", "familyName"]):
-            players.append(Player(
-                name=f"{data['firstName']} {data['familyName']}".strip(),
-                club=data.get('clubAbbreviation', 'Unknown'),
-                handicap=float(data.get('handicapActive', 54))
-            ))
+        if not players:
+            temp_instance.logger.debug("No players found from REST API, using reservation data")
+            if all(key in data for key in ["firstName", "familyName"]):
+                name = f"{data['firstName']} {data['familyName']}".strip()
+                club_abbr = data.get('clubAbbreviation', 'Unknown')
+                try:
+                    handicap = float(data.get('handicapActive', 54))
+                except (ValueError, TypeError):
+                    handicap = 54
+                
+                players.append(Player(
+                    name=name,
+                    club=club_abbr,
+                    handicap=handicap
+                ))
+                temp_instance.logger.debug(f"Added player from reservation data: {name} ({club_abbr}, {handicap})")
+            else:
+                temp_instance.logger.debug("No player data found in reservation, using user data")
+                players.append(Player(
+                    name=user.name,
+                    club=membership.clubAbbreviation,
+                    handicap=user.handicap
+                ))
         
         # Create and return the reservation instance
         return cls(

@@ -21,8 +21,9 @@ from golfcal2.services.calendar.builders import (
     ReservationEventBuilder,
     ExternalEventBuilder
 )
+from golfcal2.models.mixins import CalendarHandlerMixin
 
-class CalendarService(LoggerMixin):
+class CalendarService(LoggerMixin, CalendarHandlerMixin):
     """Service for handling calendar operations."""
     
     def __init__(self, config: AppConfig, dev_mode: bool = False):
@@ -44,9 +45,6 @@ class CalendarService(LoggerMixin):
         self.reservation_builder = ReservationEventBuilder(self.weather_service)
         self.external_builder = ExternalEventBuilder(self.weather_service)
         
-        # Track seen UIDs for deduplication
-        self.seen_uids = set()
-        
         # Set up ICS directory
         if os.path.isabs(self.config.ics_dir):
             self.ics_dir = Path(self.config.ics_dir)
@@ -58,11 +56,11 @@ class CalendarService(LoggerMixin):
         # Create output directory if it doesn't exist
         self.ics_dir.mkdir(parents=True, exist_ok=True)
         self.logger.info(f"Using ICS directory: {self.ics_dir}")
-    
+
     def process_user_reservations(self, user: User, reservations: List[Reservation]) -> None:
         """Process reservations for a user."""
         # Create base calendar
-        calendar = self.calendar_builder.build_base_calendar(user)
+        calendar = self.build_base_calendar(user.name, self.local_tz)
         self.seen_uids.clear()  # Reset seen UIDs for each user
         
         # Add reservations
@@ -81,30 +79,22 @@ class CalendarService(LoggerMixin):
             # Create event
             event = self.reservation_builder.build(reservation, club_config)
             if event:
-                calendar.add_component(event)
+                self._add_event_to_calendar(event, calendar)
                 self.seen_uids.add(reservation.uid)
                 self.logger.debug(f"Added reservation event: {event.get('summary')}")
         
         # Add external events
         external_events = self.external_event_service.process_events(user.name, dev_mode=self.dev_mode)
         for event in external_events:
-            calendar.add_component(event)
+            self._add_event_to_calendar(event, calendar)
             self.logger.debug(f"Added external event: {event.get('summary')}")
         
         # Write calendar to file
         file_path = self._get_calendar_path(user.name)
         self.calendar_builder.write_calendar(calendar, file_path, self.dev_mode)
         self.logger.info(f"Calendar created for user {user.name} with {len(reservations)} reservations and {len(external_events)} external events")
-    
+
     def _get_calendar_path(self, user_name: str) -> Path:
-        """Get the calendar file path for a user."""
-        # Get the file path from configuration
-        configured_path = self.config.get_ics_path(user_name)
-        
-        if configured_path:
-            # Use the configured file path
-            return Path(configured_path)
-        else:
-            # Use the default file naming convention
-            file_name = f"{user_name.replace(' ', '_')}_golf_reservations.ics"
-            return self.ics_dir / file_name
+        """Get calendar file path for user."""
+        file_name = f"{user_name}.ics"
+        return self.ics_dir / file_name

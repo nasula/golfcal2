@@ -17,9 +17,10 @@ from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.config.settings import AppConfig
 from golfcal2.services.auth_service import AuthService
 from golfcal2.services.weather_service import WeatherManager
-import config_data  # Import from scripts directory
+from golfcal2.models.mixins import ReservationHandlerMixin, CalendarHandlerMixin
+import config_data
 
-class ReservationService(LoggerMixin):
+class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
     """Service for handling reservations."""
     
     def __init__(self, config: AppConfig, user_name: str):
@@ -35,7 +36,6 @@ class ReservationService(LoggerMixin):
         # Initialize services
         self.auth_service = AuthService()
         self.weather_service = WeatherManager(self.local_tz, self.utc_tz)
-        self.seen_uids: Set[str] = set()  # Track seen UIDs for deduplication
     
     def _make_api_request(self, method: str, url: str, headers: Dict[str, str] = None, data: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -57,7 +57,7 @@ class ReservationService(LoggerMixin):
         except requests.exceptions.RequestException as e:
             self.logger.error(f"API request failed: {e}")
             return {"success": False, "errors": [str(e)]}
-    
+
     def process_user(
         self,
         user_name: str,
@@ -83,15 +83,12 @@ class ReservationService(LoggerMixin):
         all_reservations = []
         
         # Create calendar
-        cal = Calendar()
-        cal.add('prodid', '-//Golf Calendar//EN')
-        cal.add('version', '2.0')
-        cal.add('calscale', 'GREGORIAN')
-        cal.add('method', 'PUBLISH')
+        cal = self.build_base_calendar(user_name, self.local_tz)
         
-        # Calculate one day ago for calendar filtering
+        # Calculate cutoff time (24 hours ago)
         now = datetime.now(self.local_tz)
-        one_day_ago = now - timedelta(days=1)
+        cutoff_time = now - timedelta(hours=24)
+        self.logger.debug(f"Using cutoff time: {cutoff_time}")
         
         for membership in user.memberships:
             try:
@@ -101,24 +98,16 @@ class ReservationService(LoggerMixin):
                 if membership.club not in self.config.clubs:
                     self.logger.error(f"Club {membership.club} not found in configuration")
                     continue
-                
+
                 club_details = self.config.clubs[membership.club]
                 self.logger.debug(f"Club details from config: {club_details}")
-                self.logger.debug(f"Club type: {club_details.get('type')}")
-                self.logger.debug(f"Club CRM: {club_details.get('crm')}")
-                self.logger.debug(f"Club URL: {club_details.get('url')}")
-                self.logger.debug(f"Club auth type: {club_details.get('auth_type')}")
                 
-                self.logger.debug("Creating club instance...")
                 club = GolfClubFactory.create_club(club_details, membership, self.auth_service)
-                
                 if not club:
                     self.logger.warning(f"Unsupported club type: {club_details['type']}")
                     continue
                 
                 self.logger.debug(f"Created club instance of type: {type(club).__name__}")
-                self.logger.debug(f"Club URL: {club.url}")
-                self.logger.debug(f"Club auth service: {club.auth_service}")
                 self.logger.debug(f"Fetching reservations from {club.name}")
                 
                 raw_reservations = club.fetch_reservations(membership)
@@ -128,52 +117,60 @@ class ReservationService(LoggerMixin):
                     try:
                         if club_details["type"] == "wisegolf":
                             self.logger.debug(f"Processing WiseGolf reservation: {raw_reservation}")
-                            # Parse start time to check if it should be added to calendar
                             start_time = datetime.strptime(raw_reservation['dateTimeStart'], '%Y-%m-%d %H:%M:%S')
                             start_time = start_time.replace(tzinfo=self.local_tz)
+                            
+                            # Skip if older than 24 hours
+                            if start_time < cutoff_time:
+                                self.logger.debug(f"Skipping old WiseGolf reservation: {start_time}")
+                                continue
+                            
                             reservation = Reservation.from_wisegolf(raw_reservation, club, user, membership)
-                            if self._should_include_reservation(reservation, past_days):
+                            if self._should_include_reservation(reservation, past_days, self.local_tz):
                                 all_reservations.append(reservation)
-                                if start_time > one_day_ago:
-                                    self._add_reservation_to_calendar(reservation, cal)
-                                else:
-                                    self.logger.debug(f"Skipping old WiseGolf reservation from calendar: {start_time}")
+                                self._add_reservation_to_calendar(reservation, cal)
+                                
                         elif club_details["type"] == "wisegolf0":
                             self.logger.debug(f"Processing WiseGolf0 reservation: {raw_reservation}")
-                            # Parse start time to check if it should be added to calendar
                             start_time = datetime.strptime(raw_reservation['dateTimeStart'], '%Y-%m-%d %H:%M:%S')
                             start_time = start_time.replace(tzinfo=self.local_tz)
+                            
+                            # Skip if older than 24 hours
+                            if start_time < cutoff_time:
+                                self.logger.debug(f"Skipping old WiseGolf0 reservation: {start_time}")
+                                continue
+                            
                             reservation = Reservation.from_wisegolf0(raw_reservation, club, user, membership)
-                            if self._should_include_reservation(reservation, past_days):
+                            if self._should_include_reservation(reservation, past_days, self.local_tz):
                                 all_reservations.append(reservation)
-                                if start_time > one_day_ago:
-                                    self._add_reservation_to_calendar(reservation, cal)
-                                else:
-                                    self.logger.debug(f"Skipping old WiseGolf0 reservation from calendar: {start_time}")
+                                self._add_reservation_to_calendar(reservation, cal)
+                                
                         elif club_details["type"] == "nexgolf":
                             self.logger.debug(f"Processing NexGolf reservation: {raw_reservation}")
-                            reservation = Reservation.from_nexgolf(
-                                raw_reservation, club, user, membership
-                            )
-                            if self._should_include_reservation(reservation, past_days):
+                            reservation = Reservation.from_nexgolf(raw_reservation, club, user, membership)
+                            
+                            # Skip if older than 24 hours
+                            if reservation.start_time < cutoff_time:
+                                self.logger.debug(f"Skipping old NexGolf reservation: {reservation.start_time}")
+                                continue
+                            
+                            if self._should_include_reservation(reservation, past_days, self.local_tz):
                                 all_reservations.append(reservation)
-                                # Only add to calendar if less than one day old
-                                if reservation.start_time > one_day_ago:
-                                    self._add_reservation_to_calendar(reservation, cal)
-                                else:
-                                    self.logger.debug(f"Skipping old NexGolf reservation from calendar: {reservation.start_time}")
+                                self._add_reservation_to_calendar(reservation, cal)
+                                
                         elif club_details["type"] == "teetime":
                             self.logger.debug(f"Processing TeeTime reservation: {raw_reservation}")
-                            reservation = Reservation.from_teetime(
-                                raw_reservation, club, user, membership
-                            )
-                            if self._should_include_reservation(reservation, past_days):
+                            reservation = Reservation.from_teetime(raw_reservation, club, user, membership)
+                            
+                            # Skip if older than 24 hours
+                            if reservation.start_time < cutoff_time:
+                                self.logger.debug(f"Skipping old TeeTime reservation: {reservation.start_time}")
+                                continue
+                            
+                            if self._should_include_reservation(reservation, past_days, self.local_tz):
                                 all_reservations.append(reservation)
-                                # Only add to calendar if less than one day old
-                                if reservation.start_time > one_day_ago:
-                                    self._add_reservation_to_calendar(reservation, cal)
-                                else:
-                                    self.logger.debug(f"Skipping old TeeTime reservation from calendar: {reservation.start_time}")
+                                self._add_reservation_to_calendar(reservation, cal)
+                                
                         else:
                             self.logger.warning(f"Unsupported club type: {club_details['type']}")
                             continue
@@ -183,7 +180,7 @@ class ReservationService(LoggerMixin):
                             f"Failed to process reservation for {user_name} at {club.name}: {e}",
                             exc_info=True
                         )
-            
+
             except Exception as e:
                 self.logger.error(
                     f"Failed to process club {membership.club} for {user_name}: {e}",
@@ -196,7 +193,7 @@ class ReservationService(LoggerMixin):
         
         # Return both calendar and reservations
         return cal, all_reservations
-    
+
     def list_reservations(
         self,
         active_only: bool = False,
@@ -257,65 +254,7 @@ class ReservationService(LoggerMixin):
                         overlaps.append((res1, res2))
         
         return overlaps
-    
-    def _should_include_reservation(
-        self,
-        reservation: Reservation,
-        past_days: int
-    ) -> bool:
-        """
-        Check if reservation should be included based on date.
-        
-        Args:
-            reservation: Reservation to check
-            past_days: Number of days to include past reservations
-            
-        Returns:
-            True if reservation should be included
-        """
-        now = datetime.now(self.local_tz)
-        
-        # Include future reservations
-        if reservation.start_time > now:
-            return True
-        
-        # Include past reservations within past_days (24 hours)
-        hours_old = (now - reservation.start_time).total_seconds() / 3600
-        return 0 <= hours_old <= 24
-    
-    def _is_active(self, reservation: Reservation, now: datetime) -> bool:
-        """
-        Check if reservation is currently active.
-        
-        Args:
-            reservation: Reservation to check
-            now: Current time
-            
-        Returns:
-            True if reservation is active
-        """
-        return reservation.start_time <= now <= reservation.end_time
-    
-    def _is_upcoming(
-        self,
-        reservation: Reservation,
-        now: datetime,
-        days: int
-    ) -> bool:
-        """
-        Check if reservation is upcoming within days.
-        
-        Args:
-            reservation: Reservation to check
-            now: Current time
-            days: Number of days to look ahead
-            
-        Returns:
-            True if reservation is upcoming
-        """
-        future_limit = now + timedelta(days=days)
-        return now < reservation.start_time <= future_limit
-    
+
     def _add_reservation_to_calendar(self, reservation: Reservation, cal: Calendar) -> None:
         """
         Add a reservation to the calendar.
@@ -345,39 +284,9 @@ class ReservationService(LoggerMixin):
         
         # Add weather if not wisegolf0
         if reservation.membership.club not in self.config.clubs or self.config.clubs[reservation.membership.club].get('crm') != 'wisegolf0':
-            self._add_weather_to_event(event, reservation.membership.clubAbbreviation, reservation.start_time)
+            self._add_weather_to_event(event, reservation.membership.clubAbbreviation, reservation.start_time, self.weather_service)
         
         self._add_event_to_calendar(event, cal)
-
-    def _add_event_to_calendar(self, event: Event, cal: Calendar) -> None:
-        """
-        Add an event to the calendar, ensuring no duplicates.
-        
-        Args:
-            event: Event to add
-            cal: Calendar to add to
-        """
-        uid = event.get('uid')
-        if uid and uid in self.seen_uids:
-            self.logger.debug(f"Skipping duplicate event with UID: {uid}")
-            return
-            
-        if uid:
-            self.seen_uids.add(uid)
-        cal.add_component(event)
-        self.logger.debug(f"Added event to calendar: {event.decoded('summary')}")
-
-    def _process_wisegolf_reservation(self, raw_reservation: Dict[str, Any], cal: Calendar, membership: Membership) -> None:
-        """Process a WiseGolf reservation and add it to the calendar."""
-        self.logger.debug(f"Processing WiseGolf reservation: {raw_reservation.get('reservationTimeId')}")
-        reservation = Reservation.from_wisegolf(raw_reservation, membership, self.user_name)
-        self._add_reservation_to_calendar(reservation, cal)
-
-    def _process_wisegolf0_reservation(self, raw_reservation: Dict[str, Any], cal: Calendar, membership: Membership) -> None:
-        """Process a WiseGolf0 reservation and add it to the calendar."""
-        self.logger.debug(f"Processing WiseGolf0 reservation: {raw_reservation.get('reservationTimeId')}")
-        reservation = Reservation.from_wisegolf0(raw_reservation, membership, self.user_name)
-        self._add_reservation_to_calendar(reservation, cal)
 
     def _get_club_address(self, club_id: str) -> str:
         """
@@ -406,20 +315,5 @@ class ReservationService(LoggerMixin):
         if club_id in self.config.clubs:
             return self.config.clubs[club_id].get('abbreviation', '')
         return ''
-
-    def _add_weather_to_event(self, event: Event, club_abbreviation: str, start_datetime: datetime) -> None:
-        """
-        Add weather information to calendar event.
-        
-        Args:
-            event: Calendar event to update
-            club_abbreviation: Club abbreviation for weather location
-            start_datetime: Event start time
-        """
-        weather = self.weather_service.get_weather(club_abbreviation, start_datetime)
-        if weather:
-            description = event.get('description', '').decode('utf-8')
-            event['description'] = f"{description}\n\nWeather: {weather}"
-            self.logger.debug(f"Added weather to event: {event.decoded('summary')}")
 
     
