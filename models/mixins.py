@@ -12,6 +12,22 @@ import requests
 import time
 from urllib.parse import urljoin
 
+class APIError(Exception):
+    """Base API error."""
+    pass
+
+class APITimeoutError(APIError):
+    """API timeout error."""
+    pass
+
+class APIResponseError(APIError):
+    """API response error."""
+    pass
+
+class APIAuthError(APIError):
+    """API authentication error."""
+    pass
+
 class PlayerFetchMixin(LoggerMixin):
     """Mixin for player fetching functionality."""
     

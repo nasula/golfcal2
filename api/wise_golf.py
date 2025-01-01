@@ -9,6 +9,7 @@ import time
 
 from golfcal2.api.base_api import BaseAPI, APIError, APIResponseError
 from golfcal2.services.auth_service import AuthService
+from golfcal2.models.mixins import RequestHandlerMixin
 
 class WiseGolfAPIError(APIError):
     """WiseGolf API error."""
@@ -22,7 +23,7 @@ class WiseGolfResponseError(WiseGolfAPIError):
     """Response error for WiseGolf API."""
     pass
 
-class WiseGolfAPI(BaseAPI):
+class WiseGolfAPI(BaseAPI, RequestHandlerMixin):
     """WiseGolf API client implementation.
     
     This class handles communication with the WiseGolf API, including:
@@ -68,18 +69,7 @@ class WiseGolfAPI(BaseAPI):
         
         try:
             response = self._make_request("GET", "", params=params)
-            
-            if isinstance(response, dict):
-                if "rows" in response:
-                    return response["rows"]
-                elif "reservations" in response:
-                    return response["reservations"]
-                else:
-                    self.logger.warning(f"Unexpected response format. Keys: {list(response.keys())}")
-            elif isinstance(response, list):
-                return response
-            
-            return []
+            return self._extract_data_from_response(response)
             
         except APIResponseError as e:
             if "401" in str(e) or "403" in str(e):
@@ -112,7 +102,7 @@ class WiseGolfAPI(BaseAPI):
         except Exception as e:
             raise WiseGolfResponseError(f"Unexpected error fetching players: {str(e)}")
 
-class WiseGolf0API(BaseAPI):
+class WiseGolf0API(BaseAPI, RequestHandlerMixin):
     """WiseGolf0 API client."""
     
     def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Dict[str, Any]):
@@ -152,40 +142,15 @@ class WiseGolf0API(BaseAPI):
             if 'token' in self.auth_details:
                 params['token'] = self.auth_details['token']
             
-            # Log request details
-            self.logger.debug("Making WiseGolf0 reservations request:")
-            self.logger.debug(f"URL: {self.base_url}")
-            self.logger.debug(f"Headers: {dict(self.session.headers)}")
-            self.logger.debug(f"Params: {params}")
-            
             # Make the request to the shop URL path
             endpoint = "/pd/simulaattorit/18/simulaattorit/"
-            self.logger.info(f"WiseGolf0API: Making request to {self.base_url}{endpoint} with params: {params}")
             response = self._make_request("GET", endpoint, params=params)
-            self.logger.info(f"WiseGolf0API: Got response type: {type(response)}")
+            return self._extract_data_from_response(response)
             
-            if isinstance(response, dict):
-                if "rows" in response:
-                    self.logger.info(f"WiseGolf0API: Found {len(response['rows'])} rows in response")
-                    return response["rows"]
-                elif "reservations" in response:
-                    self.logger.info(f"WiseGolf0API: Found {len(response['reservations'])} reservations in response")
-                    return response["reservations"]
-                else:
-                    self.logger.warning(f"WiseGolf0API: Response has no rows or reservations. Keys: {list(response.keys())}")
-            elif isinstance(response, list):
-                self.logger.info(f"WiseGolf0API: Got list response with {len(response)} items")
-                return response
-            
-            self.logger.warning("WiseGolf0API: No reservations found in response")
-            return []
-            
+        except APIResponseError as e:
+            raise WiseGolfResponseError(f"Request failed: {str(e)}")
         except Exception as e:
-            self.logger.error(f"WiseGolf0API: Error fetching reservations: {e}", exc_info=True)
-            self.logger.error(f"WiseGolf0API: Base URL: {self.base_url}")
-            self.logger.error(f"WiseGolf0API: Headers: {dict(self.session.headers)}")
-            self.logger.error(f"WiseGolf0API: Auth details: {self.auth_details}")
-            raise WiseGolfAPIError(str(e))
+            raise WiseGolfResponseError(f"Unexpected error: {str(e)}")
     
     def get_players(self, product_id: str, date: str, order_id: str = None) -> Dict[str, Any]:
         """
@@ -199,44 +164,36 @@ class WiseGolf0API(BaseAPI):
         Returns:
             Dictionary containing player information
         """
-        self.logger.debug("WiseGolf0API: Starting get_players")
-        
-        # Update headers for cross-origin request
-        self.session.headers.update({
-            "Origin": self.base_url,
-            "Referer": self.base_url + "/",
-            "Sec-Fetch-Site": "same-site"
-        })
-        
-        # Log request details
-        self.logger.debug("Making WiseGolf0 players request:")
-        self.logger.debug(f"URL: {self.base_url}")
-        self.logger.debug(f"Headers: {dict(self.session.headers)}")
-        
-        params = {
-            "productid": product_id,
-            "date": date,
-            "golf": 1
-        }
-        if order_id:
-            params["orderid"] = order_id
-        
-        # Use the REST URL path for player details
-        endpoint = "/api/1.0/reservations/"
-        self.logger.debug(f"WiseGolf0API: Making request to {self.base_url}{endpoint} with params: {params}")
-        self.logger.debug(f"WiseGolf0API: Using cookies: {self.session.cookies}")
-        
-        response = self._make_request("GET", endpoint, params=params)
-        self.logger.debug(f"WiseGolf0API: Got response type: {type(response)}")
-        self.logger.debug(f"WiseGolf0API: Got response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
-        
-        # Extract relevant data from response
-        if isinstance(response, dict) and 'reservationsGolfPlayers' in response:
-            self.logger.debug(f"WiseGolf0API: Found {len(response['reservationsGolfPlayers'])} players")
-            return response
-        
-        self.logger.warning("WiseGolf0API: No players found in response")
-        return {"reservationsGolfPlayers": []}
+        try:
+            # Update headers for cross-origin request
+            self.session.headers.update({
+                "Origin": self.base_url,
+                "Referer": self.base_url + "/",
+                "Sec-Fetch-Site": "same-site"
+            })
+            
+            params = {
+                "productid": product_id,
+                "date": date,
+                "golf": 1
+            }
+            if order_id:
+                params["orderid"] = order_id
+            
+            # Use the REST URL path for player details
+            endpoint = "/api/1.0/reservations/"
+            response = self._make_request("GET", endpoint, params=params)
+            
+            # Extract relevant data from response
+            if isinstance(response, dict) and 'reservationsGolfPlayers' in response:
+                return response
+            
+            return {"reservationsGolfPlayers": []}
+            
+        except APIResponseError as e:
+            raise WiseGolfResponseError(f"Request failed: {str(e)}")
+        except Exception as e:
+            raise WiseGolfResponseError(f"Unexpected error: {str(e)}")
     
     def get_player_details(self, reservation_id: str) -> List[Dict[str, Any]]:
         """Get player details for reservation."""
