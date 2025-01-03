@@ -3,6 +3,17 @@ default_level: WARNING
 dev_level: INFO
 verbose_level: DEBUG
 
+# Error aggregation settings
+error_aggregation:
+  enabled: true
+  report_interval: 3600  # Report every hour
+  error_threshold: 5     # Report after 5 occurrences
+  time_threshold: 300    # Or after 5 minutes
+  categorize_by:
+    - service
+    - message
+    - stack_trace
+
 # File logging settings
 file:
   enabled: true
@@ -33,7 +44,11 @@ services:
   weather:
     level: INFO
     sampling:
-      debug_rate: 0.1  # Only applies when verbose mode enabled
+      debug_rate: 0.1    # Only applies when verbose mode enabled
+      info_rate: 1.0     # Keep all info logs
+      warning_rate: 1.0  # Keep all warning logs
+      error_rate: 1.0    # Keep all error logs
+      critical_rate: 1.0 # Keep all critical logs
     sensitive_fields:
       - api_key
       - auth_token
@@ -50,7 +65,11 @@ services:
   calendar:
     level: INFO
     sampling:
-      debug_rate: 0.2  # Only applies when verbose mode enabled
+      debug_rate: 0.2    # Only applies when verbose mode enabled
+      info_rate: 1.0     # Keep all info logs
+      warning_rate: 1.0  # Keep all warning logs
+      error_rate: 1.0    # Keep all error logs
+      critical_rate: 1.0 # Keep all critical logs
     performance_logging: true
     sensitive_fields:
       - ics_token
@@ -83,7 +102,11 @@ services:
   reservation:
     level: INFO
     sampling:
-      debug_rate: 0.2  # Only applies when verbose mode enabled
+      debug_rate: 0.2    # Only applies when verbose mode enabled
+      info_rate: 1.0     # Keep all info logs
+      warning_rate: 1.0  # Keep all warning logs
+      error_rate: 1.0    # Keep all error logs
+      critical_rate: 1.0 # Keep all critical logs
     sensitive_fields:
       - user_id
       - member_id
@@ -99,7 +122,11 @@ services:
   club:
     level: INFO
     sampling:
-      debug_rate: 0.1  # Only applies when verbose mode enabled
+      debug_rate: 0.1    # Only applies when verbose mode enabled
+      info_rate: 1.0     # Keep all info logs
+      warning_rate: 1.0  # Keep all warning logs
+      error_rate: 1.0    # Keep all error logs
+      critical_rate: 1.0 # Keep all critical logs
     sensitive_fields:
       - club_id
       - member_number
