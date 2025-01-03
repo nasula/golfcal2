@@ -7,10 +7,11 @@ from typing import Dict, Any, List, Optional
 from urllib.parse import urljoin
 import requests
 
+from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.models.mixins import RequestHandlerMixin
 from golfcal2.models.mixins import APIError, APITimeoutError, APIResponseError, APIAuthError
 
-class NexGolfAPI(RequestHandlerMixin):
+class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
     """NexGolf API client."""
     
     def __init__(self, base_url: str, auth_details: Dict[str, str]):

@@ -1,9 +1,7 @@
-"""
-Event builder classes for calendar events.
-"""
+"""Event builder classes for calendar events."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
 

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from golfcal2.models.user import Membership
 from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.utils.timezone_utils import TimezoneManager
 from golfcal2.services.auth_service import AuthService
 from golfcal2.models.mixins import PlayerFetchMixin
 
@@ -23,9 +24,16 @@ class GolfClub(ABC, LoggerMixin):
     variant: Optional[str] = None
     product: Optional[str] = None
     address: str = "Unknown"
-    timezone: ZoneInfo = ZoneInfo("Europe/Helsinki")
+    timezone: str = "Europe/Helsinki"
     auth_service: Optional[AuthService] = None
     club_details: Optional[Dict[str, Any]] = None
+    _tz_manager: Optional[TimezoneManager] = None
+
+    def __post_init__(self):
+        """Initialize after dataclass creation."""
+        super().__init__()
+        if self._tz_manager is None:
+            self._tz_manager = TimezoneManager(self.timezone)
 
     @abstractmethod
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
@@ -97,7 +105,7 @@ class GolfClub(ABC, LoggerMixin):
         end_time = start_time + timedelta(hours=hours, minutes=minutes)
         # Ensure end_time has the same timezone as start_time
         if start_time.tzinfo and not end_time.tzinfo:
-            end_time = end_time.replace(tzinfo=start_time.tzinfo)
+            end_time = self._tz_manager.localize_datetime(end_time)
         return end_time
 
 class WiseGolfClub(GolfClub, PlayerFetchMixin):
@@ -120,17 +128,18 @@ class WiseGolfClub(GolfClub, PlayerFetchMixin):
             rest_url += "/api/1.0"
         
         return self.fetch_players_from_rest(reservation, membership, WiseGolfAPI, rest_url)
-
+    
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""
         start_time_str = reservation["dateTimeStart"]
         if not start_time_str:
             raise ValueError("No start time in reservation")
         
-        return datetime.strptime(
+        start_time = datetime.strptime(
             start_time_str,
             "%Y-%m-%d %H:%M:%S"
-        ).replace(tzinfo=self.timezone)
+        )
+        return self._tz_manager.localize_datetime(start_time)
 
 class WiseGolf0Club(GolfClub, PlayerFetchMixin):
     """WiseGolf0 golf club implementation."""
@@ -160,24 +169,18 @@ class WiseGolf0Club(GolfClub, PlayerFetchMixin):
         self.logger.debug(f"Club details: {self.club_details}")
         
         return self.fetch_players_from_rest(reservation, membership, WiseGolf0API, rest_url)
-
+    
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf0 reservation."""
         start_time_str = reservation["dateTimeStart"]
         if not start_time_str:
             raise ValueError("No start time in reservation")
         
-        return datetime.strptime(
+        start_time = datetime.strptime(
             start_time_str,
             "%Y-%m-%d %H:%M:%S"
-        ).replace(tzinfo=self.timezone)
-
-    def get_end_time(self, start_time: datetime, duration: Dict[str, int]) -> datetime:
-        """Get end time for WiseGolf0 reservation."""
-        return start_time + timedelta(
-            hours=duration.get('hours', 0),
-            minutes=duration.get('minutes', 0)
         )
+        return self._tz_manager.localize_datetime(start_time)
 
 class NexGolfClub(GolfClub):
     """NexGolf golf club implementation."""
@@ -188,17 +191,18 @@ class NexGolfClub(GolfClub):
         
         api = NexGolfAPI(self.url, membership.auth_details)
         return api.get_reservations()
-
+    
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from NexGolf reservation."""
         start_time_str = reservation["startTime"]
         if not start_time_str:
             raise ValueError("No start time in reservation")
         
-        return datetime.strptime(
+        start_time = datetime.strptime(
             start_time_str,
             "%H:%M %Y-%m-%d"
-        ).replace(tzinfo=self.timezone)
+        )
+        return self._tz_manager.localize_datetime(start_time)
 
 class TeeTimeClub(GolfClub):
     """TeeTime golf club implementation."""
@@ -225,17 +229,18 @@ class TeeTimeClub(GolfClub):
         self.logger.debug(f"TeeTimeClub: Fetched {len(reservations)} reservations")
         
         return reservations
-
+    
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from TeeTime reservation."""
         start_time_str = reservation["startTime"]
         if not start_time_str:
             raise ValueError("No start time in reservation")
         
-        return datetime.strptime(
+        start_time = datetime.strptime(
             start_time_str,
             "%Y-%m-%d %H:%M:%S"
-        ).replace(tzinfo=self.timezone)
+        )
+        return self._tz_manager.localize_datetime(start_time)
 
 class GolfClubFactory:
     """Factory for creating golf club instances."""
@@ -247,58 +252,48 @@ class GolfClubFactory:
         auth_service: AuthService
     ) -> Optional[GolfClub]:
         """Create golf club instance based on type."""
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        club_type = club_details["type"]
+        club_type = club_details.get("type")
         if not club_type:
-            raise ValueError("No club type specified")
-        
-        logger.debug(f"Creating club of type: {club_type}")
-        logger.debug(f"Club details: {club_details}")
-        
-        club_classes = {
-            "wisegolf": WiseGolfClub,
-            "wisegolf0": WiseGolf0Club,
-            "nexgolf": NexGolfClub,
-            "teetime": TeeTimeClub
-        }
-        
-        club_class = club_classes.get(club_type)
-        if not club_class:
-            logger.warning(f"Unsupported club type: {club_type}")
             return None
-        
-        # Get the appropriate URL field based on club type
-        if club_type == "wisegolf0":
-            url = club_details.get("shopURL")  # Use shopURL for WiseGolf0
-            if not url:
-                logger.error("No shopURL specified for wisegolf0 club")
-                raise ValueError("No shopURL specified for wisegolf0 club")
-        elif club_type == "wisegolf":
-            url = club_details.get("ajaxUrl")  # Use ajaxUrl for WiseGolf
-            if not url:
-                logger.error("No ajaxUrl specified for wisegolf club")
-                raise ValueError("No ajaxUrl specified for wisegolf club")
-        else:
-            url = club_details.get("url")  # Use standard url for other types
-            if not url:
-                logger.error(f"No url specified for {club_type} club")
-                raise ValueError(f"No url specified for {club_type} club")
-        
-        logger.debug(f"Creating {club_type} club with URL: {url}")
-        
-        club = club_class(
-            name=club_details.get("name", "Unknown Club"),
-            url=url,
-            variant=club_details.get("variant"),
-            product=club_details.get("product"),
-            address=club_details.get("address", "Unknown"),
-            timezone=ZoneInfo(club_details.get("timezone", "Europe/Helsinki")),
-            auth_service=auth_service,
-            club_details=club_details
+
+        # Get club name with fallbacks
+        club_name = (
+            club_details.get("name") or  # Explicit name
+            membership.club or  # Club name from membership
+            club_details.get("clubAbbreviation") or  # Club abbreviation
+            club_type.title()  # Fallback to capitalized type
         )
+
+        # Get appropriate URL based on club type
+        if club_type == "wisegolf":
+            url = club_details.get("ajaxUrl") or club_details.get("url")
+        elif club_type == "wisegolf0":
+            url = club_details.get("shopURL") or club_details.get("url")
+        else:
+            url = club_details.get("url")
+
+        if not url:
+            raise ValueError(f"No URL found for club {club_name}")
+
+        common_args = {
+            "name": club_name,
+            "url": url,
+            "variant": club_details.get("variant"),
+            "product": club_details.get("product"),
+            "address": club_details.get("address", "Unknown"),
+            "timezone": club_details.get("timezone", "Europe/Helsinki"),
+            "auth_service": auth_service,
+            "club_details": club_details
+        }
+
+        if club_type == "wisegolf":
+            return WiseGolfClub(**common_args)
+        elif club_type == "wisegolf0":
+            return WiseGolf0Club(**common_args)
+        elif club_type == "nexgolf":
+            return NexGolfClub(**common_args)
+        elif club_type == "teetime":
+            return TeeTimeClub(**common_args)
         
-        logger.debug(f"Created club: {club.name} ({club_type})")
-        return club
+        return None
 
