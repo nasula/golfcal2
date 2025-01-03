@@ -13,6 +13,9 @@ from golfcal2.config.types import AppConfig
 from golfcal2.config.logging_filters import (
     SamplingFilter, SensitiveDataFilter, CorrelationFilter
 )
+from golfcal2.config.logging_config import (
+    load_logging_config, LoggingConfig, ServiceLogConfig
+)
 
 class JsonFormatter(logging.Formatter):
     """JSON formatter for structured logging."""
@@ -144,22 +147,64 @@ def get_file_handler(
     file_handler.setFormatter(formatter)
     return file_handler
 
+def get_service_logger(service_name: str, config: LoggingConfig, global_level: int) -> logging.Logger:
+    """Get logger for specific service with appropriate configuration.
+    
+    Args:
+        service_name: Name of the service
+        config: Logging configuration
+        global_level: Global logging level to respect
+        
+    Returns:
+        Configured logger for service
+    """
+    logger = logging.getLogger(service_name)
+    
+    # Get service-specific config
+    service_config = config.services.get(service_name)
+    if service_config:
+        # Set service level but don't go below global level
+        service_level = getattr(logging, service_config.level.upper())
+        effective_level = max(service_level, global_level)
+        logger.setLevel(effective_level)
+        
+        # Add service-specific file handler if configured
+        if service_config.file and service_config.file.enabled:
+            file_handler = get_file_handler(
+                service_config.file.path,
+                JsonFormatter(include_timestamp=service_config.file.include_timestamp),
+                service_config.file.max_size_mb * 1024 * 1024,
+                service_config.file.backup_count
+            )
+            
+            # Add service-specific filters
+            if service_config.sensitive_fields:
+                file_handler.addFilter(SensitiveDataFilter(set(service_config.sensitive_fields)))
+            if service_config.sampling and effective_level == logging.DEBUG:
+                file_handler.addFilter(SamplingFilter(service_config.sampling.debug_rate))
+            
+            logger.addHandler(file_handler)
+    
+    return logger
+
 def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = False) -> None:
     """Set up logging based on configuration and mode.
     
     Args:
         config: Application configuration
-        dev_mode: Whether to run in development mode
-        verbose: Whether to enable verbose logging
+        dev_mode: Whether to run in development mode (shows INFO logs)
+        verbose: Whether to enable verbose mode (shows DEBUG logs)
     """
+    # Load granular logging configuration
+    logging_config = load_logging_config()
+    
     # Get log level based on mode
-    logging_config = config.global_config.get('logging', {})
-    if dev_mode:
-        level = logging_config.get('dev_level', 'DEBUG')
-    elif verbose:
-        level = logging_config.get('verbose_level', 'INFO')
-    else:
-        level = logging_config.get('default_level', 'WARNING')
+    if verbose:  # Explicit request for debug logs
+        level = logging_config.verbose_level  # DEBUG
+    elif dev_mode:  # Development mode shows INFO
+        level = logging_config.dev_level      # INFO
+    else:  # Production mode shows WARNING and above
+        level = logging_config.default_level  # WARNING
 
     # Convert string level to logging constant
     numeric_level = getattr(logging, level.upper(), logging.WARNING)
@@ -169,30 +214,37 @@ def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = Fal
 
     # Create formatters
     console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_formatter = JsonFormatter()
+    file_formatter = JsonFormatter(include_timestamp=logging_config.file.include_timestamp)
 
     # Create handlers
     handlers: List[logging.Handler] = []
     
-    # Create and configure console handler
-    console_handler = get_console_handler(console_formatter)
-    # Add sensitive data filter to console handler
-    console_handler.addFilter(SensitiveDataFilter())
-    handlers.append(console_handler)
+    # Create and configure console handler if enabled
+    if logging_config.console.enabled:
+        console_handler = get_console_handler(console_formatter)
+        console_handler.setLevel(numeric_level)  # Set handler level explicitly
+        # Add sensitive data filter to console handler
+        if logging_config.sensitive_data.enabled:
+            console_handler.addFilter(SensitiveDataFilter(set(logging_config.sensitive_data.global_fields)))
+        handlers.append(console_handler)
 
-    # Add file handler if configured
-    log_file = config.log_file or logging_config.get('file')
-    if log_file:
-        max_size = logging_config.get('max_size', 10) * 1024 * 1024  # Convert MB to bytes
-        backup_count = logging_config.get('backup_count', 5)
-        file_handler = get_file_handler(log_file, file_formatter, max_size, backup_count)
+    # Add global file handler if enabled
+    if logging_config.file.enabled:
+        file_handler = get_file_handler(
+            logging_config.file.path,
+            file_formatter,
+            logging_config.file.max_size_mb * 1024 * 1024,
+            logging_config.file.backup_count
+        )
+        file_handler.setLevel(numeric_level)  # Set handler level explicitly
         
         # Add filters to file handler
-        file_handler.addFilter(SensitiveDataFilter())
-        # Only sample DEBUG logs
-        if numeric_level == logging.DEBUG:
-            sample_rate = logging_config.get('debug_sample_rate', 0.1)
-            file_handler.addFilter(SamplingFilter(sample_rate))
+        if logging_config.sensitive_data.enabled:
+            file_handler.addFilter(SensitiveDataFilter(set(logging_config.sensitive_data.global_fields)))
+        
+        # Add sampling filter only for debug logs in verbose mode
+        if numeric_level == logging.DEBUG and logging_config.sampling:
+            file_handler.addFilter(SamplingFilter(logging_config.sampling.debug_rate))
         
         handlers.append(file_handler)
 
@@ -200,8 +252,9 @@ def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = Fal
     root_logger = logging.getLogger()
     root_logger.setLevel(numeric_level)
     
-    # Add correlation ID filter to root logger
-    root_logger.addFilter(CorrelationFilter())
+    # Add correlation ID filter if enabled
+    if logging_config.correlation.enabled:
+        root_logger.addFilter(CorrelationFilter())
     
     # Remove existing handlers and add new ones
     for handler in root_logger.handlers[:]:
@@ -211,6 +264,5 @@ def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = Fal
 
     # Configure library logging
     if not dev_mode:
-        # Suppress logs from libraries unless they're WARNING or higher
-        for lib in ['urllib3', 'requests', 'icalendar']:
-            logging.getLogger(lib).setLevel(logging.WARNING) 
+        for lib, level in logging_config.libraries.items():
+            logging.getLogger(lib).setLevel(getattr(logging, level.upper())) 
