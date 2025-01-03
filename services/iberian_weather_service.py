@@ -12,6 +12,7 @@ from golfcal2.utils.logging_utils import log_execution
 from golfcal2.services.weather_database import WeatherDatabase
 from golfcal2.services.weather_schemas import IBERIAN_SCHEMA
 from golfcal2.services.weather_types import WeatherService, WeatherData, WeatherCode
+from golfcal2.config.settings import load_config
 
 class IberianWeatherService(WeatherService):
     """Service for handling weather data for Iberian region."""
@@ -24,7 +25,11 @@ class IberianWeatherService(WeatherService):
         super().__init__(local_tz, utc_tz)
         
         # API configuration
-        self.api_key = os.getenv('AEMET_API_KEY', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqYXJra28uYWhvbmVuQGlraS5maSIsImp0aSI6IjNiMjM2ZDY4LTY4ZDAtNDY5Ni1iMjE4LTJiZjM4ZmM5ZjE4YiIsImlzcyI6IkFFTUVUIiwiaWF0IjoxNjk5NzE2NjI3LCJ1c2VySWQiOiIzYjIzNmQ2OC02OGQwLTQ2OTYtYjIxOC0yYmYzOGZjOWYxOGIiLCJyb2xlIjoiIn0.Ry8uRDVHGYhcEG_4G3UDVXKmHhwR0TVKqvYuKPvjnYY')
+        settings = load_config()
+        self.api_key = settings.global_config.get('api_keys', {}).get('weather', {}).get('aemet')
+        if not self.api_key:
+            self.error("AEMET API key not configured in config.yaml")
+        
         self.endpoint = self.BASE_URL
         self.headers = {
             'Accept': 'application/json',
