@@ -1,0 +1,100 @@
+# Global logging settings
+default_level: WARNING
+dev_level: DEBUG
+verbose_level: INFO
+
+# File logging settings
+file:
+  enabled: true
+  path: logs/app.log
+  max_size_mb: 10
+  backup_count: 5
+  format: json
+  include_timestamp: true
+
+# Console logging settings
+console:
+  enabled: true
+  format: text
+  include_timestamp: true
+  color: true
+
+# Sampling configuration
+sampling:
+  debug_rate: 0.1  # Sample 10% of debug logs
+  info_rate: 1.0   # Keep all info logs
+  warning_rate: 1.0
+  error_rate: 1.0
+  critical_rate: 1.0
+
+# Service-specific settings
+services:
+  # Weather service logging
+  weather:
+    level: INFO
+    sampling:
+      debug_rate: 0.05  # Sample 5% of debug logs
+    sensitive_fields:
+      - api_key
+      - auth_token
+    performance_logging: true
+    file:
+      enabled: true
+      path: logs/weather.log
+
+  # Calendar service logging
+  calendar:
+    level: INFO
+    sampling:
+      debug_rate: 0.2  # Sample 20% of debug logs
+    performance_logging: true
+    file:
+      enabled: true
+      path: logs/calendar.log
+
+  # Authentication service logging
+  auth:
+    level: WARNING
+    sensitive_fields:
+      - password
+      - token
+      - cookie
+      - session_id
+    performance_logging: true
+    file:
+      enabled: true
+      path: logs/auth.log
+
+# Library logging configuration
+libraries:
+  urllib3: WARNING
+  requests: WARNING
+  icalendar: WARNING
+
+# Performance logging settings
+performance:
+  enabled: true
+  slow_threshold_ms: 1000  # Log warning for operations slower than 1 second
+  include_args: false      # Don't include function arguments in performance logs
+  include_stack_trace: true
+
+# Correlation ID settings
+correlation:
+  enabled: true
+  include_in_console: true
+  header_name: X-Correlation-ID
+
+# Sensitive data masking
+sensitive_data:
+  enabled: true
+  global_fields:
+    - password
+    - token
+    - api_key
+    - secret
+    - credit_card
+    - ssn
+    - auth
+    - cookie
+  mask_pattern: "***MASKED***"
+  partial_mask: false  # Set to true to show first/last characters 
