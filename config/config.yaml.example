@@ -37,3 +37,59 @@ default_durations:
 
 # Default reminder times
 default_reminder_minutes: -60 
+
+# Default application timezone (used when no user-specific timezone is set)
+default_timezone: "Europe/Helsinki"
+
+# Directory for ICS calendar files
+ics_dir: "ics"
+
+# Logging configuration
+log_level: "INFO"
+log_file: "golfcal.log"
+
+# User configurations
+users:
+  "John Doe":
+    # Optional user-specific timezone override
+    timezone: "Europe/London"
+    duration:
+      hours: 4
+      minutes: 0
+    memberships:
+      - club: "Example Golf Club"
+        auth_details:
+          type: "wisegolf"
+          auth_type: "token"
+          token: "your-token-here"
+
+  "Jane Smith":
+    # Uses default application timezone
+    duration:
+      hours: 3
+      minutes: 30
+    memberships:
+      - club: "Another Golf Club"
+        auth_details:
+          type: "nexgolf"
+          auth_type: "cookie"
+          cookie_name: "session"
+          cookie_value: "your-cookie-here"
+
+# Golf club configurations
+clubs:
+  "Example Golf Club":
+    name: "Example Golf Club"
+    type: "wisegolf"
+    url: "https://example.com/golf"
+    timezone: "Europe/Helsinki"  # Club-specific timezone
+    variant: "Main Course"
+    address: "123 Golf Street, Example City"
+
+  "Another Golf Club":
+    name: "Another Golf Club"
+    type: "nexgolf"
+    url: "https://another.com/golf"
+    timezone: "Europe/Stockholm"  # Club-specific timezone
+    variant: "Championship Course"
+    address: "456 Golf Avenue, Another City" 
