@@ -14,6 +14,12 @@ from golfcal2.services.weather_types import WeatherService, WeatherData, get_wea
 from golfcal2.services.mediterranean_weather_service import MediterraneanWeatherService
 from golfcal2.services.iberian_weather_service import IberianWeatherService
 from golfcal2.services.met_weather_service import MetWeatherService
+from golfcal2.exceptions import (
+    WeatherError,
+    ErrorCode,
+    handle_errors
+)
+from golfcal2.config.error_aggregator import aggregate_error
 
 class WeatherManager(EnhancedLoggerMixin):
     """Weather service manager."""
@@ -27,43 +33,44 @@ class WeatherManager(EnhancedLoggerMixin):
         """
         super().__init__()
         
-        # Store timezone settings
-        self.local_tz = local_tz
-        self.utc_tz = utc_tz
-        
-        # Initialize services
-        self.services = {
-            'mediterranean': MediterraneanWeatherService(local_tz, utc_tz),
-            'iberian': IberianWeatherService(local_tz, utc_tz),
-            'met': MetWeatherService(local_tz, utc_tz)
-        }
-        
-        # Define service regions
-        self.regions = {
-            'norway': {
-                'service': 'met',
-                'bounds': (57.0, 71.5, 4.0, 31.5)  # lat_min, lat_max, lon_min, lon_max
-            },
-            'mediterranean': {
-                'service': 'mediterranean',
-                'bounds': (35.0, 45.0, 20.0, 45.0)
-            },
-            'iberian': {
-                'service': 'iberian',
-                'bounds': (36.0, 44.0, -9.5, 3.5)
+        with handle_errors(WeatherError, "weather", "initialize services"):
+            # Store timezone settings
+            self.local_tz = local_tz
+            self.utc_tz = utc_tz
+            
+            # Initialize services
+            self.services = {
+                'mediterranean': MediterraneanWeatherService(local_tz, utc_tz),
+                'iberian': IberianWeatherService(local_tz, utc_tz),
+                'met': MetWeatherService(local_tz, utc_tz)
             }
-        }
-        
-        # Club-specific service mappings
-        self.club_mappings = {
-            'Lofoten': 'met',
-            'Oslo': 'met',
-            'Antalya': 'mediterranean',
-            'Costa': 'iberian',
-            'EXT_Winter': 'met'  # Default winter practice to MET service
-        }
-        
-        self.set_correlation_id()  # Generate unique ID for this manager instance
+            
+            # Define service regions
+            self.regions = {
+                'norway': {
+                    'service': 'met',
+                    'bounds': (57.0, 71.5, 4.0, 31.5)  # lat_min, lat_max, lon_min, lon_max
+                },
+                'mediterranean': {
+                    'service': 'mediterranean',
+                    'bounds': (35.0, 45.0, 20.0, 45.0)
+                },
+                'iberian': {
+                    'service': 'iberian',
+                    'bounds': (36.0, 44.0, -9.5, 3.5)
+                }
+            }
+            
+            # Club-specific service mappings
+            self.club_mappings = {
+                'Lofoten': 'met',
+                'Oslo': 'met',
+                'Antalya': 'mediterranean',
+                'Costa': 'iberian',
+                'EXT_Winter': 'met'  # Default winter practice to MET service
+            }
+            
+            self.set_correlation_id()  # Generate unique ID for this manager instance
     
     @log_execution(level='DEBUG')
     def get_weather(
@@ -74,9 +81,23 @@ class WeatherManager(EnhancedLoggerMixin):
         duration_minutes: Optional[int] = None
     ) -> Optional[str]:
         """Get weather data for a specific time and location."""
-        try:
-            lat = coordinates['lat']
-            lon = coordinates['lon']
+        with handle_errors(
+            WeatherError,
+            "weather",
+            f"get weather for club {club}",
+            lambda: None  # Fallback to None on error
+        ):
+            lat = coordinates.get('lat')
+            lon = coordinates.get('lon')
+            
+            if lat is None or lon is None:
+                error = WeatherError(
+                    "Missing coordinates for weather lookup",
+                    ErrorCode.MISSING_DATA,
+                    {"club": club, "coordinates": coordinates}
+                )
+                aggregate_error(str(error), "weather", None)
+                return None
 
             # Skip past dates
             if teetime < datetime.now(self.utc_tz):
@@ -94,23 +115,45 @@ class WeatherManager(EnhancedLoggerMixin):
             # Select appropriate weather service based on location
             weather_service = self._get_service_for_location(lat, lon, club)
             if not weather_service:
+                error = WeatherError(
+                    f"No weather service available for location",
+                    ErrorCode.SERVICE_UNAVAILABLE,
+                    {
+                        "club": club,
+                        "latitude": lat,
+                        "longitude": lon
+                    }
+                )
+                aggregate_error(str(error), "weather", None)
                 return None
 
             # Get weather data
             weather_data = weather_service.get_weather(lat, lon, teetime, end_time)
             if not weather_data:
+                error = WeatherError(
+                    f"Failed to get weather data",
+                    ErrorCode.SERVICE_ERROR,
+                    {
+                        "club": club,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "teetime": teetime.isoformat()
+                    }
+                )
+                aggregate_error(str(error), "weather", None)
                 return None
 
             # Format weather data
             return self._format_weather_data(weather_data)
-
-        except Exception as e:
-            self.error(f"Weather: Failed to get weather for {club}: {e}", exc_info=True)
-            return None
     
     def _format_weather_data(self, weather_data: List[WeatherData]) -> str:
         """Format weather data into a human-readable string."""
-        try:
+        with handle_errors(
+            WeatherError,
+            "weather",
+            "format weather data",
+            lambda: ""  # Fallback to empty string on error
+        ):
             if not weather_data:
                 return ""
             
@@ -135,61 +178,78 @@ class WeatherManager(EnhancedLoggerMixin):
                 lines.append(f"{time_str} {symbol} {temp} {wind}{precip}{thunder}")
             
             return "\n".join(lines)
-            
-        except Exception as e:
-            self.error("Failed to format weather data", exc_info=e)
-            return ""
     
     @log_execution(level='DEBUG')
     def _get_service_for_location(self, lat: float, lon: float, club: Optional[str] = None) -> Optional[WeatherService]:
         """Get appropriate weather service for location."""
-        service_name = None
-        
-        # First try to determine service by club name if provided
-        if club:
-            # Check for exact match
-            if club in self.club_mappings:
-                self.debug(
-                    "Using service based on exact club match",
-                    club=club,
-                    service=self.club_mappings[club]
-                )
-                service_name = self.club_mappings[club]
-            else:
-                # Check for prefix match
-                for prefix, service in self.club_mappings.items():
-                    if club.startswith(prefix):
-                        self.debug(
-                            "Using service based on club prefix match",
-                            club=club,
-                            prefix=prefix,
-                            service=service
-                        )
-                        service_name = service
-                        break
-        
-        # If no club match, use region bounds
-        if not service_name:
-            for region, config in self.regions.items():
-                lat_min, lat_max, lon_min, lon_max = config['bounds']
-                if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+        with handle_errors(
+            WeatherError,
+            "weather",
+            f"get service for location (lat={lat}, lon={lon}, club={club})",
+            lambda: None  # Fallback to None on error
+        ):
+            service_name = None
+            
+            # First try to determine service by club name if provided
+            if club:
+                # Check for exact match
+                if club in self.club_mappings:
                     self.debug(
-                        "Found matching region",
-                        region=region,
-                        service=config['service']
+                        "Using service based on exact club match",
+                        club=club,
+                        service=self.club_mappings[club]
                     )
-                    service_name = config['service']
-                    break
-        
-        # Default to MET service as fallback
-        if not service_name:
-            self.info(
-                "No specific region found, using MET service as fallback",
-                latitude=lat,
-                longitude=lon,
-                club=club
-            )
-            service_name = 'met'
-        
-        # Return the actual service instance
-        return self.services.get(service_name)
+                    service_name = self.club_mappings[club]
+                else:
+                    # Check for prefix match
+                    for prefix, service in self.club_mappings.items():
+                        if club.startswith(prefix):
+                            self.debug(
+                                "Using service based on club prefix match",
+                                club=club,
+                                prefix=prefix,
+                                service=service
+                            )
+                            service_name = service
+                            break
+            
+            # If no club match, use region bounds
+            if not service_name:
+                for region, config in self.regions.items():
+                    lat_min, lat_max, lon_min, lon_max = config['bounds']
+                    if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+                        self.debug(
+                            "Found matching region",
+                            region=region,
+                            service=config['service']
+                        )
+                        service_name = config['service']
+                        break
+            
+            # Default to MET service as fallback
+            if not service_name:
+                self.info(
+                    "No specific region found, using MET service as fallback",
+                    latitude=lat,
+                    longitude=lon,
+                    club=club
+                )
+                service_name = 'met'
+            
+            # Return the actual service instance
+            service = self.services.get(service_name)
+            if not service:
+                error = WeatherError(
+                    f"Weather service '{service_name}' not found",
+                    ErrorCode.SERVICE_UNAVAILABLE,
+                    {
+                        "service": service_name,
+                        "club": club,
+                        "latitude": lat,
+                        "longitude": lon
+                    }
+                )
+                aggregate_error(str(error), "weather", None)
+                return None
+                
+            return service

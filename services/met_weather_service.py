@@ -14,6 +14,16 @@ from golfcal2.utils.logging_utils import log_execution
 from golfcal2.services.weather_database import WeatherDatabase
 from golfcal2.services.weather_schemas import MET_SCHEMA
 from golfcal2.services.weather_types import WeatherService, WeatherData, WeatherCode
+from golfcal2.exceptions import (
+    WeatherError,
+    APIError,
+    APITimeoutError,
+    APIRateLimitError,
+    APIResponseError,
+    ErrorCode,
+    handle_errors
+)
+from golfcal2.config.error_aggregator import aggregate_error
 
 class MetWeatherService(WeatherService):
     """Service for handling weather data from MET.no API."""
@@ -25,21 +35,22 @@ class MetWeatherService(WeatherService):
         """Initialize service with API endpoints and credentials."""
         super().__init__(local_tz, utc_tz)
         
-        # MET.no API configuration
-        self.endpoint = self.BASE_URL
-        self.headers = {
-            'Accept': 'application/json',
-            'User-Agent': self.USER_AGENT,
-        }
-        
-        # Initialize database
-        self.db = WeatherDatabase('met_weather', MET_SCHEMA)
-        
-        # Rate limiting configuration
-        self._last_api_call = None
-        self._min_call_interval = timedelta(seconds=1)  # MET.no requires 1 second between calls
-        
-        self.set_log_context(service="MET.no")
+        with handle_errors(WeatherError, "met_weather", "initialize service"):
+            # MET.no API configuration
+            self.endpoint = self.BASE_URL
+            self.headers = {
+                'Accept': 'application/json',
+                'User-Agent': self.USER_AGENT,
+            }
+            
+            # Initialize database
+            self.db = WeatherDatabase('met_weather', MET_SCHEMA)
+            
+            # Rate limiting configuration
+            self._last_api_call = None
+            self._min_call_interval = timedelta(seconds=1)  # MET.no requires 1 second between calls
+            
+            self.set_log_context(service="MET.no")
     
     @log_execution(level='DEBUG')
     def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime, altitude: Optional[int] = None) -> List[WeatherData]:
@@ -52,7 +63,12 @@ class MetWeatherService(WeatherService):
             end_time: End time for forecast
             altitude: Optional ground surface height in meters for more precise temperature values
         """
-        try:
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            f"get weather for coordinates ({lat}, {lon})",
+            lambda: []  # Fallback to empty list on error
+        ):
             self.set_log_context(
                 latitude=lat,
                 longitude=lon,
@@ -88,11 +104,23 @@ class MetWeatherService(WeatherService):
                 # Fetch from API if not in cache
                 api_data = self._fetch_from_api(lat, lon, altitude)
                 if not api_data:
+                    error = WeatherError(
+                        "Failed to fetch weather data from MET.no API",
+                        ErrorCode.API_ERROR,
+                        {"location": location}
+                    )
+                    aggregate_error(str(error), "met_weather", None)
                     return []
                 
                 # Parse and store in cache
                 weather_data = self._parse_api_data(api_data, start_time, end_time)
                 if not weather_data:
+                    error = WeatherError(
+                        "Failed to parse weather data from MET.no API",
+                        ErrorCode.PARSING_ERROR,
+                        {"location": location}
+                    )
+                    aggregate_error(str(error), "met_weather", None)
                     return []
                 
                 # Store in cache
@@ -114,7 +142,15 @@ class MetWeatherService(WeatherService):
                 
                 # Store with 2-hour expiry
                 expires = (datetime.utcnow() + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
-                self.db.store_weather_data(db_entries, expires=expires)
+                try:
+                    self.db.store_weather_data(db_entries, expires=expires)
+                except Exception as e:
+                    error = WeatherError(
+                        "Failed to store weather data in cache",
+                        ErrorCode.CACHE_ERROR,
+                        {"location": location}
+                    )
+                    aggregate_error(str(error), "met_weather", e.__traceback__)
             
             # Convert to WeatherData objects
             forecasts = []
@@ -134,13 +170,6 @@ class MetWeatherService(WeatherService):
                     forecasts.append(forecast)
             
             return forecasts
-            
-        except Exception as e:
-            self.error(
-                f"Failed to get MET weather for {lat},{lon}",
-                exc_info=e
-            )
-            return []
 
     def _fetch_from_api(self, lat: float, lon: float, altitude: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Fetch weather data from MET.no API.
@@ -150,13 +179,18 @@ class MetWeatherService(WeatherService):
             lon: Longitude in decimal degrees
             altitude: Optional ground surface height in meters
         """
-        try:
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            f"fetch from API for coordinates ({lat}, {lon})",
+            lambda: None  # Fallback to None on error
+        ):
             # Rate limiting
             if self._last_api_call:
                 elapsed = datetime.now() - self._last_api_call
                 if elapsed < self._min_call_interval:
                     sleep_time = (self._min_call_interval - elapsed).total_seconds()
-                    self.logger.debug(f"Rate limit: sleeping for {sleep_time} seconds")
+                    self.debug(f"Rate limit: sleeping for {sleep_time} seconds")
                     time.sleep(sleep_time)
             
             # Build API URL
@@ -168,106 +202,298 @@ class MetWeatherService(WeatherService):
             if altitude is not None:
                 params['altitude'] = str(int(altitude))
             
-            self.logger.debug(f"MET.no URL: {self.endpoint} (params: {params})")
+            self.debug(f"MET.no URL: {self.endpoint} (params: {params})")
             
-            # Make API request
-            response = requests.get(self.endpoint, params=params, headers=self.headers)
-            response.raise_for_status()
+            try:
+                # Make API request
+                response = requests.get(self.endpoint, params=params, headers=self.headers, timeout=10)
+                
+                self._last_api_call = datetime.now()
+                
+                if response.status_code == 429:  # Too Many Requests
+                    error = APIRateLimitError(
+                        "MET.no API rate limit exceeded",
+                        retry_after=int(response.headers.get('Retry-After', 60))
+                    )
+                    aggregate_error(str(error), "met_weather", None)
+                    return None
+                
+                if response.status_code != 200:
+                    error = APIResponseError(
+                        f"MET.no API request failed with status {response.status_code}",
+                        response=response
+                    )
+                    aggregate_error(str(error), "met_weather", None)
+                    return None
+                
+                return response.json()
+                
+            except requests.exceptions.Timeout:
+                error = APITimeoutError(
+                    "MET.no API request timed out",
+                    {"url": self.endpoint}
+                )
+                aggregate_error(str(error), "met_weather", None)
+                return None
+            except requests.exceptions.RequestException as e:
+                error = APIError(
+                    f"MET.no API request failed: {str(e)}",
+                    ErrorCode.REQUEST_FAILED,
+                    {"url": self.endpoint}
+                )
+                aggregate_error(str(error), "met_weather", e.__traceback__)
+                return None 
+
+    def _parse_api_data(self, data: Dict[str, Any], start_time: datetime, end_time: datetime) -> Dict[str, Dict[str, Any]]:
+        """Parse API response data into internal format."""
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            "parse API data",
+            lambda: {}  # Fallback to empty dict on error
+        ):
+            if not data or 'properties' not in data:
+                error = WeatherError(
+                    "Invalid API response format",
+                    ErrorCode.INVALID_RESPONSE,
+                    {"response": data}
+                )
+                aggregate_error(str(error), "met_weather", None)
+                return {}
             
-            self._last_api_call = datetime.now()
-            return response.json()
+            timeseries = data['properties'].get('timeseries', [])
+            if not timeseries:
+                error = WeatherError(
+                    "No timeseries data in API response",
+                    ErrorCode.INVALID_RESPONSE,
+                    {"response": data}
+                )
+                aggregate_error(str(error), "met_weather", None)
+                return {}
             
-        except Exception as e:
-            self.logger.error(f"Failed to fetch MET data: {e}", exc_info=True)
-            return None
+            weather_data = {}
+            for entry in timeseries:
+                with handle_errors(
+                    WeatherError,
+                    "met_weather",
+                    "parse forecast entry",
+                    lambda: None  # Skip entry on error
+                ):
+                    # Get timestamp
+                    time_str = entry.get('time')
+                    if not time_str:
+                        continue
+                        
+                    forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    
+                    # Skip if outside our time range
+                    if forecast_time < start_time or forecast_time > end_time:
+                        continue
+                    
+                    # Get instant data
+                    instant = entry.get('data', {}).get('instant', {}).get('details', {})
+                    if not instant:
+                        error = WeatherError(
+                            "Missing instant data in forecast entry",
+                            ErrorCode.INVALID_RESPONSE,
+                            {"entry": entry}
+                        )
+                        aggregate_error(str(error), "met_weather", None)
+                        continue
+                    
+                    # Get next 1 hour data
+                    next_1_hour = entry.get('data', {}).get('next_1_hours', {})
+                    details = next_1_hour.get('details', {})
+                    summary = next_1_hour.get('summary', {})
+                    
+                    # Get symbol code
+                    symbol_code = summary.get('symbol_code', 'cloudy')
+                    
+                    # Get thunder probability from API data first
+                    thunder_prob = details.get('probability_of_thunder', 0.0)
+                    
+                    # If not available, calculate from symbol code as fallback
+                    if not thunder_prob and 'thunder' in symbol_code:
+                        # Extract intensity from symbol code
+                        if 'heavy' in symbol_code:
+                            thunder_prob = 80.0
+                        elif 'light' in symbol_code:
+                            thunder_prob = 20.0
+                        else:
+                            thunder_prob = 50.0
+                    
+                    weather_data[time_str] = {
+                        'temperature': instant.get('air_temperature'),
+                        'precipitation': details.get('precipitation_amount', 0.0),
+                        'precipitation_probability': details.get('probability_of_precipitation'),
+                        'wind_speed': instant.get('wind_speed'),
+                        'wind_direction': self._get_wind_direction(instant.get('wind_from_direction')),
+                        'symbol': symbol_code,
+                        'thunder_probability': thunder_prob
+                    }
+            
+            return weather_data
+    
+    def _get_wind_direction(self, degrees: Optional[float]) -> Optional[str]:
+        """Convert wind direction from degrees to cardinal direction."""
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            f"get wind direction from {degrees} degrees",
+            lambda: None  # Fallback to None on error
+        ):
+            if degrees is None:
+                return None
+                
+            directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+            index = round(degrees / 45) % 8
+            return directions[index]
+    
+    def _map_symbol_code(self, symbol_code: str) -> str:
+        """Map MET.no symbol codes to our internal weather codes.
+        
+        See https://api.met.no/weatherapi/weathericon/2.0/documentation for symbol codes.
+        """
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            f"map symbol code {symbol_code}",
+            lambda: 'CLOUDY'  # Fallback to CLOUDY on error
+        ):
+            # Basic mapping of MET.no symbol codes to our internal codes
+            symbol_map = {
+                'clearsky': 'CLEAR',
+                'fair': 'PARTLY_CLOUDY',
+                'partlycloudy': 'PARTLY_CLOUDY',
+                'cloudy': 'CLOUDY',
+                'fog': 'FOG',
+                'rain': 'RAIN',
+                'sleet': 'SLEET',
+                'snow': 'SNOW',
+                'rainshowers': 'RAIN_SHOWERS',
+                'sleetshowers': 'SLEET_SHOWERS',
+                'snowshowers': 'SNOW_SHOWERS',
+                'lightrainshowers': 'LIGHT_RAIN',
+                'heavyrainshowers': 'HEAVY_RAIN',
+                'lightrain': 'LIGHT_RAIN',
+                'heavyrain': 'HEAVY_RAIN',
+                'lightsnow': 'LIGHT_SNOW',
+                'heavysnow': 'HEAVY_SNOW',
+                'thunder': 'THUNDER',
+                'rainandthunder': 'RAIN_AND_THUNDER',
+                'sleetandthunder': 'SLEET_AND_THUNDER',
+                'snowandthunder': 'SNOW_AND_THUNDER',
+                'rainshowersandthunder': 'RAIN_AND_THUNDER',
+                'sleetshowersandthunder': 'SLEET_AND_THUNDER',
+                'snowshowersandthunder': 'SNOW_AND_THUNDER'
+            }
+            
+            return symbol_map.get(symbol_code, 'CLOUDY')  # Default to CLOUDY if unknown code 
 
     def _parse_weather_data(self, data: Dict[str, Any], lat: float, lon: float) -> List[Dict[str, Any]]:
         """Parse weather data from API response."""
-        try:
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            "parse weather data",
+            lambda: []  # Fallback to empty list on error
+        ):
             parsed_data = []
             
             # Get time series data
             timeseries = data.get('properties', {}).get('timeseries', [])
             if not timeseries:
-                self.logger.error("No timeseries data found in API response")
+                error = WeatherError(
+                    "No timeseries data found in API response",
+                    ErrorCode.INVALID_RESPONSE,
+                    {"data": data}
+                )
+                aggregate_error(str(error), "met_weather", None)
                 return []
             
-            self.logger.debug(f"Found {len(timeseries)} time points in API response")
+            self.debug(f"Found {len(timeseries)} time points in API response")
             
             # Process each time point
             for entry in timeseries:
-                time = entry.get('time')
-                if not time:
-                    self.logger.warning("Time missing from entry, skipping")
-                    continue
-                
-                # Get instant and forecast data
-                data = entry.get('data', {})
-                instant = data.get('instant', {}).get('details', {})
-                next_1_hours = data.get('next_1_hours', {})
-                next_6_hours = data.get('next_6_hours', {})
-                
-                # Get the forecast details based on availability
-                forecast = next_1_hours if next_1_hours else next_6_hours
-                forecast_details = forecast.get('details', {})
-                forecast_summary = forecast.get('summary', {})
-                
-                self.logger.debug(f"Processing time point {time}:")
-                self.logger.debug(f"  Instant data: {instant}")
-                self.logger.debug(f"  1h forecast: {next_1_hours}")
-                self.logger.debug(f"  6h forecast: {next_6_hours}")
-                
-                # Skip if we don't have the required data
-                if not instant or not forecast:
-                    self.logger.warning(f"Missing required data for {time}, skipping")
-                    continue
-                
-                # Create base entry with instant data
-                weather_entry = {
-                    'location': f"{lat},{lon}",
-                    'time': time,
-                    'data': {
-                        'instant': {
-                            'details': instant
-                        }
-                    },
-                    'air_temperature': instant.get('air_temperature'),
-                    'precipitation_amount': data.get('precipitation', 0.0),
-                    'wind_speed': data.get('wind_speed', 0.0),
-                    'wind_from_direction': data.get('wind_from_direction'),
-                    'relative_humidity': instant.get('relative_humidity'),
-                    'cloud_area_fraction': instant.get('cloud_area_fraction'),
-                    'fog_area_fraction': instant.get('fog_area_fraction'),
-                    'ultraviolet_index': instant.get('ultraviolet_index_clear_sky'),
-                    'air_pressure': instant.get('air_pressure_at_sea_level'),
-                    'dew_point_temperature': instant.get('dew_point_temperature'),
-                    'wind_speed_gust': data.get('wind_speed_of_gust', 0.0),
-                    # Add forecast data
-                    'precipitation_probability': forecast_details.get('probability_of_precipitation', 0.0),
-                    'probability_of_thunder': forecast_details.get('probability_of_thunder', 0.0),
-                    'summary_code': forecast_summary.get('symbol_code', 'cloudy'),
-                    'data_type': 'next_1_hours' if next_1_hours else 'next_6_hours'
-                }
-                
-                # Add the complete forecast data
-                if next_1_hours:
-                    weather_entry['data']['next_1_hours'] = next_1_hours
-                if next_6_hours:
-                    weather_entry['data']['next_6_hours'] = next_6_hours
-                
-                self.logger.debug(f"Created weather entry for {time}: {weather_entry}")
-                parsed_data.append(weather_entry)
+                with handle_errors(
+                    WeatherError,
+                    "met_weather",
+                    "process time point",
+                    lambda: None  # Skip entry on error
+                ):
+                    time = entry.get('time')
+                    if not time:
+                        self.warning("Time missing from entry, skipping")
+                        continue
+                    
+                    # Get instant and forecast data
+                    data = entry.get('data', {})
+                    instant = data.get('instant', {}).get('details', {})
+                    next_1_hours = data.get('next_1_hours', {})
+                    next_6_hours = data.get('next_6_hours', {})
+                    
+                    # Get the forecast details based on availability
+                    forecast = next_1_hours if next_1_hours else next_6_hours
+                    forecast_details = forecast.get('details', {})
+                    forecast_summary = forecast.get('summary', {})
+                    
+                    self.debug(f"Processing time point {time}:")
+                    self.debug(f"  Instant data: {instant}")
+                    self.debug(f"  1h forecast: {next_1_hours}")
+                    self.debug(f"  6h forecast: {next_6_hours}")
+                    
+                    # Skip if we don't have the required data
+                    if not instant or not forecast:
+                        self.warning(f"Missing required data for {time}, skipping")
+                        continue
+                    
+                    # Create base entry with instant data
+                    weather_entry = {
+                        'location': f"{lat},{lon}",
+                        'time': time,
+                        'data': {
+                            'instant': {
+                                'details': instant
+                            }
+                        },
+                        'air_temperature': instant.get('air_temperature'),
+                        'precipitation_amount': data.get('precipitation', 0.0),
+                        'wind_speed': data.get('wind_speed', 0.0),
+                        'wind_from_direction': data.get('wind_from_direction'),
+                        'relative_humidity': instant.get('relative_humidity'),
+                        'cloud_area_fraction': instant.get('cloud_area_fraction'),
+                        'fog_area_fraction': instant.get('fog_area_fraction'),
+                        'ultraviolet_index': instant.get('ultraviolet_index_clear_sky'),
+                        'air_pressure': instant.get('air_pressure_at_sea_level'),
+                        'dew_point_temperature': instant.get('dew_point_temperature'),
+                        'wind_speed_gust': data.get('wind_speed_of_gust', 0.0),
+                        # Add forecast data
+                        'precipitation_probability': forecast_details.get('probability_of_precipitation', 0.0),
+                        'probability_of_thunder': forecast_details.get('probability_of_thunder', 0.0),
+                        'summary_code': forecast_summary.get('symbol_code', 'cloudy'),
+                        'data_type': 'next_1_hours' if next_1_hours else 'next_6_hours'
+                    }
+                    
+                    # Add the complete forecast data
+                    if next_1_hours:
+                        weather_entry['data']['next_1_hours'] = next_1_hours
+                    if next_6_hours:
+                        weather_entry['data']['next_6_hours'] = next_6_hours
+                    
+                    self.debug(f"Created weather entry for {time}: {weather_entry}")
+                    parsed_data.append(weather_entry)
             
-            self.logger.debug(f"Parsed {len(parsed_data)} weather entries")
+            self.debug(f"Parsed {len(parsed_data)} weather entries")
             return parsed_data
-            
-        except Exception as e:
-            self.logger.error(f"Failed to parse weather data: {e}")
-            return []
 
     def _store_weather_data(self, parsed_data: List[Dict[str, Any]], expires: Optional[str], last_modified: Optional[str]) -> None:
         """Store weather data in the database."""
-        try:
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            "store weather data",
+            lambda: None  # Fallback to None on error
+        ):
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
                 
@@ -277,57 +503,65 @@ class MetWeatherService(WeatherService):
                 
                 # Store each entry
                 for entry in parsed_data:
-                    # Prepare values for insertion
-                    values = (
-                        entry['location'],
-                        entry['time'],
-                        entry.get('data_type'),
-                        entry.get('air_pressure'),
-                        entry.get('air_temperature'),
-                        entry.get('cloud_area_fraction'),
-                        entry.get('dew_point_temperature'),
-                        entry.get('fog_area_fraction'),
-                        entry.get('relative_humidity'),
-                        entry.get('ultraviolet_index'),
-                        entry.get('wind_from_direction'),
-                        entry.get('wind_speed'),
-                        entry.get('wind_speed_gust'),
-                        entry.get('precipitation_amount'),
-                        entry.get('precipitation_max'),
-                        entry.get('precipitation_min'),
-                        entry.get('precipitation_rate'),
-                        entry.get('precipitation_intensity'),
-                        entry.get('probability_of_precipitation'),
-                        entry.get('probability_of_thunder'),
-                        entry.get('temperature_max'),
-                        entry.get('temperature_min'),
-                        entry.get('summary_code'),
-                        expires_iso,
-                        last_modified_iso
-                    )
-                    
-                    # Insert or replace data
-                    cursor.execute('''
-                        INSERT OR REPLACE INTO weather (
-                            location, time, data_type,
-                            air_pressure, air_temperature, cloud_area_fraction,
-                            dew_point_temperature, fog_area_fraction, relative_humidity,
-                            ultraviolet_index, wind_from_direction, wind_speed,
-                            wind_speed_gust, precipitation_amount, precipitation_max,
-                            precipitation_min, precipitation_rate, precipitation_intensity,
-                            probability_of_precipitation, probability_of_thunder, temperature_max,
-                            temperature_min, summary_code, expires, last_modified
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', values)
+                    with handle_errors(
+                        WeatherError,
+                        "met_weather",
+                        "store weather entry",
+                        lambda: None  # Skip entry on error
+                    ):
+                        # Prepare values for insertion
+                        values = (
+                            entry['location'],
+                            entry['time'],
+                            entry.get('data_type'),
+                            entry.get('air_pressure'),
+                            entry.get('air_temperature'),
+                            entry.get('cloud_area_fraction'),
+                            entry.get('dew_point_temperature'),
+                            entry.get('fog_area_fraction'),
+                            entry.get('relative_humidity'),
+                            entry.get('ultraviolet_index'),
+                            entry.get('wind_from_direction'),
+                            entry.get('wind_speed'),
+                            entry.get('wind_speed_gust'),
+                            entry.get('precipitation_amount'),
+                            entry.get('precipitation_max'),
+                            entry.get('precipitation_min'),
+                            entry.get('precipitation_rate'),
+                            entry.get('precipitation_intensity'),
+                            entry.get('probability_of_precipitation'),
+                            entry.get('probability_of_thunder'),
+                            entry.get('temperature_max'),
+                            entry.get('temperature_min'),
+                            entry.get('summary_code'),
+                            expires_iso,
+                            last_modified_iso
+                        )
+                        
+                        # Insert or replace data
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO weather (
+                                location, time, data_type,
+                                air_pressure, air_temperature, cloud_area_fraction,
+                                dew_point_temperature, fog_area_fraction, relative_humidity,
+                                ultraviolet_index, wind_from_direction, wind_speed,
+                                wind_speed_gust, precipitation_amount, precipitation_max,
+                                precipitation_min, precipitation_rate, precipitation_intensity,
+                                probability_of_precipitation, probability_of_thunder, temperature_max,
+                                temperature_min, summary_code, expires, last_modified
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', values)
                 
                 conn.commit()
-                
-        except Exception:
-            raise
 
     def _convert_date_to_iso(self, date_str: str) -> Optional[str]:
         """Convert date string to ISO format."""
-        try:
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            "convert date to ISO format",
+            lambda: None  # Fallback to None on error
+        ):
             # Parse various date formats
             for fmt in ['%a, %d %b %Y %H:%M:%S %Z', '%Y-%m-%dT%H:%M:%SZ']:
                 try:
@@ -336,18 +570,22 @@ class MetWeatherService(WeatherService):
                 except ValueError:
                     continue
             return None
-        except Exception:
-            return None 
 
     def _fetch_weather_data(self, lat: float, lon: float, times: List[str], interval: int) -> Dict[str, Dict[str, Any]]:
         """Fetch weather data from MET.no API."""
-        # Try to get from cache first
-        weather_data = self._try_get_weather_data(times, interval, lat, lon)
-        if not weather_data:
-            # Fetch from API if not in cache
-            weather_data = self._fetch_from_api(lat, lon, times)
-        
-        return weather_data 
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            f"fetch weather data for coordinates ({lat}, {lon})",
+            lambda: {}  # Fallback to empty dict on error
+        ):
+            # Try to get from cache first
+            weather_data = self._try_get_weather_data(times, interval, lat, lon)
+            if not weather_data:
+                # Fetch from API if not in cache
+                weather_data = self._fetch_from_api(lat, lon, times)
+            
+            return weather_data
 
     def _parse_met_data(self, data: Dict[str, Any], start_time: datetime, duration_minutes: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Parse MET API response into our format.
@@ -390,19 +628,39 @@ class MetWeatherService(WeatherService):
             }
         }
         """
-        try:
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            "parse MET data",
+            lambda: None  # Fallback to None on error
+        ):
             if not data or data.get('type') != 'Feature':
-                self.logger.error("Invalid API response format - not a GeoJSON Feature")
+                error = WeatherError(
+                    "Invalid API response format - not a GeoJSON Feature",
+                    ErrorCode.INVALID_RESPONSE,
+                    {"data": data}
+                )
+                aggregate_error(str(error), "met_weather", None)
                 return None
             
             properties = data.get('properties')
             if not properties:
-                self.logger.error("No properties found in API response")
+                error = WeatherError(
+                    "No properties found in API response",
+                    ErrorCode.INVALID_RESPONSE,
+                    {"data": data}
+                )
+                aggregate_error(str(error), "met_weather", None)
                 return None
             
             timeseries = properties.get('timeseries')
             if not timeseries:
-                self.logger.error("No timeseries data found in API response")
+                error = WeatherError(
+                    "No timeseries data found in API response",
+                    ErrorCode.INVALID_RESPONSE,
+                    {"data": data}
+                )
+                aggregate_error(str(error), "met_weather", None)
                 return None
             
             # Calculate end time
@@ -414,7 +672,12 @@ class MetWeatherService(WeatherService):
             # Parse each forecast
             parsed_data = {}
             for entry in timeseries:
-                try:
+                with handle_errors(
+                    WeatherError,
+                    "met_weather",
+                    "parse forecast entry",
+                    lambda: None  # Skip entry on error
+                ):
                     # Convert timestamp to datetime
                     time_str = entry['time']
                     forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
@@ -442,21 +705,13 @@ class MetWeatherService(WeatherService):
                         'probability_of_thunder': details.get('probability_of_thunder', 0.0),
                         'symbol_code': summary.get('symbol_code')
                     }
-                    
-                except (KeyError, ValueError) as e:
-                    self.logger.warning(f"Failed to parse forecast: {e}")
-                    continue
             
             if not parsed_data:
-                self.logger.warning(f"No valid forecasts found between {start_time} and {end_time}")
+                self.warning(f"No valid forecasts found between {start_time} and {end_time}")
                 return None
-                
-            self.logger.debug(f"Successfully parsed {len(parsed_data)} forecasts")
-            return parsed_data
             
-        except Exception as e:
-            self.logger.error(f"Failed to parse MET data: {e}")
-            return None 
+            self.debug(f"Successfully parsed {len(parsed_data)} forecasts")
+            return parsed_data
 
     def _get_expires_from_headers(self) -> str:
         """Get expiry time from API response headers.
@@ -464,12 +719,23 @@ class MetWeatherService(WeatherService):
         Met.no API updates data every hour, but we'll use a conservative
         2-hour expiry to ensure we have fresh data.
         """
-        return (datetime.now(self.utc_tz) + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ') 
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            "get expires from headers",
+            lambda: (datetime.now(self.utc_tz) + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ')  # Fallback to 2 hours from now
+        ):
+            return (datetime.now(self.utc_tz) + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     @log_execution(level='DEBUG', include_args=True)
     def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
         """Fetch forecasts from MET.no API."""
-        try:
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            f"fetch forecasts for coordinates ({lat}, {lon})",
+            lambda: []  # Fallback to empty list on error
+        ):
             # Apply rate limiting
             self._apply_rate_limit()
             
@@ -490,219 +756,143 @@ class MetWeatherService(WeatherService):
                 params=params
             )
             
-            # Make request
-            response = requests.get(
-                self.BASE_URL,
-                params=params,
-                headers=headers,
-                timeout=(10, 30)  # (connect timeout, read timeout)
-            )
-            response.raise_for_status()
-            
-            # Parse response
-            data = response.json()
-            forecasts = self._parse_response(data, start_time, end_time)
-            
-            self.info(
-                "Successfully parsed forecasts",
-                count=len(forecasts)
-            )
-            
-            return forecasts
-            
-        except requests.RequestException as e:
-            self.error(
-                "Failed to fetch data from MET.no",
-                exc_info=e,
-                status_code=getattr(e.response, 'status_code', None),
-                error_response=getattr(e.response, 'text', None)
-            )
-            return []
-            
-        except Exception as e:
-            self.error(
-                "Failed to process MET.no data",
-                exc_info=e
-            )
-            return []
-    
+            try:
+                # Make request
+                response = requests.get(
+                    self.BASE_URL,
+                    params=params,
+                    headers=headers,
+                    timeout=(10, 30)  # (connect timeout, read timeout)
+                )
+                
+                if response.status_code == 429:  # Too Many Requests
+                    error = APIRateLimitError(
+                        "MET.no API rate limit exceeded",
+                        retry_after=int(response.headers.get('Retry-After', 60))
+                    )
+                    aggregate_error(str(error), "met_weather", None)
+                    return []
+                
+                if response.status_code != 200:
+                    error = APIResponseError(
+                        f"MET.no API request failed with status {response.status_code}",
+                        response=response
+                    )
+                    aggregate_error(str(error), "met_weather", None)
+                    return []
+                
+                # Parse response
+                data = response.json()
+                forecasts = self._parse_response(data, start_time, end_time)
+                
+                self.info(
+                    "Successfully parsed forecasts",
+                    count=len(forecasts)
+                )
+                
+                return forecasts
+                
+            except requests.exceptions.Timeout:
+                error = APITimeoutError(
+                    "MET.no API request timed out",
+                    {"url": self.BASE_URL}
+                )
+                aggregate_error(str(error), "met_weather", None)
+                return []
+            except requests.exceptions.RequestException as e:
+                error = APIError(
+                    f"MET.no API request failed: {str(e)}",
+                    ErrorCode.REQUEST_FAILED,
+                    {"url": self.BASE_URL}
+                )
+                aggregate_error(str(error), "met_weather", e.__traceback__)
+                return []
+
     @log_execution(level='DEBUG')
     def _parse_response(self, data: Dict[str, Any], start_time: datetime, end_time: datetime) -> List[WeatherData]:
         """Parse MET.no API response."""
-        forecasts = []
-        
-        try:
-            timeseries = data['properties']['timeseries']
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            "parse API response",
+            lambda: []  # Fallback to empty list on error
+        ):
+            forecasts = []
             
-            for entry in timeseries:
-                time_str = entry['time']
-                forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+            try:
+                timeseries = data['properties']['timeseries']
                 
-                # Skip forecasts outside our time range
-                if not (start_time <= forecast_time <= end_time):
-                    continue
+                for entry in timeseries:
+                    with handle_errors(
+                        WeatherError,
+                        "met_weather",
+                        "parse forecast entry",
+                        lambda: None  # Skip entry on error
+                    ):
+                        time_str = entry['time']
+                        forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                        
+                        # Skip forecasts outside our time range
+                        if not (start_time <= forecast_time <= end_time):
+                            continue
+                        
+                        # Get instant data
+                        instant = entry['data']['instant']['details']
+                        
+                        # Get precipitation data from next_1_hours if available, else next_6_hours
+                        precip_data = (
+                            entry['data'].get('next_1_hours', {}).get('details', {}) or
+                            entry['data'].get('next_6_hours', {}).get('details', {})
+                        )
+                        
+                        # Get symbol from next_1_hours if available, else next_6_hours
+                        symbol_data = (
+                            entry['data'].get('next_1_hours', {}).get('summary', {}) or
+                            entry['data'].get('next_6_hours', {}).get('summary', {})
+                        )
+                        
+                        forecast = WeatherData(
+                            temperature=instant.get('air_temperature'),
+                            precipitation=precip_data.get('precipitation_amount', 0.0),
+                            precipitation_probability=precip_data.get('probability_of_precipitation'),
+                            wind_speed=instant.get('wind_speed', 0.0),
+                            wind_direction=self._get_wind_direction(instant.get('wind_from_direction')),
+                            symbol=symbol_data.get('symbol_code', 'cloudy'),
+                            elaboration_time=forecast_time,
+                            thunder_probability=entry['data'].get('probability_of_thunder', 0.0)
+                        )
+                        
+                        forecasts.append(forecast)
                 
-                # Get instant data
-                instant = entry['data']['instant']['details']
+                return forecasts
                 
-                # Get precipitation data from next_1_hours if available, else next_6_hours
-                precip_data = (
-                    entry['data'].get('next_1_hours', {}).get('details', {}) or
-                    entry['data'].get('next_6_hours', {}).get('details', {})
+            except KeyError as e:
+                error = WeatherError(
+                    "Invalid data structure in MET.no response",
+                    ErrorCode.INVALID_RESPONSE,
+                    {
+                        "error": str(e),
+                        "data_keys": list(data.keys()) if isinstance(data, dict) else None
+                    }
                 )
-                
-                # Get symbol from next_1_hours if available, else next_6_hours
-                symbol_data = (
-                    entry['data'].get('next_1_hours', {}).get('summary', {}) or
-                    entry['data'].get('next_6_hours', {}).get('summary', {})
-                )
-                
-                forecast = WeatherData(
-                    temperature=instant.get('air_temperature'),
-                    precipitation=precip_data.get('precipitation_amount', 0.0),
-                    precipitation_probability=precip_data.get('probability_of_precipitation'),
-                    wind_speed=instant.get('wind_speed', 0.0),
-                    wind_direction=self._get_wind_direction(instant.get('wind_from_direction')),
-                    symbol=symbol_data.get('symbol_code', 'cloudy'),
-                    elaboration_time=forecast_time,
-                    thunder_probability=entry['data'].get('probability_of_thunder', 0.0)
-                )
-                
-                forecasts.append(forecast)
-            
-            return forecasts
-            
-        except KeyError as e:
-            self.error(
-                "Invalid data structure in MET.no response",
-                exc_info=e,
-                data_keys=list(data.keys()) if isinstance(data, dict) else None
-            )
-            return []
-    
+                aggregate_error(str(error), "met_weather", e.__traceback__)
+                return []
+
     def _apply_rate_limit(self) -> None:
         """Apply rate limiting for MET.no API."""
-        # Ensure at least 1 second between requests
-        elapsed = time.time() - self._last_request_time
-        if elapsed < 1.0:
-            sleep_time = 1.0 - elapsed
-            self.debug(
-                "Rate limit",
-                sleep_seconds=sleep_time
-            )
-            time.sleep(sleep_time)
-        self._last_request_time = time.time()
-    
-    def _get_wind_direction(self, degrees: Optional[float]) -> Optional[str]:
-        """Convert wind direction from degrees to cardinal direction."""
-        if degrees is None:
-            return None
-            
-        directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-        index = round(degrees / 45) % 8
-        return directions[index] 
-
-    def _parse_api_data(self, data: Dict[str, Any], start_time: datetime, end_time: datetime) -> Dict[str, Dict[str, Any]]:
-        """Parse API response data into internal format."""
-        try:
-            if not data or 'properties' not in data:
-                return {}
-            
-            timeseries = data['properties'].get('timeseries', [])
-            if not timeseries:
-                return {}
-            
-            weather_data = {}
-            for entry in timeseries:
-                try:
-                    # Get timestamp
-                    time_str = entry.get('time')
-                    if not time_str:
-                        continue
-                        
-                    forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                    
-                    # Skip if outside our time range
-                    if forecast_time < start_time or forecast_time > end_time:
-                        continue
-                    
-                    # Get instant data
-                    instant = entry.get('data', {}).get('instant', {}).get('details', {})
-                    if not instant:
-                        continue
-                    
-                    # Get next 1 hour data
-                    next_1_hour = entry.get('data', {}).get('next_1_hours', {})
-                    details = next_1_hour.get('details', {})
-                    summary = next_1_hour.get('summary', {})
-                    
-                    # Get symbol code
-                    symbol_code = summary.get('symbol_code', 'cloudy')
-                    
-                    # Get thunder probability from API data first
-                    thunder_prob = details.get('probability_of_thunder', 0.0)
-                    
-                    # If not available, calculate from symbol code as fallback
-                    if not thunder_prob and 'thunder' in symbol_code:
-                        # Extract intensity from symbol code
-                        if 'heavy' in symbol_code:
-                            thunder_prob = 80.0
-                        elif 'light' in symbol_code:
-                            thunder_prob = 20.0
-                        else:
-                            thunder_prob = 50.0
-                    
-                    weather_data[time_str] = {
-                        'temperature': instant.get('air_temperature'),
-                        'precipitation': details.get('precipitation_amount', 0.0),
-                        'precipitation_probability': details.get('probability_of_precipitation'),
-                        'wind_speed': instant.get('wind_speed'),
-                        'wind_direction': self._get_wind_direction(instant.get('wind_from_direction')),
-                        'symbol': symbol_code,
-                        'thunder_probability': thunder_prob
-                    }
-                    
-                except (KeyError, ValueError) as e:
-                    self.warning(f"Failed to parse forecast entry: {e}")
-                    continue
-            
-            return weather_data
-            
-        except Exception as e:
-            self.error("Failed to parse API data", exc_info=e)
-            return {}
-    
-    def _map_symbol_code(self, symbol_code: str) -> str:
-        """Map MET.no symbol codes to our internal weather codes.
-        
-        See https://api.met.no/weatherapi/weathericon/2.0/documentation for symbol codes.
-        """
-        # Basic mapping of MET.no symbol codes to our internal codes
-        symbol_map = {
-            'clearsky': 'CLEAR',
-            'fair': 'PARTLY_CLOUDY',
-            'partlycloudy': 'PARTLY_CLOUDY',
-            'cloudy': 'CLOUDY',
-            'fog': 'FOG',
-            'rain': 'RAIN',
-            'sleet': 'SLEET',
-            'snow': 'SNOW',
-            'rainshowers': 'RAIN_SHOWERS',
-            'sleetshowers': 'SLEET_SHOWERS',
-            'snowshowers': 'SNOW_SHOWERS',
-            'lightrainshowers': 'LIGHT_RAIN',
-            'heavyrainshowers': 'HEAVY_RAIN',
-            'lightrain': 'LIGHT_RAIN',
-            'heavyrain': 'HEAVY_RAIN',
-            'lightsnow': 'LIGHT_SNOW',
-            'heavysnow': 'HEAVY_SNOW',
-            'thunder': 'THUNDER',
-            'rainandthunder': 'RAIN_AND_THUNDER',
-            'sleetandthunder': 'SLEET_AND_THUNDER',
-            'snowandthunder': 'SNOW_AND_THUNDER',
-            'rainshowersandthunder': 'RAIN_AND_THUNDER',
-            'sleetshowersandthunder': 'SLEET_AND_THUNDER',
-            'snowshowersandthunder': 'SNOW_AND_THUNDER'
-        }
-        
-        return symbol_map.get(symbol_code, 'CLOUDY')  # Default to CLOUDY if unknown code 
+        with handle_errors(
+            WeatherError,
+            "met_weather",
+            "apply rate limit",
+            lambda: None  # Fallback to None on error
+        ):
+            # Ensure at least 1 second between requests
+            elapsed = time.time() - self._last_request_time
+            if elapsed < 1.0:
+                sleep_time = 1.0 - elapsed
+                self.debug(
+                    "Rate limit",
+                    sleep_seconds=sleep_time
+                )
+                time.sleep(sleep_time)
+            self._last_request_time = time.time() 
