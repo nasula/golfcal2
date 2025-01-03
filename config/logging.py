@@ -14,7 +14,7 @@ from golfcal2.config.logging_filters import (
     SamplingFilter, SensitiveDataFilter, CorrelationFilter
 )
 from golfcal2.config.logging_config import (
-    load_logging_config, LoggingConfig, ServiceLogConfig
+    load_logging_config, LoggingConfig, ServiceConfig
 )
 
 class JsonFormatter(logging.Formatter):
@@ -198,6 +198,10 @@ def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = Fal
     # Load granular logging configuration
     logging_config = load_logging_config()
     
+    # Initialize error aggregator
+    from golfcal2.config.error_aggregator import init_error_aggregator
+    init_error_aggregator(logging_config.error_aggregation)
+    
     # Get log level based on mode
     if verbose:  # Explicit request for debug logs
         level = logging_config.verbose_level  # DEBUG
@@ -247,6 +251,12 @@ def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = Fal
             file_handler.addFilter(SamplingFilter(logging_config.sampling.debug_rate))
         
         handlers.append(file_handler)
+
+    # Add error aggregation handler if enabled
+    if logging_config.error_aggregation.enabled:
+        from golfcal2.config.logging_handlers import AggregatingErrorHandler
+        error_handler = AggregatingErrorHandler()
+        handlers.append(error_handler)
 
     # Configure root logger
     root_logger = logging.getLogger()
