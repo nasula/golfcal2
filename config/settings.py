@@ -105,6 +105,9 @@ class AppConfig:
             logging.getLogger('requests').setLevel(logging.WARNING)
             logging.getLogger('icalendar').setLevel(logging.WARNING)
 
+# Global settings instance
+_settings: Optional[AppConfig] = None
+
 def load_config(config_dir: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig:
     """
     Load configuration from JSON and YAML files.
@@ -255,3 +258,14 @@ def validate_config(config: AppConfig) -> bool:
     except Exception as e:
         print(f"Configuration validation failed: {e}")
         return False 
+
+def get_settings() -> AppConfig:
+    """Get the application settings singleton.
+    
+    Returns:
+        AppConfig: The application settings instance
+    """
+    global _settings
+    if _settings is None:
+        _settings = load_config()
+    return _settings 
