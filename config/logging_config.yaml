@@ -32,7 +32,7 @@ console:
 
 # Sampling configuration
 sampling:
-  debug_rate: 0.1    # Sample 10% of debug logs (only when verbose mode)
+  debug_rate: 1.0    # Keep all debug logs
   info_rate: 1.0     # Keep all info logs
   warning_rate: 1.0  # Keep all warning logs
   error_rate: 1.0    # Keep all error logs
@@ -41,10 +41,10 @@ sampling:
 # Service-specific settings
 services:
   # Weather service logging
-  weather:
-    level: INFO
+  weather_service:
+    level: DEBUG
     sampling:
-      debug_rate: 0.1    # Only applies when verbose mode enabled
+      debug_rate: 1.0    # Only applies when verbose mode enabled
       info_rate: 1.0     # Keep all info logs
       warning_rate: 1.0  # Keep all warning logs
       error_rate: 1.0    # Keep all error logs
@@ -62,8 +62,8 @@ services:
       backup_count: 5
 
   # Calendar service logging
-  calendar:
-    level: INFO
+  calendar_service:
+    level: DEBUG
     sampling:
       debug_rate: 0.2    # Only applies when verbose mode enabled
       info_rate: 1.0     # Keep all info logs
@@ -99,8 +99,8 @@ services:
       backup_count: 5
 
   # Reservation service logging
-  reservation:
-    level: INFO
+  reservation_service:
+    level: DEBUG
     sampling:
       debug_rate: 0.2    # Only applies when verbose mode enabled
       info_rate: 1.0     # Keep all info logs
@@ -119,8 +119,8 @@ services:
       backup_count: 7
 
   # Golf club service logging
-  club:
-    level: INFO
+  club_service:
+    level: DEBUG
     sampling:
       debug_rate: 0.1    # Only applies when verbose mode enabled
       info_rate: 1.0     # Keep all info logs

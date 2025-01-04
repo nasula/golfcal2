@@ -27,18 +27,24 @@ from golfcal2.config.error_aggregator import aggregate_error
 class MediterraneanWeatherService(WeatherService):
     """Weather service using OpenWeather API."""
     
-    def __init__(self, local_tz, utc_tz):
-        """Initialize service with API endpoints and credentials."""
+    def __init__(self, local_tz, utc_tz, config):
+        """Initialize service with API endpoints and credentials.
+        
+        Args:
+            local_tz: Local timezone
+            utc_tz: UTC timezone
+            config: Application configuration
+        """
         super().__init__(local_tz, utc_tz)
         
         with handle_errors(WeatherError, "mediterranean_weather", "initialize service"):
             # OpenWeather API configuration
-            self.api_key = os.getenv('OPENWEATHER_API_KEY', '92577a95d8e413ac11ed1c1d54b23e60')
+            self.api_key = config.global_config['api_keys']['weather']['openweather']
             if not self.api_key:
                 error = WeatherError(
                     "OpenWeather API key not configured",
                     ErrorCode.CONFIG_MISSING,
-                    {"setting": "OPENWEATHER_API_KEY"}
+                    {"setting": "api_keys.weather.openweather"}
                 )
                 aggregate_error(str(error), "mediterranean_weather", None)
                 raise error

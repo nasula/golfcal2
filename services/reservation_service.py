@@ -13,7 +13,7 @@ from icalendar import Event, Calendar
 from golfcal2.models.golf_club import GolfClubFactory
 from golfcal2.models.reservation import Reservation
 from golfcal2.models.user import User, Membership
-from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.config.settings import AppConfig
 from golfcal2.services.auth_service import AuthService
 from golfcal2.services.weather_service import WeatherManager
@@ -28,7 +28,7 @@ from golfcal2.exceptions import (
 )
 from golfcal2.config.error_aggregator import aggregate_error
 
-class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
+class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
     """Service for handling reservations."""
     
     def __init__(self, config: AppConfig, user_name: str):
@@ -38,13 +38,16 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
         self.user_name = user_name
         
         with handle_errors(APIError, "reservation", "initialize services"):
+            # Test debug call
+            self.debug(">>> TEST DEBUG: ReservationService initialized")
+            
             # Initialize timezone settings
             self.utc_tz = pytz.UTC
             self.local_tz = pytz.timezone('Europe/Helsinki')  # Finland timezone
             
             # Initialize services
             self.auth_service = AuthService()
-            self.weather_service = WeatherManager(self.local_tz, self.utc_tz)
+            self.weather_service = WeatherManager(self.local_tz, self.utc_tz, self.config)
     
     def _make_api_request(self, method: str, url: str, headers: Dict[str, str] = None, data: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -110,11 +113,11 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
             f"process user {user_name}",
             lambda: (Calendar(), [])  # Fallback to empty calendar and reservations
         ):
-            self.logger.debug(f"Processing reservations for user {user_name}")
-            self.logger.debug(f"User config: {user_config}")
+            self.debug(f"Processing reservations for user {user_name}")
+            self.debug(f"User config: {user_config}")
             
             user = User.from_config(user_name, user_config)
-            self.logger.debug(f"Created user with {len(user.memberships)} memberships")
+            self.debug(f"Created user with {len(user.memberships)} memberships")
             all_reservations = []
             
             # Create calendar
@@ -123,7 +126,7 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
             # Calculate cutoff time (24 hours ago)
             now = datetime.now(self.local_tz)
             cutoff_time = now - timedelta(hours=24)
-            self.logger.debug(f"Using cutoff time: {cutoff_time}")
+            self.debug(f"Using cutoff time: {cutoff_time}")
             
             for membership in user.memberships:
                 with handle_errors(
@@ -132,8 +135,8 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
                     f"process membership {membership.club} for user {user_name}",
                     lambda: None
                 ):
-                    self.logger.debug(f"Processing membership {membership.club} for user {user_name}")
-                    self.logger.debug(f"Membership details: {membership.__dict__}")
+                    self.debug(f"Processing membership {membership.club} for user {user_name}")
+                    self.debug(f"Membership details: {membership.__dict__}")
                     
                     if membership.club not in self.config.clubs:
                         error = APIError(
@@ -145,7 +148,7 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
                         continue
 
                     club_details = self.config.clubs[membership.club]
-                    self.logger.debug(f"Club details from config: {club_details}")
+                    self.debug(f"Club details from config: {club_details}")
                     
                     club = GolfClubFactory.create_club(club_details, membership, self.auth_service)
                     if not club:
@@ -157,11 +160,11 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
                         aggregate_error(str(error), "reservation", None)
                         continue
                     
-                    self.logger.debug(f"Created club instance of type: {type(club).__name__}")
-                    self.logger.debug(f"Fetching reservations from {club.name}")
+                    self.debug(f"Created club instance of type: {type(club).__name__}")
+                    self.debug(f"Fetching reservations from {club.name}")
                     
                     raw_reservations = club.fetch_reservations(membership)
-                    self.logger.debug(f"Found {len(raw_reservations)} raw reservations for {club.name}")
+                    self.debug(f"Found {len(raw_reservations)} raw reservations for {club.name}")
                     
                     for raw_reservation in raw_reservations:
                         with handle_errors(
@@ -201,7 +204,7 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
             
             # Sort reservations by start time
             all_reservations.sort(key=lambda r: r.start_time)
-            self.logger.debug(f"Returning {len(all_reservations)} reservations for user {user_name}")
+            self.debug(f"Returning {len(all_reservations)} reservations for user {user_name}")
             
             # Return both calendar and reservations
             return cal, all_reservations
@@ -218,13 +221,13 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
         all_reservations: List[Reservation]
     ) -> None:
         """Process a WiseGolf reservation."""
-        self.logger.debug(f"Processing WiseGolf reservation: {raw_reservation}")
+        self.debug(f"Processing WiseGolf reservation: {raw_reservation}")
         start_time = datetime.strptime(raw_reservation['dateTimeStart'], '%Y-%m-%d %H:%M:%S')
         start_time = start_time.replace(tzinfo=self.local_tz)
         
         # Skip if older than cutoff
         if start_time < cutoff_time:
-            self.logger.debug(f"Skipping old WiseGolf reservation: {start_time}")
+            self.debug(f"Skipping old WiseGolf reservation: {start_time}")
             return
         
         reservation = Reservation.from_wisegolf(raw_reservation, club, user, membership)
@@ -244,13 +247,13 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
         all_reservations: List[Reservation]
     ) -> None:
         """Process a WiseGolf0 reservation."""
-        self.logger.debug(f"Processing WiseGolf0 reservation: {raw_reservation}")
+        self.debug(f"Processing WiseGolf0 reservation: {raw_reservation}")
         start_time = datetime.strptime(raw_reservation['dateTimeStart'], '%Y-%m-%d %H:%M:%S')
         start_time = start_time.replace(tzinfo=self.local_tz)
         
         # Skip if older than cutoff
         if start_time < cutoff_time:
-            self.logger.debug(f"Skipping old WiseGolf0 reservation: {start_time}")
+            self.debug(f"Skipping old WiseGolf0 reservation: {start_time}")
             return
         
         reservation = Reservation.from_wisegolf0(raw_reservation, club, user, membership)
@@ -270,12 +273,12 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
         all_reservations: List[Reservation]
     ) -> None:
         """Process a NexGolf reservation."""
-        self.logger.debug(f"Processing NexGolf reservation: {raw_reservation}")
+        self.debug(f"Processing NexGolf reservation: {raw_reservation}")
         reservation = Reservation.from_nexgolf(raw_reservation, club, user, membership)
         
         # Skip if older than cutoff
         if reservation.start_time < cutoff_time:
-            self.logger.debug(f"Skipping old NexGolf reservation: {reservation.start_time}")
+            self.debug(f"Skipping old NexGolf reservation: {reservation.start_time}")
             return
         
         if self._should_include_reservation(reservation, past_days, self.local_tz):
@@ -294,12 +297,12 @@ class ReservationService(LoggerMixin, ReservationHandlerMixin, CalendarHandlerMi
         all_reservations: List[Reservation]
     ) -> None:
         """Process a TeeTime reservation."""
-        self.logger.debug(f"Processing TeeTime reservation: {raw_reservation}")
+        self.debug(f"Processing TeeTime reservation: {raw_reservation}")
         reservation = Reservation.from_teetime(raw_reservation, club, user, membership)
         
         # Skip if older than cutoff
         if reservation.start_time < cutoff_time:
-            self.logger.debug(f"Skipping old TeeTime reservation: {reservation.start_time}")
+            self.debug(f"Skipping old TeeTime reservation: {reservation.start_time}")
             return
         
         if self._should_include_reservation(reservation, past_days, self.local_tz):

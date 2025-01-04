@@ -98,19 +98,19 @@ def load_config(config_dir: Optional[str] = None, dev_mode: bool = False, verbos
             users=users,
             clubs=clubs,
             global_config=global_config,
-            timezone=os.getenv("GOLFCAL_TIMEZONE", global_config.get('timezone', "Europe/Helsinki")),
-            ics_dir=os.getenv("GOLFCAL_ICS_DIR", global_config.get('directories', {}).get('ics', "ics")),
-            ics_file_path=os.getenv("GOLFCAL_ICS_FILE_PATH"),
+            api_keys=global_config.get('api_keys', {'weather': {'aemet': '', 'openweather': ''}}),
+            timezone=global_config.get('timezone', 'Europe/Helsinki'),
+            ics_dir=global_config.get('ics_dir', 'ics'),
             config_dir=str(config_path),
-            log_level=os.getenv("GOLFCAL_LOG_LEVEL", global_config.get('logging', {}).get('level', "WARNING")),
-            log_file=os.getenv("GOLFCAL_LOG_FILE", global_config.get('logging', {}).get('file'))
+            log_level=global_config.get('log_level', 'WARNING'),
+            log_file=global_config.get('log_file')
         )
 
         # Validate configuration
         validate_config(config)
         
         # Set up logging based on mode
-        setup_logging(config, dev_mode=dev_mode, verbose=verbose)
+        # Removed setup_logging call since it's handled by the application entry point
 
         return config
         

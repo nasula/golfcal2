@@ -1,0 +1,254 @@
+Wisegolf has two versions of their API. We call them wisegolf0 and wisegolf.
+
+To fetch players reservations, we call one API endpoint with the following parameters for Wisegolf0:
+
+
+Request
+:method: GET
+:scheme: https
+:authority: kauppa.vantaankoskengolfhalli.fi
+:path: /pd/simulaattorit/18/simulaattorit/?controller=ajax&reservations=getusergolfreservations
+Accept: application/json, text/plain, */*
+Accept-Encoding: gzip, deflate, br
+Accept-Language: en-US,en;q=0.9
+Cookie: wisenetwork_session=bKS72aw7uKQUX3F4Pptzq-RGUo3mukVs%2Cjkp5z1PGWvuyJo-uyx11xZxgPadcxwcLHnMGUzutrGdiA4u9ZnIbObTWx
+Priority: u=3, i
+Referer: https://kauppa.vantaankoskengolfhalli.fi/pd/simulaattorit/18/simulaattorit/
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: same-origin
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15
+
+And get a response with the following structure:
+
+{
+    "success": true,
+    "rows": [
+        {
+            "reservationTimeId": 91588,
+            "reservationId": 4,
+            "dateTimeStart": "2025-01-05 11:00:00",
+            "dateTimeEnd": "2025-01-05 13:00:00",
+            "resourceId": 1,
+            "status": 2,
+            "firstName": "Nana",
+            "familyName": "Ahonen",
+            "clubAbbreviation": "VGC",
+            "handicapActive": "29.90",
+            "personId": 1050,
+            "playerId": "92212397",
+            "orderId": 84538,
+            "hash": "52721683",
+            "totalPrice": "0.00",
+            "totalPriceTax": "0.00",
+            "dateCreated": "2025-01-03 14:06:12",
+            "productId": 18,
+            "productName": "Simulaattorit",
+            "variantName": "Simulaattori 1: Sunnuntai 05.01.2025 11:00 - Nana Ahonen",
+            "productPrice": "0.0000",
+            "quantity": 1,
+            "productTotal": "0.0000",
+            "productTotalTax": "0.0000",
+            "reserverFirstName": "Jarkko",
+            "reserverFamilyName": "Ahonen",
+            "inFuture": 1,
+            "namePublic": 1,
+            "isOrderOwner": 1,
+            "canConfirm": "1"
+        },
+        {
+            "reservationTimeId": 91587,
+            "reservationId": 4,
+            "dateTimeStart": "2025-01-05 11:00:00",
+            "dateTimeEnd": "2025-01-05 13:00:00",
+            "resourceId": 1,
+            "status": 2,
+            "firstName": "Jarkko",
+            "familyName": "Ahonen",
+            "clubAbbreviation": "PGC",
+            "handicapActive": "23.80",
+            "personId": 710,
+            "playerId": "92212371",
+            "orderId": 84538,
+            "hash": "52721683",
+            "totalPrice": "0.00",
+            "totalPriceTax": "0.00",
+            "dateCreated": "2025-01-03 14:06:12",
+            "productId": 18,
+            "productName": "Simulaattorit",
+            "variantName": "Simulaattori 1: Sunnuntai 05.01.2025 11:00 - Jarkko Ahonen",
+            "productPrice": "0.0000",
+            "quantity": 1,
+            "productTotal": "0.0000",
+            "productTotalTax": "0.0000",
+            "reserverFirstName": "Jarkko",
+            "reserverFamilyName": "Ahonen",
+            "inFuture": 1,
+            "namePublic": 1,
+            "isOrderOwner": 1,
+            "canConfirm": "1"
+        },
+        {
+            "reservationTimeId": 91225,
+            "reservationId": 4,
+            "dateTimeStart": "2025-01-03 11:00:00",
+            "dateTimeEnd": "2025-01-03 13:00:00",
+            "resourceId": 1,
+            "status": 2,
+            "firstName": "Nana",
+            "familyName": "Ahonen",
+            "clubAbbreviation": "VGC",
+            "handicapActive": "29.90",
+            "personId": 1050,
+            "playerId": "92212397",
+            "orderId": 84203,
+            "hash": "abf25598",
+            "totalPrice": "0.00",
+            "totalPriceTax": "0.00",
+            "dateCreated": "2025-01-01 13:26:45",
+            "productId": 18,
+            "productName": "Simulaattorit",
+            "variantName": "Simulaattori 1: Perjantai 03.01.2025 11:00 - Nana Ahonen",
+            "productPrice": "0.0000",
+            "quantity": 1,
+            "productTotal": "0.0000",
+            "productTotalTax": "0.0000",
+            "reserverFirstName": "Jarkko",
+            "reserverFamilyName": "Ahonen",
+            "inFuture": 0,
+            "namePublic": 1,
+            "isOrderOwner": 1,
+            "canConfirm": "1"
+        }
+        ],
+    "reservationsAdditionalResources": []
+}
+
+Then we call another API endpoint with the following parameters for Wisegolf0 too fetch other potential players in the same group (flight in golf terms).
+This list shows all players for the day for all flights. One flight has maximum 4 plqyers. A reservation may contain 1-4 players and a flight 1-4 reservations:
+
+Request
+:method: GET
+:scheme: https
+:authority: api.vantaankoskengolfhalli.fi
+:path: /api/1.0/reservations/?productid=18&date=2025-01-03&golf=1
+Accept: application/json, text/plain, */*
+Accept-Encoding: gzip, deflate, br
+Accept-Language: en-US,en;q=0.9
+Cookie: wisenetwork_session=bKS72aw7uKQUX3F4Pptzq-RGUo3mukVs%2Cjkp5z1PGWvuyJo-uyx11xZxgPadcxwcLHnMGUzutrGdiA4u9ZnIbObTWx
+Origin: https://kauppa.vantaankoskengolfhalli.fi
+Priority: u=3, i
+Referer: https://kauppa.vantaankoskengolfhalli.fi/
+Sec-Fetch-Dest: empty
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: same-site
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15
+
+And get a response with the following structure:
+
+{
+    "success": true,
+    "errors": [],
+    "resourceComments": [],
+    "reservationsGolfPlayers": [
+        {
+            "orderId": 83841,
+            "orderProductId": 92693,
+            "reservationTimeId": 90849,
+            "personId": 378,
+            "firstName": "Nils",
+            "familyName": "Usenius",
+            "handicapActive": 17.1,
+            "clubName": "Suur-Helsingin Golf",
+            "clubAbbreviation": "SHG",
+            "clubId": "77",
+            "status": "active",
+            "usedCategoryId": null,
+            "isOrderOwner": 0,
+            "holes": null,
+            "isHomeClub": 1,
+            "isCart": 0,
+            "namePublic": 1,
+            "isUserReservation": false
+        },
+        {
+            "orderId": 83841,
+            "orderProductId": 92694,
+            "reservationTimeId": 90850,
+            "personId": 497,
+            "firstName": "Juha",
+            "familyName": "Ryhänen",
+            "handicapActive": 18.5,
+            "clubName": "Suur-Helsingin Golf",
+            "clubAbbreviation": "SHG",
+            "clubId": "77",
+            "status": "active",
+            "usedCategoryId": null,
+            "isOrderOwner": 0,
+            "holes": null,
+            "isHomeClub": 1,
+            "isCart": 0,
+            "namePublic": 1,
+            "isUserReservation": false
+        }
+        ],
+    "reservationsAdditionalResources": [],
+    "rows": [
+        {
+            "reservationTimeId": 91498,
+            "dateCreated": "2025-01-02 19:36:09",
+            "resources": [
+                {
+                    "resourceId": 3,
+                    "quantity": 1
+                }
+            ],
+            "start": "2025-01-03 07:00:00",
+            "end": "2025-01-03 09:00:00",
+            "status": 2,
+            "quantity": 1,
+            "isUserReservation": 0,
+            "isSellable": false,
+            "shareId": null,
+            "label": null
+        },
+        {
+            "reservationTimeId": 91088,
+            "dateCreated": "2024-12-31 13:41:55",
+            "resources": [
+                {
+                    "resourceId": 1,
+                    "quantity": 1
+                }
+            ],
+            "start": "2025-01-03 09:00:00",
+            "end": "2025-01-03 11:00:00",
+            "status": 2,
+            "quantity": 1,
+            "isUserReservation": 0,
+            "isSellable": false,
+            "shareId": null,
+            "label": null
+        },
+        {
+            "reservationTimeId": 91506,
+            "dateCreated": "2025-01-02 21:01:34",
+            "resources": [
+                {
+                    "resourceId": 1,
+                    "quantity": 1
+                }
+            ],
+            "start": "2025-01-03 09:00:00",
+            "end": "2025-01-03 11:00:00",
+            "status": 2,
+            "quantity": 1,
+            "isUserReservation": 0,
+            "isSellable": false,
+            "shareId": null,
+            "label": null
+        }
+        ],
+    "fromStartup": 105.611,
+    "duration": 65.697
+}

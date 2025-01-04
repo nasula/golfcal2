@@ -24,12 +24,13 @@ from golfcal2.config.error_aggregator import aggregate_error
 class WeatherManager(EnhancedLoggerMixin):
     """Weather service manager."""
     
-    def __init__(self, local_tz, utc_tz):
+    def __init__(self, local_tz, utc_tz, config):
         """Initialize weather services.
         
         Args:
             local_tz: Local timezone object
             utc_tz: UTC timezone object
+            config: Application configuration
         """
         super().__init__()
         
@@ -40,9 +41,9 @@ class WeatherManager(EnhancedLoggerMixin):
             
             # Initialize services
             self.services = {
-                'mediterranean': MediterraneanWeatherService(local_tz, utc_tz),
-                'iberian': IberianWeatherService(local_tz, utc_tz),
-                'met': MetWeatherService(local_tz, utc_tz)
+                'mediterranean': MediterraneanWeatherService(local_tz, utc_tz, config),
+                'iberian': IberianWeatherService(local_tz, utc_tz, config),
+                'met': MetWeatherService(local_tz, utc_tz, config)
             }
             
             # Define service regions
@@ -55,9 +56,17 @@ class WeatherManager(EnhancedLoggerMixin):
                     'service': 'mediterranean',
                     'bounds': (35.0, 45.0, 20.0, 45.0)
                 },
-                'iberian': {
+                'spain_mainland': {
                     'service': 'iberian',
-                    'bounds': (36.0, 44.0, -9.5, 3.5)
+                    'bounds': (36.0, 44.0, -7.5, 3.5)  # Mainland Spain (AEMET)
+                },
+                'spain_canary': {
+                    'service': 'iberian',
+                    'bounds': (27.5, 29.5, -18.5, -13.0)  # Canary Islands (AEMET)
+                },
+                'portugal': {
+                    'service': 'ipma',  # We'll need to create an IPMA service
+                    'bounds': (36.5, 42.5, -9.5, -6.2)  # Mainland Portugal
                 }
             }
             
@@ -66,7 +75,8 @@ class WeatherManager(EnhancedLoggerMixin):
                 'Lofoten': 'met',
                 'Oslo': 'met',
                 'Antalya': 'mediterranean',
-                'Costa': 'iberian',
+                'Costa': 'iberian',  # Spanish clubs use AEMET
+                'EXT_Golf Costa Adeje Tomorrow': 'iberian',  # Canary Islands (AEMET)
                 'EXT_Winter': 'met'  # Default winter practice to MET service
             }
             
@@ -253,3 +263,13 @@ class WeatherManager(EnhancedLoggerMixin):
                 return None
                 
             return service
+    
+    def _apply_rate_limit(self) -> None:
+        """Apply rate limiting."""
+        if self._last_api_call:
+            elapsed = datetime.now() - self._last_api_call
+            if elapsed < self._min_call_interval:
+                sleep_time = (self._min_call_interval - elapsed).total_seconds()
+                self.debug(f"Rate limit: sleeping for {sleep_time} seconds")
+                time.sleep(sleep_time)
+        self._last_api_call = datetime.now()
