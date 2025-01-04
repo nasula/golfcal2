@@ -31,8 +31,14 @@ class MetWeatherService(WeatherService):
     BASE_URL = "https://api.met.no/weatherapi/locationforecast/2.0/complete"
     USER_AGENT = "GolfCal/2.0 github.com/jahonen/golfcal (jarkko.ahonen@iki.fi)"
     
-    def __init__(self, local_tz, utc_tz):
-        """Initialize service with API endpoints and credentials."""
+    def __init__(self, local_tz, utc_tz, config):
+        """Initialize service with API endpoints and credentials.
+        
+        Args:
+            local_tz: Local timezone
+            utc_tz: UTC timezone
+            config: Application configuration
+        """
         super().__init__(local_tz, utc_tz)
         
         with handle_errors(WeatherError, "met_weather", "initialize service"):

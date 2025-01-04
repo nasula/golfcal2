@@ -83,12 +83,18 @@ class AppConfig:
     users: Dict[str, UserConfig]
     clubs: Dict[str, ClubConfig]
     global_config: GlobalConfig
+    api_keys: ApiKeysConfig
     timezone: str = "Europe/Helsinki"
     ics_dir: str = "ics"
     ics_file_path: Optional[str] = None
     config_dir: str = "config"
     log_level: str = "WARNING"
     log_file: Optional[str] = None
+
+    def __post_init__(self):
+        """Initialize additional fields from global config."""
+        if 'api_keys' not in self.__dict__ or not self.api_keys:
+            self.api_keys = self.global_config.get('api_keys', {'weather': {'aemet': '', 'openweather': ''}})
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value with default."""

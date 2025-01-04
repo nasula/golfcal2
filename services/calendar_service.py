@@ -10,7 +10,7 @@ from pathlib import Path
 from icalendar import Calendar, Event
 from dateutil.tz import UTC
 
-from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.config.settings import AppConfig
 from golfcal2.models.reservation import Reservation
 from golfcal2.models.user import User
@@ -31,7 +31,7 @@ from golfcal2.exceptions import (
 )
 from golfcal2.config.error_aggregator import aggregate_error
 
-class CalendarService(LoggerMixin, CalendarHandlerMixin):
+class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
     """Service for handling calendar operations."""
     
     def __init__(self, config: AppConfig, dev_mode: bool = False):
@@ -46,7 +46,7 @@ class CalendarService(LoggerMixin, CalendarHandlerMixin):
         
         with handle_errors(CalendarError, "calendar", "initialize services"):
             # Initialize services
-            self.weather_service = WeatherManager(self.local_tz, self.utc_tz)
+            self.weather_service = WeatherManager(self.local_tz, self.utc_tz, self.config)
             self.external_event_service = ExternalEventService(self.weather_service)
             
             # Initialize builders
@@ -123,7 +123,7 @@ class CalendarService(LoggerMixin, CalendarHandlerMixin):
         """Process a single reservation."""
         # Skip if we've already seen this event
         if reservation.uid in self.seen_uids:
-            self.logger.debug(f"Skipping duplicate reservation with UID: {reservation.uid}")
+            self.debug(f"Skipping duplicate reservation with UID: {reservation.uid}")
             return
         
         with handle_errors(
@@ -135,7 +135,7 @@ class CalendarService(LoggerMixin, CalendarHandlerMixin):
             # Get club configuration
             club_config = self.config.clubs.get(reservation.membership.club) or self.config.clubs.get(reservation.club.name)
             if not club_config:
-                self.logger.warning(f"No club config found for {reservation.membership.club} or {reservation.club.name}")
+                self.warning(f"No club config found for {reservation.membership.club} or {reservation.club.name}")
                 club_config = {}
             
             # Create event
@@ -143,7 +143,7 @@ class CalendarService(LoggerMixin, CalendarHandlerMixin):
             if event:
                 self._add_event_to_calendar(event, calendar)
                 self.seen_uids.add(reservation.uid)
-                self.logger.debug(f"Added reservation event: {event.get('summary')}")
+                self.debug(f"Added reservation event: {event.get('summary')}")
 
     def _process_external_events(self, calendar: Calendar, user_name: str) -> None:
         """Process external events."""
@@ -156,7 +156,7 @@ class CalendarService(LoggerMixin, CalendarHandlerMixin):
             external_events = self.external_event_service.process_events(user_name, dev_mode=self.dev_mode)
             for event in external_events:
                 self._add_event_to_calendar(event, calendar)
-                self.logger.debug(f"Added external event: {event.get('summary')}")
+                self.debug(f"Added external event: {event.get('summary')}")
 
     def _write_calendar(self, calendar: Calendar, file_path: Path, user_name: str) -> None:
         """Write calendar to file."""
