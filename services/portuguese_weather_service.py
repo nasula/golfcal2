@@ -380,7 +380,11 @@ class PortugueseWeatherService(WeatherService):
                         try:
                             tmin = float(period.get('tMin', 0))
                             tmax = float(period.get('tMax', 0))
-                            temp = (tmin + tmax) / 2  # Use average temperature
+                            
+                            # Calculate hourly temperatures using a simple sine curve
+                            # Minimum at 6 AM, maximum at 2 PM
+                            min_hour = 6
+                            max_hour = 14
                             
                             precip_prob = float(period.get('precipitaProb', 0))
                             # Convert probability to amount (simple estimation)
@@ -392,6 +396,79 @@ class PortugueseWeatherService(WeatherService):
                             
                             wind_dir = period.get('predWindDir')
                             weather_type = int(period.get('idWeatherType', 0))
+                            
+                            # Generate hourly forecasts for the time range
+                            for hour in range(24):
+                                forecast_time = forecast_date.replace(hour=hour)
+                                
+                                # Skip if outside our time range
+                                if forecast_time < start_time or forecast_time > end_time:
+                                    continue
+                                
+                                # Calculate temperature for this hour using sine curve
+                                hour_progress = (hour - min_hour) % 24
+                                day_progress = hour_progress / 24.0
+                                temp_range = tmax - tmin
+                                if min_hour <= hour <= max_hour:
+                                    # Rising temperature
+                                    progress = (hour - min_hour) / (max_hour - min_hour)
+                                    temp = tmin + temp_range * math.sin(progress * math.pi / 2)
+                                else:
+                                    # Falling temperature
+                                    if hour > max_hour:
+                                        progress = (hour - max_hour) / (24 + min_hour - max_hour)
+                                    else:  # hour < min_hour
+                                        progress = (hour + 24 - max_hour) / (24 + min_hour - max_hour)
+                                    temp = tmax - temp_range * math.sin(progress * math.pi / 2)
+                                
+                                self.debug(
+                                    "Calculated hourly values",
+                                    hour=hour,
+                                    temp=temp,
+                                    base_temp_min=tmin,
+                                    base_temp_max=tmax,
+                                    precip=precip,
+                                    wind_speed=wind_speed
+                                )
+                                
+                                # Map weather type to symbol
+                                try:
+                                    symbol_code = self._map_ipma_code(weather_type, hour)
+                                except Exception as e:
+                                    self.warning(
+                                        "Failed to map weather code",
+                                        code=weather_type,
+                                        hour=hour,
+                                        error=str(e)
+                                    )
+                                    continue
+
+                                # Calculate thunder probability based on weather type
+                                thunder_prob = 0.0
+                                if weather_type in [6, 7, 9]:  # Thunder types in IPMA codes
+                                    thunder_prob = 50.0
+
+                                forecast = WeatherData(
+                                    temperature=temp,
+                                    precipitation=precip,
+                                    precipitation_probability=precip_prob,
+                                    wind_speed=wind_speed,
+                                    wind_direction=self._get_wind_direction(wind_dir),
+                                    symbol=symbol_code,
+                                    elaboration_time=forecast_time,
+                                    thunder_probability=thunder_prob
+                                )
+                                forecasts.append(forecast)
+                                
+                                self.debug(
+                                    "Added hourly forecast",
+                                    time=forecast_time.isoformat(),
+                                    temp=temp,
+                                    precip=precip,
+                                    wind=wind_speed,
+                                    symbol=symbol_code
+                                )
+                                
                         except (ValueError, TypeError) as e:
                             self.warning(
                                 "Failed to parse forecast values",
@@ -407,55 +484,6 @@ class PortugueseWeatherService(WeatherService):
                                 }
                             )
                             continue
-                        
-                        self.debug(
-                            "Raw forecast data",
-                            time=forecast_date.isoformat(),
-                            temp_min=tmin,
-                            temp_max=tmax,
-                            precip_prob=precip_prob,
-                            wind_class=wind_class,
-                            wind_dir=wind_dir,
-                            weather_type=weather_type
-                        )
-                        
-                        # Map weather type to symbol
-                        try:
-                            symbol_code = self._map_ipma_code(weather_type, forecast_date.hour)
-                        except Exception as e:
-                            self.warning(
-                                "Failed to map weather code",
-                                code=weather_type,
-                                hour=forecast_date.hour,
-                                error=str(e)
-                            )
-                            continue
-
-                        # Calculate thunder probability based on weather type
-                        thunder_prob = 0.0
-                        if weather_type in [6, 7, 9]:  # Thunder types in IPMA codes
-                            thunder_prob = 50.0
-
-                        forecast = WeatherData(
-                            temperature=temp,
-                            precipitation=precip,
-                            precipitation_probability=precip_prob,
-                            wind_speed=wind_speed,
-                            wind_direction=self._get_wind_direction(wind_dir),
-                            symbol=symbol_code,
-                            elaboration_time=forecast_date,
-                            thunder_probability=thunder_prob
-                        )
-                        forecasts.append(forecast)
-                        
-                        self.debug(
-                            "Added forecast",
-                            time=forecast_date.isoformat(),
-                            temp=temp,
-                            precip=precip,
-                            wind=wind_speed,
-                            symbol=symbol_code
-                        )
 
                 self.debug(
                     "Completed forecast processing",
