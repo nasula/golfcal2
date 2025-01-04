@@ -39,6 +39,7 @@ class EnhancedLoggerMixin:
             # Map class names to service names
             service_map = {
                 'IberianWeatherService': 'weather_service',
+                'PortugueseWeatherService': 'weather_service',
                 'CalendarService': 'calendar_service',
                 'ReservationService': 'reservation_service',
                 'AuthService': 'auth',

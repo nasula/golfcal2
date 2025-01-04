@@ -14,6 +14,7 @@ from golfcal2.services.weather_types import WeatherService, WeatherData, get_wea
 from golfcal2.services.mediterranean_weather_service import MediterraneanWeatherService
 from golfcal2.services.iberian_weather_service import IberianWeatherService
 from golfcal2.services.met_weather_service import MetWeatherService
+from golfcal2.services.portuguese_weather_service import PortugueseWeatherService
 from golfcal2.exceptions import (
     WeatherError,
     ErrorCode,
@@ -43,7 +44,8 @@ class WeatherManager(EnhancedLoggerMixin):
             self.services = {
                 'mediterranean': MediterraneanWeatherService(local_tz, utc_tz, config),
                 'iberian': IberianWeatherService(local_tz, utc_tz, config),
-                'met': MetWeatherService(local_tz, utc_tz, config)
+                'met': MetWeatherService(local_tz, utc_tz, config),
+                'portuguese': PortugueseWeatherService(local_tz, utc_tz, config)
             }
             
             # Define service regions
@@ -56,6 +58,10 @@ class WeatherManager(EnhancedLoggerMixin):
                     'service': 'mediterranean',
                     'bounds': (35.0, 45.0, 20.0, 45.0)
                 },
+                'portugal': {
+                    'service': 'portuguese',  # Using PortugueseWeatherService
+                    'bounds': (36.5, 42.5, -9.5, -7.5)  # Mainland Portugal
+                },
                 'spain_mainland': {
                     'service': 'iberian',
                     'bounds': (36.0, 44.0, -7.5, 3.5)  # Mainland Spain (AEMET)
@@ -63,23 +69,10 @@ class WeatherManager(EnhancedLoggerMixin):
                 'spain_canary': {
                     'service': 'iberian',
                     'bounds': (27.5, 29.5, -18.5, -13.0)  # Canary Islands (AEMET)
-                },
-                'portugal': {
-                    'service': 'ipma',  # We'll need to create an IPMA service
-                    'bounds': (36.5, 42.5, -9.5, -6.2)  # Mainland Portugal
                 }
             }
             
-            # Club-specific service mappings
-            self.club_mappings = {
-                'Lofoten': 'met',
-                'Oslo': 'met',
-                'Antalya': 'mediterranean',
-                'Costa': 'iberian',  # Spanish clubs use AEMET
-                'EXT_Golf Costa Adeje Tomorrow': 'iberian',  # Canary Islands (AEMET)
-                'EXT_Winter': 'met'  # Default winter practice to MET service
-            }
-            
+            # Remove club-specific mappings as we'll use coordinates only
             self.set_correlation_id()  # Generate unique ID for this manager instance
     
     @log_execution(level='DEBUG')
@@ -195,54 +188,30 @@ class WeatherManager(EnhancedLoggerMixin):
         with handle_errors(
             WeatherError,
             "weather",
-            f"get service for location (lat={lat}, lon={lon}, club={club})",
+            f"get service for location (lat={lat}, lon={lon})",
             lambda: None  # Fallback to None on error
         ):
             service_name = None
             
-            # First try to determine service by club name if provided
-            if club:
-                # Check for exact match
-                if club in self.club_mappings:
+            # Select service based on coordinates
+            for region, config in self.regions.items():
+                lat_min, lat_max, lon_min, lon_max = config['bounds']
+                if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
                     self.debug(
-                        "Using service based on exact club match",
-                        club=club,
-                        service=self.club_mappings[club]
+                        "Found matching region",
+                        region=region,
+                        service=config['service'],
+                        coordinates=f"({lat}, {lon})"
                     )
-                    service_name = self.club_mappings[club]
-                else:
-                    # Check for prefix match
-                    for prefix, service in self.club_mappings.items():
-                        if club.startswith(prefix):
-                            self.debug(
-                                "Using service based on club prefix match",
-                                club=club,
-                                prefix=prefix,
-                                service=service
-                            )
-                            service_name = service
-                            break
-            
-            # If no club match, use region bounds
-            if not service_name:
-                for region, config in self.regions.items():
-                    lat_min, lat_max, lon_min, lon_max = config['bounds']
-                    if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
-                        self.debug(
-                            "Found matching region",
-                            region=region,
-                            service=config['service']
-                        )
-                        service_name = config['service']
-                        break
+                    service_name = config['service']
+                    break
             
             # Default to MET service as fallback
             if not service_name:
                 self.info(
                     "No specific region found, using MET service as fallback",
                     latitude=lat,
-                    longitude=lon,
-                    club=club
+                    longitude=lon
                 )
                 service_name = 'met'
             
@@ -254,14 +223,13 @@ class WeatherManager(EnhancedLoggerMixin):
                     ErrorCode.SERVICE_UNAVAILABLE,
                     {
                         "service": service_name,
-                        "club": club,
                         "latitude": lat,
                         "longitude": lon
                     }
                 )
                 aggregate_error(str(error), "weather", None)
                 return None
-                
+            
             return service
     
     def _apply_rate_limit(self) -> None:
