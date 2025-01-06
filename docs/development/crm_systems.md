@@ -1,17 +1,18 @@
 # Supported CRM Systems
 
-## WiseGolf (Finland)
+## WiseGolf Systems
 
-### Overview
-WiseGolf is used by many Finnish golf clubs. It provides a REST API with JWT authentication.
+WiseGolf has two versions of their API that we support:
 
-### Authentication Flow
-1. User provides username and password
-2. System obtains JWT token via `/auth/login`
-3. Token is used in Authorization header
-4. Token expires after 1 hour and needs refresh
+### WiseGolf (Version 1)
 
-### Reservation Data Structure
+#### Authentication
+- Uses JWT token-based authentication
+- Requires username and password
+- Token provided in Authorization header
+- Example: `Authorization: Bearer <token>`
+
+#### Reservation Data Format
 ```python
 {
     "teeTime": "2024-01-01T10:00:00.000Z",  # UTC timezone
@@ -19,10 +20,10 @@ WiseGolf is used by many Finnish golf clubs. It provides a REST API with JWT aut
         {
             "firstName": "John",
             "lastName": "Doe",
-            "handicap": 15.4,  # Float
+            "handicap": 15.4,
             "homeClub": {
                 "name": "Helsinki Golf Club",
-                "abbreviation": "HGK"  # Standard Finnish club codes
+                "abbreviation": "HGK"
             }
         }
     ],
@@ -34,23 +35,46 @@ WiseGolf is used by many Finnish golf clubs. It provides a REST API with JWT aut
 }
 ```
 
-### Known Limitations
-- Rate limited to 60 requests/minute
-- No bulk reservation fetch
-- Token refresh requires full re-authentication
+### WiseGolf0 (Legacy Version)
 
-## NexGolf (Sweden, Norway)
+#### Authentication
+- Uses session-based authentication
+- Headers include specific browser-like settings
+- Requires specific session cookies
 
-### Overview
-NexGolf is common in Nordic countries. Uses cookie-based authentication with PIN codes.
+#### Reservation Data Format
+```python
+{
+    "dateTimeStart": "2025-01-05 11:00:00",
+    "dateTimeEnd": "2025-01-05 13:00:00",
+    "firstName": "John",
+    "familyName": "Doe",
+    "clubAbbreviation": "VGC",
+    "handicapActive": "29.90",
+    "productName": "Simulaattorit",
+    "variantName": "Simulaattori 1"
+}
+```
 
-### Authentication Flow
-1. User provides member number and PIN
-2. System posts to `/api/login`
-3. Session cookie is stored
-4. Session valid for 24 hours
+#### Special Features
+- Separate endpoint for fetching flight players
+- Maximum 4 players per flight
+- Supports multiple reservations per flight
 
-### Reservation Data Structure
+## NexGolf
+
+### Authentication
+- Cookie-based session authentication
+- Uses member number and PIN code
+- Example:
+```python
+auth_data = {
+    'memberNumber': self.auth_details['member_id'],
+    'pin': self.auth_details['pin']
+}
+```
+
+### Reservation Data Format
 ```python
 {
     "startDateTime": "2024-01-01 10:00",  # Local club timezone
@@ -60,99 +84,87 @@ NexGolf is common in Nordic countries. Uses cookie-based authentication with PIN
         {
             "firstName": "John",
             "lastName": "Doe",
-            "handicap": "15.4",  # String, needs conversion
+            "handicap": "15.4",  # Note: Comes as string
             "club": {
                 "name": "Oslo Golfklubb",
-                "code": "OGK"  # Nordic club codes
+                "code": "OGK"
             }
         }
     ]
 }
 ```
 
-### Known Issues
-- Session timeouts not properly indicated
-- Handicaps come as strings
-- Rate limiting varies by club
+### Implementation Notes
+- Fetches reservations for one year ahead
+- Converts handicap strings to float
+- Uses local club timezone
 
-## TeeTime (Spain, Portugal)
+## TeeTime
 
-### Overview
-TeeTime is used in Southern Europe. Uses API key authentication.
+### Authentication
+- API key based authentication
+- Requires club ID
+- Headers:
+```python
+headers = {
+    'X-API-Key': auth_details['api_key'],
+    'X-Club-ID': auth_details['club_id']
+}
+```
 
-### Authentication Flow
-1. Club provides API key and club ID
-2. These are included in every request header
-3. No token expiration
-4. Credentials verified via `/api/verify`
-
-### Reservation Data Structure
+### Reservation Data Format
 ```python
 {
-    "teeTime": "2024-01-01 10:00:00",  # Local timezone
+    "teeTime": "2024-01-01 10:00:00",
     "playerList": [  # Note different field name
         {
-            "name": {  # Nested name structure
+            "name": {
                 "first": "John",
                 "last": "Doe"
             },
             "handicapIndex": 15.4,
             "memberClub": {
-                "name": "PGA Catalunya",
-                "shortCode": "PGA"
+                "name": "Golf Club",
+                "shortCode": "GC"
             }
         }
     ],
     "course": {
         "name": "Stadium Course",
         "holes": 18,
-        "slope": 125  # Includes slope rating
+        "slope": 125
     }
 }
 ```
-
-### Special Considerations
-- Different field names from other systems
-- Includes slope ratings
-- Nested name structures
-- Some clubs require additional headers
 
 ## Common Integration Points
 
-### Club Configuration
+### Factory Creation
+All golf clubs are created through `GolfClubFactory`:
+```python
+club = GolfClubFactory.create_club(
+    club_details=club_config,
+    membership=user_membership,
+    auth_service=auth_service
+)
+```
+
+### Configuration in clubs.json
 ```json
 {
-    "Example Club": {
-        "type": "wise_golf",  // or "nex_golf", "teetime"
-        "name": "Example Golf Club",
-        "url": "https://api.example-club.com",
+    "My Club": {
+        "type": "wisegolf",  // or "wisegolf0", "nexgolf", "teetime"
+        "name": "My Golf Club",
+        "url": "https://api.example.com",
         "timezone": "Europe/Helsinki",
-        "auth_type": "token"  // or "cookie", "apikey"
+        "variant": "Main Course"  // Optional
     }
 }
 ```
 
-### Data Mapping
-All systems map to our standard `Reservation` model:
-```python
-@dataclass
-class Reservation:
-    datetime_start: datetime  # Always converted to UTC
-    players: List[Player]
-    course_info: Optional[CourseInfo] = None
-    booking_reference: Optional[str] = None
-    status: Optional[str] = None
-```
-
 ### Error Handling
-Common error patterns across systems:
-- Authentication failures (401)
-- Rate limiting (429)
-- Invalid data format (400)
-- Server errors (500)
-
-### Timezone Handling
-- WiseGolf: Provides UTC
-- NexGolf: Local club time
-- TeeTime: Local club time
-- All converted to UTC internally 
+All implementations use standard error classes:
+- `APIError`: Base error class
+- `APITimeoutError`: For timeouts
+- `APIResponseError`: For invalid responses
+- `APIAuthError`: For authentication failures 
