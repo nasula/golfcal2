@@ -50,6 +50,11 @@ IBERIAN_SCHEMA = {
     ]
 }
 
+# Portuguese schema
+PORTUGUESE_SCHEMA = {
+    'weather': WEATHER_COLUMNS
+}
+
 # OpenWeather schema
 MEDITERRANEAN_SCHEMA = {
     'weather': WEATHER_COLUMNS

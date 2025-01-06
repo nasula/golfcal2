@@ -13,6 +13,7 @@ from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode
 from golfcal2.services.weather_database import WeatherDatabase
 from golfcal2.services.weather_schemas import IBERIAN_SCHEMA
+from golfcal2.services.weather_cache import WeatherLocationCache
 from golfcal2.utils.logging_utils import log_execution
 from golfcal2.config.settings import load_config
 from golfcal2.exceptions import (
@@ -55,8 +56,9 @@ class IberianWeatherService(WeatherService):
                 'api_key': self.api_key  # AEMET requires API key in headers
             }
             
-            # Initialize database
+            # Initialize database and cache
             self.db = WeatherDatabase('iberian_weather', IBERIAN_SCHEMA)
+            self.location_cache = WeatherLocationCache()
             
             # Rate limiting configuration
             self._last_api_call = None
@@ -147,19 +149,12 @@ class IberianWeatherService(WeatherService):
     @log_execution(level='DEBUG', include_args=True)
     def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
         """Fetch forecasts from AEMET API."""
-        # Debug call before handle_errors
-        self.debug(">>> TEST DEBUG: Before handle_errors in _fetch_forecasts")
-        
         with handle_errors(
             WeatherError,
             "iberian_weather",
             f"fetch forecasts for coordinates ({lat}, {lon})",
             lambda: []  # Fallback to empty list on error
         ):
-            # Test debug call to verify code path
-            self.debug(">>> TEST DEBUG: Inside handle_errors in _fetch_forecasts")
-            self.debug(">>> TEST DEBUG: Entering _fetch_forecasts", lat=lat, lon=lon)
-            
             if not self.api_key:
                 error = WeatherError(
                     "AEMET API key not configured",
@@ -169,178 +164,198 @@ class IberianWeatherService(WeatherService):
                 aggregate_error(str(error), "iberian_weather", None)
                 return []
 
-            # First, get the municipality code for the coordinates
-            municipality_url = f"{self.endpoint}/maestro/municipios"
-            self.debug(
-                ">>> TEST DEBUG: Starting municipality request",
-                url=municipality_url,
-                headers=self.headers,
-                lat=lat,
-                lon=lon
-            )
-            
+            municipality_url = None
+            forecast_url = None
+            nearest_municipality = None
+
             try:
-                response = requests.get(
-                    municipality_url,
-                    headers=self.headers,
-                    timeout=10
-                )
+                # First, try to get municipality from cache
+                cached_municipality = self.location_cache.get_municipality(lat, lon)
                 
-                self.debug(
-                    ">>> TEST DEBUG: Municipality response",
-                    status=response.status_code,
-                    content_type=response.headers.get('content-type'),
-                    content_length=len(response.content)
-                )
-                
-                if response.status_code != 200:
-                    error = APIResponseError(
-                        f"AEMET municipality list request failed with status {response.status_code}",
-                        response=response
+                if cached_municipality:
+                    self.debug(
+                        "Found cached municipality",
+                        name=cached_municipality['name'],
+                        code=cached_municipality['code'],
+                        distance_km=cached_municipality['distance']
                     )
-                    aggregate_error(str(error), "iberian_weather", None)
-                    return []
-
-                initial_data = response.json()
-                
-                # Debug the initial response
-                self.debug(
-                    "Got initial response",
-                    response_type=type(initial_data).__name__,
-                    response_data=initial_data
-                )
-                
-                if not isinstance(initial_data, dict) or 'datos' not in initial_data:
-                    error = WeatherError(
-                        "Invalid initial response format from AEMET API",
-                        ErrorCode.INVALID_RESPONSE,
-                        {"response": initial_data}
+                    municipality_code = cached_municipality['code']
+                else:
+                    # If not in cache, fetch from API
+                    municipality_url = f"{self.endpoint}/maestro/municipios"
+                    self.debug(
+                        "Getting municipality list",
+                        url=municipality_url,
+                        headers=self.headers,
+                        lat=lat,
+                        lon=lon
                     )
-                    aggregate_error(str(error), "iberian_weather", None)
-                    return []
-
-                # Get the actual municipality list from the datos URL
-                municipality_data_url = initial_data['datos']
-                self.debug("Fetching municipality list from", url=municipality_data_url)
-                
-                municipality_response = requests.get(
-                    municipality_data_url,
-                    headers=self.headers,
-                    timeout=10
-                )
-                
-                if municipality_response.status_code != 200:
-                    error = APIResponseError(
-                        f"AEMET municipality data request failed with status {municipality_response.status_code}",
-                        response=municipality_response
+                    
+                    response = requests.get(
+                        municipality_url,
+                        headers=self.headers,
+                        timeout=10
                     )
-                    aggregate_error(str(error), "iberian_weather", None)
-                    return []
-
-                municipalities = municipality_response.json()
-                
-                # Debug the municipality response
-                self.debug(
-                    "Got municipality list response",
-                    response_type=type(municipalities).__name__,
-                    response_length=len(municipalities) if isinstance(municipalities, (list, dict)) else 0,
-                    sample_data=str(municipalities)[:200] if municipalities else None
-                )
-                
-                # Find the nearest municipality
-                nearest_municipality = None
-                min_distance = float('inf')
-                
-                if not isinstance(municipalities, list):
-                    self.error(
-                        "Invalid municipality data format",
-                        expected_type="list",
-                        actual_type=type(municipalities).__name__,
-                        data_sample=str(municipalities)[:200] if municipalities else None
+                    
+                    self.debug(
+                        "Got municipality response",
+                        status=response.status_code,
+                        content_type=response.headers.get('content-type'),
+                        content_length=len(response.content)
                     )
-                    return []
-
-                self.debug(f"Processing {len(municipalities)} municipalities")
-                processed = 0
-                
-                for municipality in municipalities:
-                    try:
-                        # Use latitud_dec and longitud_dec fields
-                        mun_lat = float(municipality.get('latitud_dec', 0))
-                        mun_lon = float(municipality.get('longitud_dec', 0))
-                        
-                        # Calculate distance using Haversine formula
-                        distance = self._haversine_distance(lat, lon, mun_lat, mun_lon)
-                        
-                        if distance < min_distance:
-                            min_distance = distance
-                            nearest_municipality = municipality
-                            self.debug(
-                                "Found closer municipality",
-                                name=municipality.get('nombre', 'unknown'),
-                                url=municipality.get('url', 'unknown'),
-                                distance_km=distance,
-                                municipality_lat=mun_lat,
-                                municipality_lon=mun_lon
-                            )
-                        
-                        processed += 1
-                        if processed % 1000 == 0:  # Log progress every 1000 municipalities
-                            self.debug(f"Processed {processed} municipalities")
-                            
-                    except (ValueError, TypeError) as e:
-                        self.warning(
-                            "Failed to process municipality",
-                            error=str(e),
-                            municipality_data=municipality
+                    
+                    if response.status_code != 200:
+                        error = APIResponseError(
+                            f"AEMET municipality list request failed with status {response.status_code}",
+                            response=response
                         )
-                        continue
+                        aggregate_error(str(error), "iberian_weather", None)
+                        return []
 
-                if not nearest_municipality:
-                    self.warning(
-                        "No municipality found near coordinates",
-                        latitude=lat,
-                        longitude=lon,
-                        total_processed=processed
+                    initial_data = response.json()
+                    
+                    # Debug the initial response
+                    self.debug(
+                        "Got initial response",
+                        response_type=type(initial_data).__name__,
+                        response_data=initial_data
                     )
-                    return []
+                    
+                    if not isinstance(initial_data, dict) or 'datos' not in initial_data:
+                        error = WeatherError(
+                            "Invalid initial response format from AEMET API",
+                            ErrorCode.INVALID_RESPONSE,
+                            {"response": initial_data}
+                        )
+                        aggregate_error(str(error), "iberian_weather", None)
+                        return []
 
-                # Use the URL field for the municipality code
-                municipality_code = nearest_municipality.get('url', '')
-                if not municipality_code:
-                    self.warning(
-                        "Municipality has no URL",
-                        municipality=nearest_municipality
+                    # Get the actual municipality list from the datos URL
+                    municipality_data_url = initial_data['datos']
+                    self.debug("Fetching municipality list from", url=municipality_data_url)
+                    
+                    municipality_response = requests.get(
+                        municipality_data_url,
+                        headers=self.headers,
+                        timeout=10
                     )
-                    return []
+                    
+                    if municipality_response.status_code != 200:
+                        error = APIResponseError(
+                            f"AEMET municipality data request failed with status {municipality_response.status_code}",
+                            response=municipality_response
+                        )
+                        aggregate_error(str(error), "iberian_weather", None)
+                        return []
 
-                # Extract the numeric ID from the URL (e.g., "vilobi-d-onyar-id17233" -> "17233")
-                numeric_id = municipality_code.split('-id')[-1] if '-id' in municipality_code else None
-                if not numeric_id:
-                    self.warning(
-                        "Could not extract numeric ID from municipality URL",
-                        url=municipality_code
+                    municipalities = municipality_response.json()
+                    
+                    # Debug the municipality response
+                    self.debug(
+                        "Got municipality list response",
+                        response_type=type(municipalities).__name__,
+                        response_length=len(municipalities) if isinstance(municipalities, (list, dict)) else 0,
+                        sample_data=str(municipalities)[:200] if municipalities else None
                     )
-                    return []
+                    
+                    # Find the nearest municipality
+                    nearest_municipality = None
+                    min_distance = float('inf')
+                    
+                    if not isinstance(municipalities, list):
+                        self.error(
+                            "Invalid municipality data format",
+                            expected_type="list",
+                            actual_type=type(municipalities).__name__,
+                            data_sample=str(municipalities)[:200] if municipalities else None
+                        )
+                        return []
 
-                # Format the municipality code correctly (AEMET requires leading zeros)
-                numeric_id = numeric_id.zfill(5)  # Ensure 5 digits with leading zeros
+                    self.debug(f"Processing {len(municipalities)} municipalities")
+                    processed = 0
+                    
+                    for municipality in municipalities:
+                        try:
+                            # Use latitud_dec and longitud_dec fields
+                            mun_lat = float(municipality.get('latitud_dec', 0))
+                            mun_lon = float(municipality.get('longitud_dec', 0))
+                            
+                            # Calculate distance using Haversine formula
+                            distance = self._haversine_distance(lat, lon, mun_lat, mun_lon)
+                            
+                            if distance < min_distance:
+                                min_distance = distance
+                                nearest_municipality = municipality
+                                self.debug(
+                                    "Found closer municipality",
+                                    name=municipality.get('nombre', 'unknown'),
+                                    url=municipality.get('url', 'unknown'),
+                                    distance_km=distance,
+                                    municipality_lat=mun_lat,
+                                    municipality_lon=mun_lon
+                                )
+                            
+                            processed += 1
+                            if processed % 1000 == 0:  # Log progress every 1000 municipalities
+                                self.debug(f"Processed {processed} municipalities")
+                                
+                        except (ValueError, TypeError) as e:
+                            self.warning(
+                                "Failed to process municipality",
+                                error=str(e),
+                                municipality_data=municipality
+                            )
+                            continue
 
-                self.debug(
-                    "Found nearest municipality",
-                    municipality=nearest_municipality.get('nombre', 'unknown'),
-                    code=numeric_id,
-                    distance_km=min_distance
-                )
+                    if not nearest_municipality:
+                        self.warning(
+                            "No municipality found near coordinates",
+                            latitude=lat,
+                            longitude=lon,
+                            total_processed=processed
+                        )
+                        return []
+
+                    # Use the URL field for the municipality code
+                    municipality_url = nearest_municipality.get('url', '')
+                    if not municipality_url:
+                        self.warning(
+                            "Municipality has no URL",
+                            municipality=nearest_municipality
+                        )
+                        return []
+
+                    # Extract the numeric ID from the URL (e.g., "vilobi-d-onyar-id17233" -> "17233")
+                    numeric_id = municipality_url.split('-id')[-1] if '-id' in municipality_url else None
+                    if not numeric_id:
+                        self.warning(
+                            "Could not extract numeric ID from municipality URL",
+                            url=municipality_url
+                        )
+                        return []
+
+                    # Format the municipality code correctly (AEMET requires leading zeros)
+                    municipality_code = numeric_id.zfill(5)  # Ensure 5 digits with leading zeros
+                    
+                    # Cache the municipality for future use
+                    self.location_cache.cache_municipality(
+                        lat=lat,
+                        lon=lon,
+                        municipality_code=municipality_code,
+                        name=nearest_municipality.get('nombre', ''),
+                        mun_lat=float(nearest_municipality.get('latitud_dec', 0)),
+                        mun_lon=float(nearest_municipality.get('longitud_dec', 0)),
+                        distance=min_distance
+                    )
 
                 # Now get the weather forecast for this municipality
-                forecast_url = f"{self.endpoint}/prediccion/especifica/municipio/horaria/{numeric_id}"
+                forecast_url = f"{self.endpoint}/prediccion/especifica/municipio/horaria/{municipality_code}"
                 
                 self.debug(
                     "AEMET URL",
                     url=forecast_url,
-                    municipality_id=numeric_id,
-                    municipality_name=nearest_municipality.get('nombre', 'unknown')
+                    municipality_id=municipality_code,
+                    municipality_name=cached_municipality['name'] if cached_municipality else nearest_municipality.get('nombre', 'unknown')
                 )
                 
                 # Respect rate limits
@@ -623,7 +638,7 @@ class IberianWeatherService(WeatherService):
             except requests.exceptions.Timeout:
                 error = APITimeoutError(
                     "AEMET API request timed out",
-                    {"url": forecast_url}
+                    {"url": forecast_url if forecast_url else municipality_url}
                 )
                 aggregate_error(str(error), "iberian_weather", None)
                 return []
@@ -631,7 +646,7 @@ class IberianWeatherService(WeatherService):
                 error = APIError(
                     f"AEMET API request failed: {str(e)}",
                     ErrorCode.REQUEST_FAILED,
-                    {"url": forecast_url}
+                    {"url": forecast_url if forecast_url else municipality_url}
                 )
                 aggregate_error(str(error), "iberian_weather", e.__traceback__)
                 return []
