@@ -25,7 +25,7 @@ from golfcal2.config.error_aggregator import aggregate_error
 class WeatherManager(EnhancedLoggerMixin):
     """Weather service manager."""
     
-    def __init__(self, local_tz, utc_tz, config):
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
         """Initialize weather services.
         
         Args:
@@ -34,6 +34,11 @@ class WeatherManager(EnhancedLoggerMixin):
             config: Application configuration
         """
         super().__init__()
+        
+        # Configure logger
+        for handler in self.logger.handlers:
+            handler.set_name('weather_manager')  # Ensure unique handler names
+        self.logger.propagate = True  # Allow logs to propagate to root logger
         
         with handle_errors(WeatherError, "weather", "initialize services"):
             # Store timezone settings

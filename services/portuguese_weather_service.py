@@ -17,6 +17,7 @@ from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode
 from golfcal2.services.weather_database import WeatherDatabase
 from golfcal2.services.weather_schemas import PORTUGUESE_SCHEMA
+from golfcal2.services.weather_cache import WeatherLocationCache
 from golfcal2.utils.logging_utils import log_execution
 from golfcal2.exceptions import (
     WeatherError,
@@ -59,115 +60,50 @@ class PortugueseWeatherService(WeatherService):
         self.debug(">>> TEST DEBUG: PortugueseWeatherService initialized", logger_name=self.logger.name)
         
         with handle_errors(WeatherError, "portuguese_weather", "initialize service"):
+            # Configure API endpoint and headers
             self.endpoint = self.BASE_URL
             self.headers = {
                 'Accept': 'application/json',
                 'User-Agent': self.USER_AGENT
             }
             
-            # Initialize database
+            # Initialize database and cache
             self.db = WeatherDatabase('portuguese_weather', PORTUGUESE_SCHEMA)
+            self.location_cache = WeatherLocationCache()
             
-            # Rate limiting configuration - be nice to the API
+            # Rate limiting configuration
             self._last_api_call = None
-            self._min_call_interval = timedelta(seconds=2)
+            self._min_call_interval = timedelta(seconds=1)
+            self._last_request_time = 0
             
             self.set_log_context(service="PortugueseWeatherService")
+
+    def _haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Calculate the great circle distance between two points on the earth.
+        
+        Args:
+            lat1: Latitude of first point in degrees
+            lon1: Longitude of first point in degrees
+            lat2: Latitude of second point in degrees
+            lon2: Longitude of second point in degrees
+            
+        Returns:
+            Distance between points in kilometers
+        """
+        # Convert decimal degrees to radians
+        lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+        
+        # Haversine formula
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        r = 6371  # Radius of earth in kilometers
+        return c * r
     
     @log_execution(level='DEBUG', include_args=True)
-    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        """Get weather data for a specific time and location."""
-        self.debug(">>> TEST DEBUG: Entering get_weather", lat=lat, lon=lon)
-        
-        with handle_errors(
-            WeatherError,
-            "portuguese_weather",
-            f"get weather for coordinates ({lat}, {lon})",
-            lambda: []  # Fallback to empty list on error
-        ):
-            # Check cache first
-            location = f"{lat},{lon}"
-            times = [
-                t.strftime("%Y-%m-%d %H:%M:%S")
-                for t in [start_time + timedelta(hours=i) for i in range(24)]
-            ]
-            
-            self.debug(
-                "Checking cache",
-                location=location,
-                start=start_time.isoformat(),
-                end=end_time.isoformat()
-            )
-            
-            cached_data = self.db.get_weather_data(
-                location=location,
-                times=times,
-                data_type="daily",
-                fields=[
-                    'air_temperature',
-                    'precipitation_amount',
-                    'wind_speed',
-                    'wind_from_direction',
-                    'probability_of_precipitation',
-                    'probability_of_thunder',
-                    'summary_code'
-                ]
-            )
-            
-            if cached_data:
-                self.debug(f"Found {len(cached_data)} cached entries")
-                return self._convert_cached_data(cached_data)
-            
-            # Fetch new data if not in cache
-            self.debug("No cached data found, fetching from API")
-            forecasts = self._fetch_forecasts(lat, lon, start_time, end_time)
-            
-            if forecasts:
-                # Store in cache
-                self.debug(f"Storing {len(forecasts)} forecasts in cache")
-                cache_data = []
-                for forecast in forecasts:
-                    cache_entry = {
-                        'location': location,
-                        'time': forecast.elaboration_time.strftime("%Y-%m-%d %H:%M:%S"),
-                        'data_type': 'daily',
-                        'air_temperature': forecast.temperature,
-                        'precipitation_amount': forecast.precipitation,
-                        'wind_speed': forecast.wind_speed,
-                        'wind_from_direction': forecast.wind_direction,
-                        'probability_of_precipitation': forecast.precipitation_probability,
-                        'probability_of_thunder': forecast.thunder_probability,
-                        'summary_code': forecast.symbol
-                    }
-                    cache_data.append(cache_entry)
-                
-                # Calculate expiration (next update time)
-                now = datetime.now(self.utc_tz)
-                if now.hour < 10:
-                    expires = now.replace(hour=10, minute=0, second=0, microsecond=0)
-                elif now.hour < 20:
-                    expires = now.replace(hour=20, minute=0, second=0, microsecond=0)
-                else:
-                    expires = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
-                
-                self.db.store_weather_data(
-                    cache_data,
-                    expires=expires.strftime("%Y-%m-%d %H:%M:%S"),
-                    last_modified=now.strftime("%Y-%m-%d %H:%M:%S")
-                )
-            
-            return forecasts
-
-    @log_execution(level='DEBUG', include_args=True)
     def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        """Fetch forecasts from IPMA API.
-        
-        The API provides daily forecasts with the following data:
-        - Temperature min/max
-        - Precipitation probability
-        - Wind speed and direction
-        - Weather type code
-        """
+        """Fetch forecasts from IPMA API."""
         with handle_errors(
             WeatherError,
             "portuguese_weather",
@@ -175,119 +111,142 @@ class PortugueseWeatherService(WeatherService):
             lambda: []  # Fallback to empty list on error
         ):
             try:
-                # First, get the nearest location
-                locations_url = f"{self.endpoint}/distrits-islands.json"
-                self.debug(
-                    "Getting locations list",
-                    url=locations_url,
-                    headers=self.headers,
-                    lat=lat,
-                    lon=lon
-                )
+                # First, try to get location from cache
+                cached_location = self.location_cache.get_ipma_location(lat, lon)
                 
-                response = requests.get(
-                    locations_url,
-                    headers=self.headers,
-                    timeout=10
-                )
-                
-                self.debug(
-                    "Got locations response",
-                    status=response.status_code,
-                    content_type=response.headers.get('content-type'),
-                    content_length=len(response.content)
-                )
-                
-                if response.status_code != 200:
-                    error = APIResponseError(
-                        f"IPMA locations request failed with status {response.status_code}",
-                        response=response
+                if cached_location:
+                    self.debug(
+                        "Found cached location",
+                        name=cached_location['name'],
+                        code=cached_location['code'],
+                        distance_km=cached_location['distance']
                     )
-                    aggregate_error(str(error), "portuguese_weather", None)
-                    return []
-
-                locations = response.json()
-                self.debug(
-                    "Parsed locations response",
-                    type=type(locations).__name__,
-                    count=len(locations.get('data', [])) if isinstance(locations, dict) else 0,
-                    sample=str(locations)[:200] if locations else None
-                )
-                
-                # Get locations array from response
-                locations_data = locations.get('data', []) if isinstance(locations, dict) else []
-                if not locations_data:
-                    self.warning("No locations data in response")
-                    return []
-                
-                # Find nearest location
-                nearest_location = None
-                min_distance = float('inf')
-                processed = 0
-                
-                self.debug(
-                    "Starting location search",
-                    target_lat=lat,
-                    target_lon=lon,
-                    total_locations=len(locations_data)
-                )
-                
-                for location in locations_data:
-                    try:
-                        loc_lat = float(location.get('latitude', 0))
-                        loc_lon = float(location.get('longitude', 0))
-                        
-                        distance = self._haversine_distance(lat, lon, loc_lat, loc_lon)
-                        
-                        self.debug(
-                            "Checking location",
-                            name=location.get('local', 'unknown'),
-                            id=location.get('globalIdLocal', 'unknown'),
-                            lat=loc_lat,
-                            lon=loc_lon,
-                            distance_km=distance
+                    location_id = cached_location['code']
+                else:
+                    # If not in cache, fetch from API
+                    locations_url = f"{self.endpoint}/distrits-islands.json"
+                    self.debug(
+                        "Getting locations list",
+                        url=locations_url,
+                        headers=self.headers,
+                        lat=lat,
+                        lon=lon
+                    )
+                    
+                    response = requests.get(
+                        locations_url,
+                        headers=self.headers,
+                        timeout=10
+                    )
+                    
+                    self.debug(
+                        "Got locations response",
+                        status=response.status_code,
+                        content_type=response.headers.get('content-type'),
+                        content_length=len(response.content)
+                    )
+                    
+                    if response.status_code != 200:
+                        error = APIResponseError(
+                            f"IPMA locations request failed with status {response.status_code}",
+                            response=response
                         )
-                        
-                        if distance < min_distance:
-                            min_distance = distance
-                            nearest_location = location
+                        aggregate_error(str(error), "portuguese_weather", None)
+                        return []
+
+                    locations = response.json()
+                    self.debug(
+                        "Parsed locations response",
+                        type=type(locations).__name__,
+                        count=len(locations.get('data', [])) if isinstance(locations, dict) else 0,
+                        sample=str(locations)[:200] if locations else None
+                    )
+                    
+                    # Get locations array from response
+                    locations_data = locations.get('data', []) if isinstance(locations, dict) else []
+                    if not locations_data:
+                        self.warning("No locations data in response")
+                        return []
+                    
+                    # Find nearest location
+                    nearest_location = None
+                    min_distance = float('inf')
+                    processed = 0
+                    
+                    self.debug(
+                        "Starting location search",
+                        target_lat=lat,
+                        target_lon=lon,
+                        total_locations=len(locations_data)
+                    )
+                    
+                    for location in locations_data:
+                        try:
+                            loc_lat = float(location.get('latitude', 0))
+                            loc_lon = float(location.get('longitude', 0))
+                            
+                            distance = self._haversine_distance(lat, lon, loc_lat, loc_lon)
+                            
                             self.debug(
-                                "Found closer location",
+                                "Checking location",
                                 name=location.get('local', 'unknown'),
                                 id=location.get('globalIdLocal', 'unknown'),
-                                distance_km=distance,
-                                location_lat=loc_lat,
-                                location_lon=loc_lon
+                                lat=loc_lat,
+                                lon=loc_lon,
+                                distance_km=distance
                             )
-                        
-                        processed += 1
-                        if processed % 10 == 0:  # Log progress every 10 locations
-                            self.debug(f"Processed {processed} locations")
                             
-                    except (ValueError, TypeError) as e:
+                            if distance < min_distance:
+                                min_distance = distance
+                                nearest_location = location
+                                self.debug(
+                                    "Found closer location",
+                                    name=location.get('local', 'unknown'),
+                                    id=location.get('globalIdLocal', 'unknown'),
+                                    distance_km=distance,
+                                    location_lat=loc_lat,
+                                    location_lon=loc_lon
+                                )
+                            
+                            processed += 1
+                            if processed % 10 == 0:  # Log progress every 10 locations
+                                self.debug(f"Processed {processed} locations")
+                                
+                        except (ValueError, TypeError) as e:
+                            self.warning(
+                                "Failed to process location",
+                                error=str(e),
+                                location_data=location
+                            )
+                            continue
+
+                    if not nearest_location:
                         self.warning(
-                            "Failed to process location",
-                            error=str(e),
-                            location_data=location
+                            "No location found near coordinates",
+                            latitude=lat,
+                            longitude=lon,
+                            total_processed=processed
                         )
-                        continue
+                        return []
 
-                if not nearest_location:
-                    self.warning(
-                        "No location found near coordinates",
-                        latitude=lat,
-                        longitude=lon,
-                        total_processed=processed
+                    location_id = nearest_location.get('globalIdLocal')
+                    if not location_id:
+                        self.warning(
+                            "Location has no ID",
+                            location=nearest_location
+                        )
+                        return []
+                    
+                    # Cache the location for future use
+                    self.location_cache.cache_ipma_location(
+                        lat=lat,
+                        lon=lon,
+                        location_code=str(location_id),
+                        name=nearest_location.get('local', ''),
+                        loc_lat=float(nearest_location.get('latitude', 0)),
+                        loc_lon=float(nearest_location.get('longitude', 0)),
+                        distance=min_distance
                     )
-                    return []
-
-                location_id = nearest_location.get('globalIdLocal')
-                if not location_id:
-                    self.warning(
-                        "Location has no ID",
-                        location=nearest_location
-                    )
-                    return []
 
                 # Get forecast data
                 forecast_url = f"{self.endpoint}/forecast/meteorology/cities/daily/{location_id}.json"
@@ -295,8 +254,8 @@ class PortugueseWeatherService(WeatherService):
                     "Getting forecast data",
                     url=forecast_url,
                     location_id=location_id,
-                    location_name=nearest_location.get('local', 'unknown'),
-                    distance_km=min_distance
+                    location_name=cached_location['name'] if cached_location else nearest_location.get('local', 'unknown'),
+                    distance_km=cached_location['distance'] if cached_location else min_distance
                 )
                 
                 # Respect rate limits
@@ -626,7 +585,7 @@ class PortugueseWeatherService(WeatherService):
                 'NNW': 337.5
             }
             
-            return direction_map.get(direction.upper()) 
+            return direction_map.get(direction.upper())
 
     def _convert_cached_data(self, cached_data: Dict[str, Dict[str, Any]]) -> List[WeatherData]:
         """Convert cached data back to WeatherData objects."""
@@ -667,27 +626,4 @@ class PortugueseWeatherService(WeatherService):
                 continue
         
         self.debug(f"Converted {len(forecasts)} cached forecasts")
-        return sorted(forecasts, key=lambda x: x.elaboration_time) 
-
-    def _haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculate the great circle distance between two points on the earth.
-        
-        Args:
-            lat1: Latitude of first point in degrees
-            lon1: Longitude of first point in degrees
-            lat2: Latitude of second point in degrees
-            lon2: Longitude of second point in degrees
-            
-        Returns:
-            Distance between points in kilometers
-        """
-        # Convert decimal degrees to radians
-        lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
-        
-        # Haversine formula
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-        c = 2 * math.asin(math.sqrt(a))
-        r = 6371  # Radius of earth in kilometers
-        return c * r 
+        return sorted(forecasts, key=lambda x: x.elaboration_time)
