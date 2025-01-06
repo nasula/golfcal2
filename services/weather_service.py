@@ -14,6 +14,7 @@ from golfcal2.services.weather_types import WeatherService, WeatherData, get_wea
 from golfcal2.services.mediterranean_weather_service import MediterraneanWeatherService
 from golfcal2.services.iberian_weather_service import IberianWeatherService
 from golfcal2.services.met_weather_service import MetWeatherService
+from golfcal2.services.portuguese_weather_service import PortugueseWeatherService
 from golfcal2.exceptions import (
     WeatherError,
     ErrorCode,
@@ -43,7 +44,8 @@ class WeatherManager(EnhancedLoggerMixin):
             self.services = {
                 'mediterranean': MediterraneanWeatherService(local_tz, utc_tz, config),
                 'iberian': IberianWeatherService(local_tz, utc_tz, config),
-                'met': MetWeatherService(local_tz, utc_tz, config)
+                'met': MetWeatherService(local_tz, utc_tz, config),
+                'ipma': PortugueseWeatherService(local_tz, utc_tz, config)
             }
             
             # Define service regions
