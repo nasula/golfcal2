@@ -765,38 +765,27 @@ class IberianWeatherService(WeatherService):
             
             return code_map.get(base_code, 'cloudy')  # Default to cloudy if code not found
     
-    def _get_wind_direction(self, direction: Optional[str]) -> Optional[float]:
-        """Convert AEMET wind direction to degrees."""
-        with handle_errors(
-            WeatherError,
-            "iberian_weather",
-            f"get wind direction from {direction}",
-            lambda: None  # Fallback to None on error
-        ):
-            if not direction:
-                return None
-                
-            # Map cardinal directions to degrees
-            direction_map = {
-                'N': 0.0,
-                'NNE': 22.5,
-                'NE': 45.0,
-                'ENE': 67.5,
-                'E': 90.0,
-                'ESE': 112.5,
-                'SE': 135.0,
-                'SSE': 157.5,
-                'S': 180.0,
-                'SSW': 202.5,
-                'SW': 225.0,
-                'WSW': 247.5,
-                'W': 270.0,
-                'WNW': 292.5,
-                'NW': 315.0,
-                'NNW': 337.5
-            }
-            
-            return direction_map.get(direction.upper())
+    def _get_wind_direction(self, direction: Optional[str]) -> Optional[str]:
+        """Convert wind direction to cardinal direction.
+        
+        Handles both degree values and cardinal directions from AEMET.
+        """
+        if direction is None:
+            return None
+        
+        # If already a cardinal direction, return as is
+        cardinal_directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+        if direction in cardinal_directions:
+            return direction
+        
+        # Try to convert from degrees
+        try:
+            degrees = float(direction)
+            index = round(degrees / 45) % 8
+            return cardinal_directions[index]
+        except (ValueError, TypeError):
+            self.warning(f"Could not parse wind direction: {direction}")
+            return None
 
     def _convert_cached_data(self, cached_data: Dict[str, Dict[str, Any]]) -> List[WeatherData]:
         """Convert cached data back to WeatherData objects."""
@@ -838,3 +827,11 @@ class IberianWeatherService(WeatherService):
         
         self.debug(f"Converted {len(forecasts)} cached forecasts")
         return sorted(forecasts, key=lambda x: x.elaboration_time)
+
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get block size for AEMET forecasts.
+        
+        First 48 hours: 1-hour blocks
+        Beyond 48 hours: 6-hour blocks
+        """
+        return 6 if hours_ahead > 48 else 1

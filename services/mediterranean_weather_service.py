@@ -327,3 +327,10 @@ class MediterraneanWeatherService(WeatherService):
             }
             
             return code_map.get(code, 'cloudy')  # Default to cloudy if code not found
+    
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get block size for Mediterranean forecasts.
+        
+        Always uses 3-hour blocks
+        """
+        return 3

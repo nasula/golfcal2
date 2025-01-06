@@ -6,12 +6,12 @@ import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-from .models import (
+from golfcal2.config.types import (
     AppConfig,
     UserConfig,
     ClubConfig,
     LoggingConfig,
-    WeatherConfig,
+    WeatherApiConfig,
     AuthDetails,
     Coordinates
 )

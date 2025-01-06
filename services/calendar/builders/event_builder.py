@@ -90,9 +90,20 @@ class ExternalEventBuilder(EventBuilder):
             # Create base event
             event = Event()
             event.add('summary', f"Golf: {event_data['name']}")
+            
+            # Use the event's timezone for start and end times
+            event_timezone = ZoneInfo(event_data.get('timezone', 'Europe/Helsinki'))
+            
+            # Convert times to event timezone if they're not already in it
+            if start.tzinfo != event_timezone:
+                start = start.astimezone(event_timezone)
+            if end.tzinfo != event_timezone:
+                end = end.astimezone(event_timezone)
+            
+            # Add times with correct timezone
             event.add('dtstart', vDatetime(start))
             event.add('dtend', vDatetime(end))
-            event.add('dtstamp', vDatetime(datetime.now(self.local_tz)))
+            event.add('dtstamp', vDatetime(datetime.now(ZoneInfo('UTC'))), parameters={'VALUE': ['DATE-TIME']})
             
             # Generate and add UID
             uid = self._generate_unique_id(event_data, start, person_name)
@@ -112,13 +123,12 @@ class ExternalEventBuilder(EventBuilder):
                     event_data['coordinates'],
                     start,
                     duration_minutes,
-                    f"EXT_{event_data['name']}"
+                    event_data['name']  # Use event name directly instead of EXT_ prefix
                 )
                 if weather_data:
                     description += f"\n\nWeather:\n{weather_data}"
             
             event.add('description', vText(description))
-            
             return event
             
         except Exception as e:
@@ -135,7 +145,8 @@ class ExternalEventBuilder(EventBuilder):
         else:
             location_id = event_data['location'][:8].replace(' ', '_')
         
-        return f"EXT_{event_data['name']}_{date_str}_{time_str}_{location_id}_{person_name}"
+        # Use consistent format with other events
+        return f"{event_data['name'].replace(' ', '_')}_{date_str}_{time_str}_{location_id.split('.')[0]}_{person_name}"
     
     def _get_location(self, event_data: Dict[str, Any]) -> str:
         """Format location string from event data."""

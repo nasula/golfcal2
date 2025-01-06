@@ -902,3 +902,11 @@ class MetWeatherService(WeatherService):
                 )
                 time.sleep(sleep_time)
             self._last_request_time = time.time() 
+
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get block size for MET.no forecasts.
+        
+        First 48 hours: 1-hour blocks
+        Beyond 48 hours: 6-hour blocks
+        """
+        return 6 if hours_ahead > 48 else 1 

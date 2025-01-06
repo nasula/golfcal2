@@ -112,14 +112,14 @@ class ExternalEventService(LoggerMixin):
             
             # Create event data for this instance
             instance_data = event_data.copy()
-            # Store datetime without timezone info for strptime parsing
-            instance_data['start'] = current_date.strftime('%Y-%m-%dT%H:%M:%S')
+            # Keep timezone info by using isoformat
+            instance_data['start'] = current_date.isoformat()
             
             # Calculate end time for this instance
             original_duration = (datetime.fromisoformat(event_data['end']).replace(tzinfo=event_timezone) - 
                              datetime.fromisoformat(event_data['start']).replace(tzinfo=event_timezone))
             end_time = current_date + original_duration
-            instance_data['end'] = end_time.strftime('%Y-%m-%dT%H:%M:%S')
+            instance_data['end'] = end_time.isoformat()
             
             # Create and add the event
             event = self._create_event(instance_data, person_name, cutoff_time)
@@ -160,14 +160,15 @@ class ExternalEventService(LoggerMixin):
                     # First try parsing with fromisoformat in case we have timezone info
                     start = datetime.fromisoformat(event_data['start'])
                     end = datetime.fromisoformat(event_data['end'])
-                except ValueError:
-                    # Fallback to strptime if the string doesn't have timezone info
-                    start = datetime.strptime(event_data['start'], '%Y-%m-%dT%H:%M:%S')
-                    end = datetime.strptime(event_data['end'], '%Y-%m-%dT%H:%M:%S')
-                
-                # Ensure timezone is set
-                start = start.replace(tzinfo=event_timezone)
-                end = end.replace(tzinfo=event_timezone)
+                    
+                    # Only set timezone if it's not already set
+                    if start.tzinfo is None:
+                        start = start.replace(tzinfo=event_timezone)
+                    if end.tzinfo is None:
+                        end = end.replace(tzinfo=event_timezone)
+                except ValueError as e:
+                    self.logger.error(f"Failed to parse event dates: {e}")
+                    return None
             
             # Skip if older than 24 hours
             if start < cutoff_time:

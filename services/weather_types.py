@@ -216,4 +216,15 @@ class WeatherService(EnhancedLoggerMixin):
     @log_execution(level='DEBUG', include_args=True)
     def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
         """Fetch forecasts from weather service."""
-        raise NotImplementedError("Subclasses must implement _fetch_forecasts") 
+        raise NotImplementedError("Subclasses must implement _fetch_forecasts")
+
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get the block size in hours for grouping forecasts based on how far ahead they are.
+        
+        Args:
+            hours_ahead: Number of hours ahead of current time the forecast is for.
+            
+        Returns:
+            int: Block size in hours (e.g., 1 for hourly forecasts, 6 for 6-hour blocks).
+        """
+        raise NotImplementedError("Subclasses must implement get_block_size") 

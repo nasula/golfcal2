@@ -1,3 +1,196 @@
+# Weather Service Documentation
+
+## WeatherService Interface
+
+The `WeatherService` class serves as the base interface for implementing weather data providers in the application. It provides a standardized way to fetch and process weather data from different sources while maintaining consistent data formats and error handling.
+
+### Base Class Overview
+
+```python
+class WeatherService(EnhancedLoggerMixin):
+    def __init__(self, local_tz, utc_tz):
+        # Initialize timezones and logging
+        pass
+
+    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+        # Main public interface for fetching weather data
+        pass
+
+    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+        # Abstract method to be implemented by subclasses
+        raise NotImplementedError("Subclasses must implement _fetch_forecasts")
+
+    def get_block_size(self, hours_ahead: float) -> int:
+        # Get forecast block size based on how far ahead the forecast is
+        raise NotImplementedError("Subclasses must implement get_block_size")
+```
+
+### Required Methods
+
+1. `_fetch_forecasts`: Implement the actual weather data fetching logic
+   ```python
+   def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+       # Fetch and process weather data from your service
+       # Return a list of WeatherData objects
+   ```
+
+2. `get_block_size`: Define how forecasts should be grouped based on time
+   ```python
+   def get_block_size(self, hours_ahead: float) -> int:
+       # Return block size in hours (e.g., 1 for hourly forecasts, 6 for 6-hour blocks)
+       # Example:
+       if hours_ahead <= 48:
+           return 1  # Hourly forecasts for first 48 hours
+       return 6     # 6-hour blocks beyond that
+   ```
+
+### Implementing a New Weather Service
+
+To implement a new weather service:
+
+1. Create a new class that inherits from `WeatherService`:
+   ```python
+   class MyWeatherService(WeatherService):
+       def __init__(self, local_tz, utc_tz, config):
+           super().__init__(local_tz, utc_tz)
+           # Initialize service-specific configuration
+   ```
+
+2. Implement the required methods:
+   - `_fetch_forecasts`: Fetch and process weather data
+   - `get_block_size`: Define forecast grouping logic
+
+3. Return weather data in the standardized `WeatherData` format:
+   ```python
+   WeatherData(
+       temperature=float,          # Temperature in Celsius
+       precipitation=float,        # Precipitation amount in mm
+       precipitation_probability=float,  # Probability as percentage (0-100)
+       wind_speed=float,          # Wind speed in m/s
+       wind_direction=str,        # Wind direction in degrees or cardinal points
+       symbol=str,                # Weather symbol code (see WeatherCode class)
+       elaboration_time=datetime, # Forecast time (timezone-aware)
+       thunder_probability=float  # Thunder probability as percentage (0-100)
+   )
+   ```
+
+### Key Implementation Details
+
+1. **Error Handling**:
+   - Use the provided `handle_errors` decorator for consistent error handling
+   - Log errors appropriately using the inherited logger
+   - Return empty list on errors to maintain graceful degradation
+
+2. **Time Handling**:
+   - Always use timezone-aware datetime objects
+   - Convert between timezones using the provided `local_tz` and `utc_tz`
+   - Ensure forecasts are within the requested time range
+   - Use `get_block_size` to determine appropriate forecast grouping
+
+3. **Data Formatting**:
+   - Map service-specific weather codes to standard `WeatherCode` values
+   - Convert units to standard formats (e.g., m/s for wind speed)
+   - Ensure all required fields in `WeatherData` are populated
+
+4. **Caching (Optional)**:
+   - Implement caching if your service has rate limits
+   - Use the provided `WeatherDatabase` for persistent storage
+   - Handle cache invalidation appropriately
+
+### Best Practices
+
+1. **API Rate Limiting**:
+   - Implement appropriate rate limiting for your service
+   - Use the `_min_call_interval` property to control request spacing
+   - Cache responses when possible to minimize API calls
+
+2. **Logging**:
+   - Use the inherited logger for consistent log formatting
+   - Include relevant context in log messages
+   - Use appropriate log levels (debug, info, warning, error)
+
+3. **Error Recovery**:
+   - Handle API errors gracefully
+   - Provide meaningful error messages
+   - Fall back to cached data when possible
+
+4. **Data Validation**:
+   - Validate all input parameters
+   - Verify API responses before processing
+   - Handle missing or invalid data gracefully
+
+5. **Block Size Implementation**:
+   - Consider service data resolution when implementing `get_block_size`
+   - Account for varying forecast accuracy over time
+   - Document block size logic clearly
+   - Consider caching block size results if calculation is expensive
+
+### Example Implementation
+
+```python
+class ExampleWeatherService(WeatherService):
+    def __init__(self, local_tz, utc_tz, config):
+        super().__init__(local_tz, utc_tz)
+        self.api_key = config.global_config['api_keys']['weather']['example']
+        self.endpoint = "https://api.example.com/weather"
+        self._min_call_interval = timedelta(seconds=1)
+
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get forecast block size based on time ahead.
+        
+        Our example service provides:
+        - Hourly forecasts for first 48 hours
+        - 3-hour blocks for 48-72 hours
+        - 6-hour blocks beyond that
+        """
+        if hours_ahead <= 48:
+            return 1
+        elif hours_ahead <= 72:
+            return 3
+        return 6
+
+    @log_execution(level='DEBUG', include_args=True)
+    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+        try:
+            # Fetch data from API
+            response = requests.get(
+                self.endpoint,
+                params={
+                    'lat': lat,
+                    'lon': lon,
+                    'apikey': self.api_key
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Process and convert to WeatherData objects
+            forecasts = []
+            for item in data['forecasts']:
+                forecast_time = datetime.fromisoformat(item['time'])
+                if start_time <= forecast_time <= end_time:
+                    forecasts.append(WeatherData(
+                        temperature=float(item['temp']),
+                        precipitation=float(item['precip']),
+                        precipitation_probability=float(item['precip_prob']),
+                        wind_speed=float(item['wind_speed']),
+                        wind_direction=str(item['wind_dir']),
+                        symbol=self._map_weather_code(item['condition']),
+                        elaboration_time=forecast_time,
+                        thunder_probability=float(item.get('thunder_prob', 0))
+                    ))
+
+            return forecasts
+
+        except Exception as e:
+            self.error(
+                "Failed to fetch weather data",
+                exc_info=e,
+                service=self.__class__.__name__
+            )
+            return []
+```
+
 # GolfCal Weather Services
 
 Detailed documentation of the weather services used in GolfCal.

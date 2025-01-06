@@ -6,6 +6,7 @@ import time
 import math
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -21,6 +22,7 @@ from golfcal2.exceptions import (
     handle_errors
 )
 from golfcal2.config.error_aggregator import aggregate_error
+from golfcal2.config.types import AppConfig
 
 class WeatherManager(EnhancedLoggerMixin):
     """Weather service manager."""
@@ -42,15 +44,15 @@ class WeatherManager(EnhancedLoggerMixin):
         
         with handle_errors(WeatherError, "weather", "initialize services"):
             # Store timezone settings
-            self.local_tz = local_tz
-            self.utc_tz = utc_tz
+            self.local_tz = ZoneInfo(local_tz) if isinstance(local_tz, str) else local_tz
+            self.utc_tz = ZoneInfo(utc_tz) if isinstance(utc_tz, str) else utc_tz
             
             # Initialize services
             self.services = {
-                'mediterranean': MediterraneanWeatherService(local_tz, utc_tz, config),
-                'iberian': IberianWeatherService(local_tz, utc_tz, config),
-                'met': MetWeatherService(local_tz, utc_tz, config),
-                'portuguese': PortugueseWeatherService(local_tz, utc_tz, config)
+                'mediterranean': MediterraneanWeatherService(self.local_tz, self.utc_tz, config),
+                'iberian': IberianWeatherService(self.local_tz, self.utc_tz, config),
+                'met': MetWeatherService(self.local_tz, self.utc_tz, config),
+                'portuguese': PortugueseWeatherService(self.local_tz, self.utc_tz, config)
             }
             
             # Define service regions
@@ -119,6 +121,10 @@ class WeatherManager(EnhancedLoggerMixin):
 
             # Calculate end time based on duration
             end_time = teetime + timedelta(minutes=duration_minutes if duration_minutes else 240)
+            
+            # Get weather for 2 hours before event start to 2 hours after event end
+            start_time = teetime - timedelta(hours=2)
+            end_time = end_time + timedelta(hours=2)
 
             # Select appropriate weather service based on location
             weather_service = self._get_service_for_location(lat, lon, club)
@@ -136,7 +142,7 @@ class WeatherManager(EnhancedLoggerMixin):
                 return None
 
             # Get weather data
-            weather_data = weather_service.get_weather(lat, lon, teetime, end_time)
+            weather_data = weather_service.get_weather(lat, lon, start_time, end_time)
             if not weather_data:
                 error = WeatherError(
                     f"Failed to get weather data",
@@ -151,41 +157,201 @@ class WeatherManager(EnhancedLoggerMixin):
                 aggregate_error(str(error), "weather", None)
                 return None
 
-            # Format weather data
-            return self._format_weather_data(weather_data)
+            # Format weather data, passing the service
+            return self._format_weather_data(weather_data, weather_service)
     
-    def _format_weather_data(self, weather_data: List[WeatherData]) -> str:
+    def _format_weather_data(self, weather_data: List[WeatherData], service: WeatherService) -> str:
         """Format weather data into a human-readable string."""
-        with handle_errors(
-            WeatherError,
-            "weather",
-            "format weather data",
-            lambda: ""  # Fallback to empty string on error
-        ):
+        try:
             if not weather_data:
+                self.debug("No weather data to format")
                 return ""
             
-            lines = []
-            for data in weather_data:
-                time_str = data.elaboration_time.strftime("%H:%M")
-                symbol = get_weather_symbol(data.symbol)
-                temp = f"{data.temperature:.1f}°C"
-                wind = f"{data.wind_speed:.1f}m/s"
-                
-                # Add precipitation probability
-                precip = ""
-                if data.precipitation_probability is not None or data.precipitation > 0:
-                    prob = data.precipitation_probability or (data.precipitation * 100 if data.precipitation else 0)
-                    precip = f" 💧{prob:.1f}%"
-                
-                # Add thunder probability if present
-                thunder = ""
-                if data.thunder_probability and data.thunder_probability > 0:
-                    thunder = f" ⚡{data.thunder_probability:.1f}%"
-                
-                lines.append(f"{time_str} {symbol} {temp} {wind}{precip}{thunder}")
+            # Sort forecasts by time
+            sorted_data = sorted(weather_data, key=lambda x: x.elaboration_time)
             
-            return "\n".join(lines)
+            # Determine forecast type and source
+            first_time = sorted_data[0].elaboration_time
+            last_time = sorted_data[-1].elaboration_time
+            now = datetime.now(first_time.tzinfo)
+            hours_ahead = (first_time - now).total_seconds() / 3600
+            
+            self.debug(
+                "Weather data overview",
+                forecasts=len(sorted_data),
+                hours_ahead=hours_ahead,
+                first_time=first_time.isoformat(),
+                last_time=last_time.isoformat(),
+                timezone=str(first_time.tzinfo)
+            )
+            
+            # Get block size from the service
+            block_size = service.get_block_size(hours_ahead)
+            
+            self.debug(f"Using {block_size}-hour blocks from {service.__class__.__name__}")
+            
+            # Group forecasts by time blocks
+            periods = {}
+            for data in sorted_data:
+                time = data.elaboration_time
+                block_start = time.replace(
+                    hour=(time.hour // block_size) * block_size,
+                    minute=0
+                )
+                block_end = block_start + timedelta(hours=block_size)
+                
+                if (block_start, block_end) not in periods:
+                    periods[(block_start, block_end)] = []
+                periods[(block_start, block_end)].append(data)
+            
+            # For 1-hour blocks, don't merge - use periods as is
+            if block_size == 1:
+                merged_periods = periods
+            else:
+                # Only merge for multi-hour blocks
+                merged_periods = {}
+                current_start = None
+                current_forecasts = []
+                
+                for (start_time, end_time), forecasts in sorted(periods.items()):
+                    if current_start is None:
+                        current_start = start_time
+                        current_forecasts = forecasts
+                    else:
+                        # If there's a gap between blocks or different weather conditions,
+                        # save current block and start new one
+                        if start_time > current_start + timedelta(hours=block_size):
+                            merged_periods[(current_start, start_time)] = current_forecasts
+                            current_start = start_time
+                            current_forecasts = forecasts
+                        else:
+                            # Merge blocks if they're adjacent
+                            current_forecasts.extend(forecasts)
+                
+                # Add the last block
+                if current_start is not None and current_forecasts:
+                    merged_periods[(current_start, last_time)] = current_forecasts
+            
+            self.debug(f"Grouped into {len(merged_periods)} merged periods")
+            
+            # Format output
+            lines = []
+            try:
+                for (start_time, end_time), forecasts in sorted(merged_periods.items()):
+                    self.debug("Processing period", start=start_time.isoformat(), end=end_time.isoformat())
+                    
+                    try:
+                        # Convert to local time for display
+                        if isinstance(self.local_tz, str):
+                            local_tz = ZoneInfo(self.local_tz)
+                        else:
+                            local_tz = self.local_tz
+
+                        local_start = start_time.astimezone(local_tz)
+                        local_end = end_time.astimezone(local_tz)
+                        if block_size == 1:
+                            time_str = local_start.strftime('%H:%M')
+                        else:
+                            # For multi-hour blocks, ensure end time is correct
+                            block_end = local_start + timedelta(hours=block_size)
+                            time_str = f"{local_start.strftime('%H:%M')}-{block_end.strftime('%H:%M')}"
+                        
+                        # Calculate aggregated values
+                        avg_temp = sum(f.temperature for f in forecasts) / len(forecasts)
+                        avg_wind = sum(f.wind_speed for f in forecasts) / len(forecasts)
+                        max_prob = max((f.precipitation_probability or 0) for f in forecasts)
+                        total_precip = sum(f.precipitation for f in forecasts)
+                        max_thunder = max((f.thunder_probability or 0) for f in forecasts)
+                        
+                        self.debug(
+                            "Calculated values",
+                            time_str=time_str,
+                            avg_temp=avg_temp,
+                            avg_wind=avg_wind,
+                            max_prob=max_prob,
+                            total_precip=total_precip,
+                            max_thunder=max_thunder
+                        )
+                        
+                        # Get most severe weather symbol
+                        symbol = max(forecasts, key=lambda f: self._get_symbol_severity(f.symbol)).symbol
+                        weather_symbol = get_weather_symbol(symbol)
+                        
+                        self.debug("Got weather symbol", symbol=symbol, emoji=weather_symbol)
+                        
+                        # Build parts list
+                        parts = [
+                            time_str,
+                            weather_symbol,
+                            f"{avg_temp:.1f}°C",
+                            f"{avg_wind:.1f}m/s"
+                        ]
+                        
+                        # Add wind direction if available
+                        wind_dirs = [f.wind_direction for f in forecasts if f.wind_direction]
+                        if wind_dirs:
+                            # Use most common wind direction in the period
+                            from collections import Counter
+                            wind_dir = Counter(wind_dirs).most_common(1)[0][0]
+                            parts[3] = f"{avg_wind:.1f}m/s {wind_dir}"
+                        
+                        # Add precipitation info if significant
+                        if total_precip > 0:
+                            parts.append(f"💧{max_prob:.1f}% {total_precip:.1f}mm")
+                        elif max_prob > 5:
+                            parts.append(f"💧{max_prob:.1f}%")
+                        
+                        # Add thunder probability if significant
+                        if max_thunder >= 0.5:
+                            parts.append(f"⚡{max_thunder:.1f}%")
+                        
+                        line = ' '.join(parts)
+                        self.debug(
+                            "Built weather line",
+                            parts=parts,
+                            final_line=line
+                        )
+                        lines.append(line)
+                    except Exception as e:
+                        self.error(f"Error formatting period: {str(e)}", exc_info=True)
+                        continue
+                
+                result = "\n".join(lines)
+                self.debug("Final weather string", result=result)
+                return result
+                
+            except Exception as e:
+                self.error(f"Error formatting weather data: {str(e)}", exc_info=True)
+                return ""
+                
+        except Exception as e:
+            self.error(f"Top-level error in weather formatting: {str(e)}", exc_info=True)
+            return ""
+    
+    def _get_symbol_severity(self, symbol: str) -> int:
+        """Get severity level for a weather symbol for sorting."""
+        severity_map = {
+            'clearsky': 0,
+            'fair': 1,
+            'partlycloudy': 2,
+            'cloudy': 3,
+            'fog': 4,
+            'lightrain': 5,
+            'rain': 6,
+            'heavyrain': 7,
+            'lightsnow': 8,
+            'snow': 9,
+            'heavysnow': 10,
+            'sleet': 11,
+            'thunder': 12,
+            'thunderstorm': 13
+        }
+        
+        # Remove day/night suffix and get base symbol
+        base_symbol = symbol.rstrip('_day').rstrip('_night').rstrip('_polartwilight')
+        
+        # Return severity or 0 if symbol not found
+        return severity_map.get(base_symbol, 0)
     
     @log_execution(level='DEBUG')
     def _get_service_for_location(self, lat: float, lon: float, club: Optional[str] = None) -> Optional[WeatherService]:
@@ -246,3 +412,14 @@ class WeatherManager(EnhancedLoggerMixin):
                 self.debug(f"Rate limit: sleeping for {sleep_time} seconds")
                 time.sleep(sleep_time)
         self._last_api_call = datetime.now()
+    
+    def _get_expected_interval(self, source: str, hours_ahead: float) -> int:
+        """Get expected interval in hours based on weather service and forecast range."""
+        if source in ['met', 'iberian']:
+            return 6 if hours_ahead > 48 else 1
+        elif source == 'mediterranean':
+            return 3
+        elif source == 'portuguese':
+            return 3 if hours_ahead > 24 else 1
+        else:
+            return 1  # Default to 1-hour blocks
