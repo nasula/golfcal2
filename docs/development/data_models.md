@@ -90,6 +90,7 @@ class WeatherData:
     wind_direction: float  # degrees (0-360)
     weather_symbol: str
     cloud_coverage: Optional[float] = None  # 0-100%
+    thunder_probability: Optional[float] = None  # 0-100%
 
     def __post_init__(self):
         """Validate weather data after initialization."""
@@ -103,6 +104,8 @@ class WeatherData:
             raise ValueError("Wind direction must be between 0° and 360°")
         if self.cloud_coverage is not None and not (0 <= self.cloud_coverage <= 100):
             raise ValueError("Cloud coverage must be between 0% and 100%")
+        if self.thunder_probability is not None and not (0 <= self.thunder_probability <= 100):
+            raise ValueError("Thunder probability must be between 0% and 100%")
 ```
 
 #### WeatherSymbol
@@ -184,6 +187,7 @@ class AppConfig:
 - Wind speed between 0 and 100 m/s
 - Wind direction between 0° and 360°
 - Weather symbol must match enum values
+- Thunder probability between 0% and 100% when provided
 
 ## Usage Examples
 
@@ -221,12 +225,24 @@ weather = WeatherData(
     wind_speed=5.2,
     wind_direction=180.0,
     weather_symbol=WeatherSymbol.PARTLY_CLOUDY,
-    cloud_coverage=45.0
+    cloud_coverage=45.0,
+    thunder_probability=20.0  # 20% chance of thunder
 )
 
 # Access normalized data
 print(f"Temperature: {weather.temperature}°C")
 print(f"Wind: {weather.wind_speed} m/s from {weather.wind_direction}°")
+print(f"Precipitation chance: {weather.precipitation_probability}%")
+if weather.thunder_probability and weather.thunder_probability > 0:
+    print(f"Thunder risk: {weather.thunder_probability}%")
+
+# Format for display
+conditions = []
+if weather.precipitation_probability > 20:
+    conditions.append(f"💧 {weather.precipitation_probability}% chance of rain")
+if weather.thunder_probability and weather.thunder_probability > 10:
+    conditions.append(f"⚡ {weather.thunder_probability}% chance of thunder")
+print("Conditions:", ", ".join(conditions))
 ```
 
 ## Best Practices

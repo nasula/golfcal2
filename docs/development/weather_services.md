@@ -79,10 +79,15 @@ class WeatherService(EnhancedLoggerMixin):
   - No API key required
   - 1-hour intervals for first 24 hours
   - 6-hour intervals thereafter
+  - Direct thunder probability from API
 - **Block Sizes**:
   - 1 hour for 0-24 hours ahead
   - 6 hours for 24-48 hours ahead
   - 12 hours beyond 48 hours
+- **Thunder Calculation**:
+  - Uses API's `probability_of_thunder` field
+  - Falls back to symbol code analysis if API data unavailable
+  - Heavy thunder: 80%, Light thunder: 20%, Medium: 50%
 
 ### 2. Iberian Weather Service (Spain)
 - **Coverage**: Spain mainland and Canary Islands
@@ -92,9 +97,13 @@ class WeatherService(EnhancedLoggerMixin):
   - Requires API key
   - Municipality-based forecasts
   - Separate handling for mainland and islands
+  - Thunder probability from weather descriptions
 - **Block Sizes**:
   - 1 hour for first 48 hours
   - 3 hours thereafter
+- **Thunder Calculation**:
+  - Based on "tormenta" keyword in weather descriptions
+  - Default 50% probability when thunder is mentioned
 
 ### 3. Portuguese Weather Service
 - **Coverage**: Portugal mainland
@@ -104,10 +113,15 @@ class WeatherService(EnhancedLoggerMixin):
   - No API key required
   - Daily forecasts with hourly details
   - 10-day forecast range
+  - Thunder codes in weather types
 - **Block Sizes**:
   - 1 hour for first 24 hours
   - 3 hours for 24-72 hours
   - 6 hours beyond 72 hours
+- **Thunder Calculation**:
+  - Based on IPMA weather type codes
+  - Types 6, 7, 9 indicate thunder conditions
+  - Default 50% probability for thunder weather types
 
 ### 4. Mediterranean Weather Service
 - **Coverage**: Mediterranean region
@@ -117,8 +131,22 @@ class WeatherService(EnhancedLoggerMixin):
   - 3-hour interval forecasts
   - 5-day forecast range
   - Comprehensive weather data
+  - Detailed thunder probability calculation
 - **Block Sizes**:
   - 3 hours consistently
+- **Thunder Calculation**:
+  - Based on OpenWeather codes (2xx series)
+  - Probability mapping:
+    - 200: 30% (Light thunderstorm)
+    - 201: 60% (Thunderstorm)
+    - 202: 90% (Heavy thunderstorm)
+    - 210: 20% (Light thunderstorm)
+    - 211: 50% (Thunderstorm)
+    - 212: 80% (Heavy thunderstorm)
+    - 221: 40% (Ragged thunderstorm)
+    - 230: 25% (Light thunderstorm with drizzle)
+    - 231: 45% (Thunderstorm with drizzle)
+    - 232: 65% (Heavy thunderstorm with drizzle)
 
 ## Weather Data Model
 
@@ -132,6 +160,7 @@ class WeatherData:
     wind_direction: float  # degrees (0-360)
     weather_symbol: str
     cloud_coverage: Optional[float] = None  # 0-100%
+    thunder_probability: Optional[float] = None  # 0-100%
 ```
 
 ## Weather Symbols
@@ -213,3 +242,44 @@ def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: da
    - Use appropriate cache strategy
    - Implement cache invalidation
    - Handle cache misses gracefully 
+
+## Data Processing
+
+### 1. Unit Standardization
+- Temperature: Always in Celsius
+- Wind Speed: Converted to meters/second
+- Wind Direction: Normalized to 0-360 degrees
+- Probabilities: Converted to percentages (0-100)
+
+### 2. Thunder Probability Processing
+- Each service implements its own calculation method
+- Probabilities normalized to 0-100% scale
+- Default to 0% when no thunder data available
+- Higher probabilities for severe conditions
+- Service-specific mappings for weather codes
+
+### 3. Time Handling
+- All times converted to UTC internally
+- Local timezone handling for display
+- Proper handling of forecast blocks
+- Time-based data aggregation
+
+## Caching Strategy
+
+### 1. Location-based Cache
+- SQLite database for persistent storage
+- Caches weather data by location and time range
+- Automatic expiration based on forecast age
+- Configurable cache duration per service
+
+### 2. Memory Cache
+- In-memory caching for frequent requests
+- Short-term caching (1-3 hours)
+- Automatic cleanup of expired entries
+- Reduces API calls for same location/time
+
+### 3. Station Cache
+- Caches weather station mappings
+- Used by AEMET and IPMA services
+- 30-day validity for mappings
+- Periodic background updates 
