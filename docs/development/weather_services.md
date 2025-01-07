@@ -163,21 +163,35 @@ class WeatherData:
     thunder_probability: Optional[float] = None  # 0-100%
 ```
 
-## Weather Symbols
+## Weather Codes
 
-The application uses a standardized set of weather symbols across all services:
+The application uses a standardized set of weather codes across all services:
 
 ```python
-class WeatherSymbol(str, Enum):
-    CLEAR = "clear"
-    PARTLY_CLOUDY = "partly_cloudy"
-    CLOUDY = "cloudy"
-    LIGHT_RAIN = "light_rain"
-    RAIN = "rain"
-    HEAVY_RAIN = "heavy_rain"
-    THUNDERSTORM = "thunderstorm"
-    SNOW = "snow"
-    FOG = "fog"
+class WeatherCode(str, Enum):
+    CLEARSKY_DAY = 'clearsky_day'
+    CLEARSKY_NIGHT = 'clearsky_night'
+    FAIR_DAY = 'fair_day'
+    FAIR_NIGHT = 'fair_night'
+    PARTLYCLOUDY_DAY = 'partlycloudy_day'
+    PARTLYCLOUDY_NIGHT = 'partlycloudy_night'
+    CLOUDY = 'cloudy'
+    FOG = 'fog'
+    LIGHTRAIN = 'lightrain'
+    RAIN = 'rain'
+    HEAVYRAIN = 'heavyrain'
+    THUNDER = 'thunder'
+    RAINANDTHUNDER = 'rainandthunder'
+    HEAVYRAINANDTHUNDER = 'heavyrainandthunder'
+```
+
+These codes are mapped to display symbols (emojis) using the `get_weather_symbol()` function:
+
+```python
+def get_weather_symbol(symbol_code: str) -> str:
+    """Map weather symbol codes to emojis."""
+    # Returns appropriate emoji for the weather code
+    # e.g., 'clearsky_day' -> '☀️', 'rain' -> '🌧️', etc.
 ```
 
 ## Caching Strategy
