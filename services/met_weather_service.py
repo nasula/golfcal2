@@ -5,7 +5,7 @@ import json
 import time
 import pytz
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
 import requests
@@ -13,7 +13,7 @@ import requests
 from golfcal2.utils.logging_utils import log_execution
 from golfcal2.services.weather_database import WeatherDatabase
 from golfcal2.services.weather_schemas import MET_SCHEMA
-from golfcal2.services.weather_types import WeatherService, WeatherData, WeatherCode
+from golfcal2.services.weather_types import WeatherService, WeatherData, WeatherCode, WeatherResponse
 from golfcal2.exceptions import (
     WeatherError,
     APIError,
@@ -24,6 +24,13 @@ from golfcal2.exceptions import (
     handle_errors
 )
 from golfcal2.config.error_aggregator import aggregate_error
+
+""" References:
+- https://api.met.no/weatherapi/locationforecast/2.0/documentation
+- https://api.met.no/weatherapi/locationforecast/2.0/documentation#api-response-format
+- https://api.met.no/doc/locationforecast/HowTO
+
+"""
 
 class MetWeatherService(WeatherService):
     """Service for handling weather data from MET.no API."""
@@ -53,129 +60,141 @@ class MetWeatherService(WeatherService):
             self.db = WeatherDatabase('met_weather', MET_SCHEMA)
             
             # Rate limiting configuration
-            self._last_api_call = None
+            self._last_request_time = datetime.now()  # Initialize with current time
             self._min_call_interval = timedelta(seconds=1)  # MET.no requires 1 second between calls
             
             self.set_log_context(service="MET.no")
     
-    @log_execution(level='DEBUG')
-    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime, altitude: Optional[int] = None) -> List[WeatherData]:
-        """Get weather data for location and time range.
-        
-        Args:
-            lat: Latitude in decimal degrees
-            lon: Longitude in decimal degrees
-            start_time: Start time for forecast
-            end_time: End time for forecast
-            altitude: Optional ground surface height in meters for more precise temperature values
-        """
+    @log_execution(level='DEBUG', include_args=True)
+    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> WeatherResponse:
+        """Get weather data for a specific time and location."""
         with handle_errors(
             WeatherError,
             "met_weather",
             f"get weather for coordinates ({lat}, {lon})",
-            lambda: []  # Fallback to empty list on error
+            lambda: WeatherResponse(data=[], expires=datetime.now(self.utc_tz))  # Return empty response on error
         ):
-            self.set_log_context(
-                latitude=lat,
-                longitude=lon,
-                altitude=altitude,
-                start_time=start_time.isoformat(),
-                end_time=end_time.isoformat()
+            # Ensure times have timezone info
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=self.local_tz)
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=self.local_tz)
+            
+            # Convert to UTC for consistent handling
+            start_time_utc = start_time.astimezone(self.utc_tz)
+            end_time_utc = end_time.astimezone(self.utc_tz)
+            
+            # Check if the requested time is beyond the forecast range (10 days)
+            now = datetime.now(self.utc_tz)
+            max_forecast_time = now + timedelta(days=10)
+            if start_time_utc > max_forecast_time:
+                self.debug(
+                    "Requested time beyond forecast range",
+                    start_time=start_time_utc.isoformat(),
+                    max_forecast=max_forecast_time.isoformat()
+                )
+                return WeatherResponse(data=[], expires=now + timedelta(hours=1))
+            
+            self.debug(
+                "Time range for weather data",
+                start_local=start_time.isoformat(),
+                end_local=end_time.isoformat(),
+                start_utc=start_time_utc.isoformat(),
+                end_utc=end_time_utc.isoformat()
             )
             
-            # Calculate time range
-            if not end_time:
-                end_time = start_time + timedelta(hours=4)  # Default to 4-hour duration
-            
-            # Try to get from cache first
+            # Check cache first
             location = f"{lat},{lon}"
-            if altitude:
-                location += f",{altitude}"
+            
+            # Generate time points for the actual time window
+            time_points = []
+            current_time = start_time_utc
+            while current_time <= end_time_utc:
+                time_points.append(current_time.isoformat())  # Use ISO format to match storage format
+                current_time += timedelta(hours=1)
+            
+            self.debug(
+                "Checking cache",
+                location=location,
+                time_points=len(time_points),
+                sample_times=time_points[:3],  # Log first 3 times for verification
+                start=start_time_utc.isoformat(),
+                end=end_time_utc.isoformat()
+            )
+            
+            try:
+                cached_data = self.db.get_weather_data(
+                    location=location,
+                    times=time_points,
+                    data_type="daily",
+                    fields=[
+                        'air_temperature',
+                        'precipitation_amount',
+                        'wind_speed',
+                        'wind_from_direction',
+                        'probability_of_precipitation',
+                        'probability_of_thunder',
+                        'summary_code',
+                        'expires'  # Add expires field to fetch expiry time
+                    ]
+                )
+                self.debug(
+                    "Cache query result",
+                    found=bool(cached_data),
+                    entry_count=len(cached_data) if cached_data else 0
+                )
+            except Exception as e:
+                self.error(f"Failed to query cache: {str(e)}", exc_info=True)
+                cached_data = {}
+            
+            if cached_data:
+                self.debug(f"Found {len(cached_data)} cached entries")
+                forecasts = []
+                expires = None
                 
-            times_to_fetch = []
-            current = start_time
-            while current <= end_time:
-                times_to_fetch.append(current.strftime('%Y-%m-%dT%H:%M:%SZ'))
-                current += timedelta(hours=1)
-            
-            fields = [
-                'air_temperature', 'precipitation_amount', 'wind_speed',
-                'wind_from_direction', 'probability_of_precipitation',
-                'probability_of_thunder', 'summary_code'
-            ]
-            
-            weather_data = self.db.get_weather_data(location, times_to_fetch, 'next_1_hours', fields)
-            
-            if not weather_data:
-                # Fetch from API if not in cache
-                api_data = self._fetch_from_api(lat, lon, altitude)
-                if not api_data:
-                    error = WeatherError(
-                        "Failed to fetch weather data from MET.no API",
-                        ErrorCode.API_ERROR,
-                        {"location": location}
-                    )
-                    aggregate_error(str(error), "met_weather", None)
-                    return []
+                for time_str, data in cached_data.items():
+                    # Parse ISO format time string with timezone
+                    forecast_time = datetime.fromisoformat(time_str)
+                    if start_time_utc <= forecast_time <= end_time_utc:
+                        forecast = WeatherData(
+                            temperature=data.get('air_temperature'),
+                            precipitation=data.get('precipitation_amount', 0.0),
+                            precipitation_probability=data.get('probability_of_precipitation'),
+                            wind_speed=data.get('wind_speed', 0.0),
+                            wind_direction=data.get('wind_from_direction'),
+                            symbol=data.get('summary_code', 'cloudy'),
+                            elaboration_time=forecast_time,
+                            thunder_probability=data.get('probability_of_thunder', 0.0)
+                        )
+                        forecasts.append(forecast)
+                        
+                        # Get expiry time from data
+                        if not expires and data.get('expires'):
+                            try:
+                                expires = datetime.fromisoformat(data['expires'])
+                            except (ValueError, TypeError):
+                                self.warning("Invalid expiry time in cache", expires=data.get('expires'))
                 
-                # Parse and store in cache
-                weather_data = self._parse_api_data(api_data, start_time, end_time)
-                if not weather_data:
-                    error = WeatherError(
-                        "Failed to parse weather data from MET.no API",
-                        ErrorCode.PARSING_ERROR,
-                        {"location": location}
-                    )
-                    aggregate_error(str(error), "met_weather", None)
-                    return []
-                
-                # Store in cache
-                db_entries = []
-                for time_str, data in weather_data.items():
-                    entry = {
-                        'location': location,
-                        'time': time_str,
-                        'data_type': 'next_1_hours',
-                        'air_temperature': data.get('temperature'),
-                        'precipitation_amount': data.get('precipitation'),
-                        'wind_speed': data.get('wind_speed'),
-                        'wind_from_direction': data.get('wind_direction'),
-                        'probability_of_precipitation': data.get('precipitation_probability'),
-                        'probability_of_thunder': data.get('thunder_probability', 0.0),
-                        'summary_code': data.get('symbol')
-                    }
-                    db_entries.append(entry)
-                
-                # Store with 2-hour expiry
-                expires = (datetime.utcnow() + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
-                try:
-                    self.db.store_weather_data(db_entries, expires=expires)
-                except Exception as e:
-                    error = WeatherError(
-                        "Failed to store weather data in cache",
-                        ErrorCode.CACHE_ERROR,
-                        {"location": location}
-                    )
-                    aggregate_error(str(error), "met_weather", e.__traceback__)
+                if forecasts:
+                    if not expires:
+                        expires = datetime.now(self.utc_tz) + timedelta(minutes=5)
+                        self.warning("No valid expiry time found in cache, using short expiry")
+                    
+                    self.debug("Using cache expiry time", expires=expires.isoformat())
+                    return WeatherResponse(data=forecasts, expires=expires)
             
-            # Convert to WeatherData objects
-            forecasts = []
-            for time_str in times_to_fetch:
-                if time_str in weather_data:
-                    data = weather_data[time_str]
-                    forecast = WeatherData(
-                        temperature=data.get('temperature', 0.0),
-                        precipitation=data.get('precipitation', 0.0),
-                        precipitation_probability=data.get('precipitation_probability'),
-                        wind_speed=data.get('wind_speed', 0.0),
-                        wind_direction=str(data.get('wind_direction')) if data.get('wind_direction') is not None else None,
-                        symbol=data.get('symbol', 'cloudy'),
-                        elaboration_time=datetime.strptime(time_str, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=self.utc_tz),
-                        thunder_probability=data.get('probability_of_thunder')
-                    )
-                    forecasts.append(forecast)
+            # Fetch new data if not in cache
+            self.debug("No cached data found, fetching from API")
+            api_data = self._fetch_from_api(lat, lon)
+            if not api_data:
+                return WeatherResponse(data=[], expires=datetime.now(self.utc_tz))
             
-            return forecasts
+            # Parse response and get forecasts
+            forecasts = self._parse_response(api_data, lat, lon, start_time_utc, end_time_utc)
+            
+            # Use API expiry time
+            expires = api_data.get('_expires', datetime.now(self.utc_tz) + timedelta(hours=1))
+            return WeatherResponse(data=forecasts, expires=expires)
 
     def _fetch_from_api(self, lat: float, lon: float, altitude: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Fetch weather data from MET.no API.
@@ -184,6 +203,9 @@ class MetWeatherService(WeatherService):
             lat: Latitude in decimal degrees
             lon: Longitude in decimal degrees
             altitude: Optional ground surface height in meters
+        
+        Returns:
+            Dict containing API response data and expiry time, or None on error
         """
         with handle_errors(
             WeatherError,
@@ -192,11 +214,15 @@ class MetWeatherService(WeatherService):
             lambda: None  # Fallback to None on error
         ):
             # Rate limiting
-            if self._last_api_call:
-                elapsed = datetime.now() - self._last_api_call
-                if elapsed < self._min_call_interval:
-                    sleep_time = (self._min_call_interval - elapsed).total_seconds()
-                    self.debug(f"Rate limit: sleeping for {sleep_time} seconds")
+            now = datetime.now()
+            if self._last_request_time:
+                elapsed = (now - self._last_request_time).total_seconds()
+                if elapsed < 1.0:
+                    sleep_time = 1.0 - elapsed
+                    self.debug(
+                        "Rate limit",
+                        sleep_seconds=sleep_time
+                    )
                     time.sleep(sleep_time)
             
             # Build API URL
@@ -212,9 +238,21 @@ class MetWeatherService(WeatherService):
             
             try:
                 # Make API request
-                response = requests.get(self.endpoint, params=params, headers=self.headers, timeout=10)
+                response = requests.get(
+                    self.endpoint,
+                    params=params,
+                    headers=self.headers,
+                    timeout=10
+                )
+                self._last_request_time = datetime.now()
                 
-                self._last_api_call = datetime.now()
+                self.debug(
+                    "Got API response",
+                    status=response.status_code,
+                    content_type=response.headers.get('content-type'),
+                    content_length=len(response.content),
+                    headers=dict(response.headers)
+                )
                 
                 if response.status_code == 429:  # Too Many Requests
                     error = APIRateLimitError(
@@ -232,7 +270,26 @@ class MetWeatherService(WeatherService):
                     aggregate_error(str(error), "met_weather", None)
                     return None
                 
-                return response.json()
+                # Get expiry time from headers
+                expires = None
+                if 'Expires' in response.headers:
+                    try:
+                        # Parse the Expires header (format: "Wed, 21 Feb 2024 16:39:12 GMT")
+                        expires = datetime.strptime(response.headers['Expires'], '%a, %d %b %Y %H:%M:%S GMT')
+                        expires = expires.replace(tzinfo=timezone.utc)
+                        self.debug("Got expiry time from headers", expires=expires.isoformat())
+                    except ValueError as e:
+                        self.warning(f"Failed to parse Expires header: {str(e)}")
+                        expires = None
+                
+                if not expires:
+                    # If no valid expiry time found, use a short expiry
+                    expires = datetime.now(timezone.utc) + timedelta(minutes=5)
+                    self.warning("No valid expiry time in headers, using short expiry", expires=expires.isoformat())
+                
+                data = response.json()
+                data['_expires'] = expires
+                return data
                 
             except requests.exceptions.Timeout:
                 error = APITimeoutError(
@@ -248,7 +305,7 @@ class MetWeatherService(WeatherService):
                     {"url": self.endpoint}
                 )
                 aggregate_error(str(error), "met_weather", e.__traceback__)
-                return None 
+                return None
 
     def _parse_api_data(self, data: Dict[str, Any], start_time: datetime, end_time: datetime) -> Dict[str, Dict[str, Any]]:
         """Parse API response data into internal format."""
@@ -742,81 +799,32 @@ class MetWeatherService(WeatherService):
             f"fetch forecasts for coordinates ({lat}, {lon})",
             lambda: []  # Fallback to empty list on error
         ):
-            # Apply rate limiting
-            self._apply_rate_limit()
+            # Make API request
+            data = self._fetch_from_api(lat, lon)
+            if not data:
+                return []
             
-            # Prepare request
-            params = {
-                'lat': f"{lat:.4f}",
-                'lon': f"{lon:.4f}"
-            }
+            # Parse response
+            forecasts = self._parse_response(data, lat, lon, start_time, end_time)
             
-            headers = {
-                'User-Agent': self.USER_AGENT
-            }
-            
-            # Log request details
-            self.debug(
-                "MET.no URL",
-                url=self.BASE_URL,
-                params=params
+            self.info(
+                "Successfully parsed forecasts",
+                count=len(forecasts)
             )
             
-            try:
-                # Make request
-                response = requests.get(
-                    self.BASE_URL,
-                    params=params,
-                    headers=headers,
-                    timeout=(10, 30)  # (connect timeout, read timeout)
-                )
-                
-                if response.status_code == 429:  # Too Many Requests
-                    error = APIRateLimitError(
-                        "MET.no API rate limit exceeded",
-                        retry_after=int(response.headers.get('Retry-After', 60))
-                    )
-                    aggregate_error(str(error), "met_weather", None)
-                    return []
-                
-                if response.status_code != 200:
-                    error = APIResponseError(
-                        f"MET.no API request failed with status {response.status_code}",
-                        response=response
-                    )
-                    aggregate_error(str(error), "met_weather", None)
-                    return []
-                
-                # Parse response
-                data = response.json()
-                forecasts = self._parse_response(data, start_time, end_time)
-                
-                self.info(
-                    "Successfully parsed forecasts",
-                    count=len(forecasts)
-                )
-                
-                return forecasts
-                
-            except requests.exceptions.Timeout:
-                error = APITimeoutError(
-                    "MET.no API request timed out",
-                    {"url": self.BASE_URL}
-                )
-                aggregate_error(str(error), "met_weather", None)
-                return []
-            except requests.exceptions.RequestException as e:
-                error = APIError(
-                    f"MET.no API request failed: {str(e)}",
-                    ErrorCode.REQUEST_FAILED,
-                    {"url": self.BASE_URL}
-                )
-                aggregate_error(str(error), "met_weather", e.__traceback__)
-                return []
+            return forecasts
 
     @log_execution(level='DEBUG')
-    def _parse_response(self, data: Dict[str, Any], start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        """Parse MET.no API response."""
+    def _parse_response(self, data: Dict[str, Any], lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+        """Parse MET.no API response.
+        
+        Args:
+            data: API response data
+            lat: Latitude in decimal degrees
+            lon: Longitude in decimal degrees
+            start_time: Start time in UTC
+            end_time: End time in UTC
+        """
         with handle_errors(
             WeatherError,
             "met_weather",
@@ -824,9 +832,11 @@ class MetWeatherService(WeatherService):
             lambda: []  # Fallback to empty list on error
         ):
             forecasts = []
+            all_forecasts = []  # Store all forecasts for caching
             
             try:
                 timeseries = data['properties']['timeseries']
+                self.debug(f"Found {len(timeseries)} entries in timeseries")
                 
                 for entry in timeseries:
                     with handle_errors(
@@ -836,11 +846,8 @@ class MetWeatherService(WeatherService):
                         lambda: None  # Skip entry on error
                     ):
                         time_str = entry['time']
+                        # API returns times in UTC with 'Z' suffix
                         forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                        
-                        # Skip forecasts outside our time range
-                        if not (start_time <= forecast_time <= end_time):
-                            continue
                         
                         # Get instant data
                         instant = entry['data']['instant']['details']
@@ -865,10 +872,91 @@ class MetWeatherService(WeatherService):
                             wind_direction=self._get_wind_direction(instant.get('wind_from_direction')),
                             symbol=symbol_data.get('symbol_code', 'cloudy'),
                             elaboration_time=forecast_time,
-                            thunder_probability=entry['data'].get('probability_of_thunder', 0.0)
+                            thunder_probability=precip_data.get('probability_of_thunder', 0.0)
                         )
                         
-                        forecasts.append(forecast)
+                        # Store all forecasts for caching
+                        all_forecasts.append(forecast)
+                        
+                        # Only return forecasts within the requested time range
+                        if start_time <= forecast_time <= end_time:
+                            self.debug(
+                                "Added forecast within time range",
+                                time=forecast_time.isoformat(),
+                                temp=forecast.temperature,
+                                precip=forecast.precipitation
+                            )
+                            forecasts.append(forecast)
+                        else:
+                            self.debug(
+                                "Forecast outside requested range, caching only",
+                                time=forecast_time.isoformat()
+                            )
+                
+                self.debug(f"Parsed {len(forecasts)} forecasts within time range")
+                self.debug(f"Total forecasts for caching: {len(all_forecasts)}")
+                
+                # Store all forecasts in cache
+                if all_forecasts:
+                    try:
+                        self.debug(f"Preparing to store {len(all_forecasts)} forecasts in cache")
+                        location = f"{lat},{lon}"
+                        
+                        # Get expiry time from response headers
+                        expires = data.get('_expires')
+                        if not expires:
+                            self.warning("No expiry time found in response headers")
+                            return forecasts
+                        
+                        # Convert datetime to ISO format string
+                        expires_str = expires.isoformat() if isinstance(expires, datetime) else expires
+                        self.debug("Using expiry time from headers", expires=expires_str)
+                        
+                        # Prepare cache entries
+                        cache_data = []
+                        for forecast in all_forecasts:
+                            cache_entry = {
+                                'location': location,
+                                'time': forecast.elaboration_time.isoformat(),  # Use ISO format to preserve timezone
+                                'data_type': 'daily',
+                                'air_temperature': forecast.temperature,
+                                'precipitation_amount': forecast.precipitation,
+                                'wind_speed': forecast.wind_speed,
+                                'wind_from_direction': forecast.wind_direction,
+                                'probability_of_precipitation': forecast.precipitation_probability,
+                                'probability_of_thunder': forecast.thunder_probability,
+                                'summary_code': forecast.symbol,
+                                'expires': expires_str  # Add expiry time to each entry
+                            }
+                            cache_data.append(cache_entry)
+                            self.debug(
+                                "Prepared cache entry",
+                                time=forecast.elaboration_time.isoformat(),
+                                expires=expires_str
+                            )
+                        
+                        # Store all entries with expiry time from headers
+                        self.debug(
+                            "Storing in cache",
+                            entries=len(cache_data),
+                            expires=expires_str
+                        )
+                        
+                        # Store data with expiry time from headers
+                        self.db.store_weather_data(
+                            cache_data,
+                            expires=expires_str,
+                            last_modified=datetime.now(self.utc_tz).isoformat()
+                        )
+                        self.debug(f"Successfully stored {len(cache_data)} entries in cache")
+                    except Exception as e:
+                        self.error(
+                            "Failed to store data in cache",
+                            error=str(e),
+                            entry_count=len(all_forecasts),
+                            first_entry=all_forecasts[0] if all_forecasts else None,
+                            exc_info=True
+                        )
                 
                 return forecasts
                 
@@ -884,25 +972,6 @@ class MetWeatherService(WeatherService):
                 aggregate_error(str(error), "met_weather", e.__traceback__)
                 return []
 
-    def _apply_rate_limit(self) -> None:
-        """Apply rate limiting for MET.no API."""
-        with handle_errors(
-            WeatherError,
-            "met_weather",
-            "apply rate limit",
-            lambda: None  # Fallback to None on error
-        ):
-            # Ensure at least 1 second between requests
-            elapsed = time.time() - self._last_request_time
-            if elapsed < 1.0:
-                sleep_time = 1.0 - elapsed
-                self.debug(
-                    "Rate limit",
-                    sleep_seconds=sleep_time
-                )
-                time.sleep(sleep_time)
-            self._last_request_time = time.time() 
-
     def get_block_size(self, hours_ahead: float) -> int:
         """Get block size for MET.no forecasts.
         
@@ -910,3 +979,16 @@ class MetWeatherService(WeatherService):
         Beyond 48 hours: 6-hour blocks
         """
         return 6 if hours_ahead > 48 else 1 
+
+    def get_expiry_time(self, forecast_time: Optional[datetime] = None) -> datetime:
+        """Get expiry time for cached weather data.
+        
+        MET.no API updates based on expiry in the response header.
+        We should never calculate our own expiry time.
+        
+        Args:
+            forecast_time: Ignored, kept for compatibility with parent class
+        """
+        # Always use current time + 5 minutes as fallback
+        # This ensures we'll try to fetch fresh data next time
+        return datetime.now(self.utc_tz) + timedelta(minutes=5) 

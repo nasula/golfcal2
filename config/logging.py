@@ -221,174 +221,97 @@ def get_service_logger(service_name: str, config: LoggingConfig, global_level: i
         effective_level = max(service_level, global_level)
         logger.setLevel(effective_level)
         
-        # Only set propagate to False if we're adding our own handlers
-        has_handlers = False
-        
         # Add service-specific file handler if configured
         if service_config.file and service_config.file.enabled:
             file_handler = get_file_handler(
                 service_config.file.path,
-                JsonFormatter(include_timestamp=service_config.file.include_timestamp),
+                JsonFormatter(include_timestamp=True),
                 service_config.file.max_size_mb * 1024 * 1024,
                 service_config.file.backup_count
             )
+            # Service file handler always logs at DEBUG level for troubleshooting
+            file_handler.setLevel(logging.DEBUG)
             
             # Add service-specific filters
             if service_config.sensitive_fields:
                 file_handler.addFilter(SensitiveDataFilter(set(service_config.sensitive_fields)))
             
             logger.addHandler(file_handler)
-            has_handlers = True
-        
-        # Set propagate based on whether we added handlers
-        logger.propagate = not has_handlers
     
     return logger
+
+def init_error_aggregator(config: Optional[Dict[str, Any]] = None) -> None:
+    """Initialize error aggregator with given configuration.
+    
+    Args:
+        config: Error aggregation configuration
+    """
+    # Currently a placeholder - can be implemented later if error aggregation is needed
+    pass
 
 def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = False) -> None:
     """Set up logging based on configuration and mode.
     
     Args:
         config: Application configuration
-        dev_mode: Whether to run in development mode (shows INFO logs)
-        verbose: Whether to enable verbose mode (shows DEBUG logs)
+        dev_mode: Whether to run in development mode
+        verbose: Whether to enable verbose (DEBUG) logging
     """
-    # Debug existing handlers before setup
-    root_logger = logging.getLogger()
-    print("\nBefore setup - Root logger handlers:")
-    for i, h in enumerate(root_logger.handlers, start=1):
-        print(f"Handler #{i}: {h.__class__.__name__}, level={logging.getLevelName(h.level)}")
-    
-    weather_logger = logging.getLogger('weather_service')
-    print("\nBefore setup - Weather service logger handlers:")
-    for i, h in enumerate(weather_logger.handlers, start=1):
-        print(f"Handler #{i}: {h.__class__.__name__}, level={logging.getLevelName(h.level)}")
-    print("\n")
-
-    # Load granular logging configuration
+    # Load logging config
     logging_config = load_logging_config()
     
-    # Initialize error aggregator
-    from golfcal2.config.error_aggregator import init_error_aggregator
+    # Initialize error aggregator first
     init_error_aggregator(logging_config.error_aggregation)
     
-    # Get log level based on mode
-    if verbose:  # Explicit request for debug logs
-        level = logging_config.verbose_level  # DEBUG
-    elif dev_mode:  # Development mode shows INFO
-        level = logging_config.dev_level      # INFO
-    else:  # Production mode shows WARNING and above
-        level = logging_config.default_level  # WARNING
-
-    # Convert string level to logging constant
-    numeric_level = getattr(logging, level.upper(), logging.DEBUG)
-
-    # Register custom logger class that inherits from EnhancedLoggerMixin
-    from golfcal2.utils.logging_utils import EnhancedLoggerMixin
-    
-    class EnhancedLogger(logging.Logger, EnhancedLoggerMixin):
-        def __init__(self, name, level=logging.NOTSET):
-            logging.Logger.__init__(self, name, level)
-            EnhancedLoggerMixin.__init__(self)
-    
-    logging.setLoggerClass(EnhancedLogger)
-
-    # Configure root logger first
+    # Set root logger level based on verbose flag
     root_logger = logging.getLogger()
-    root_logger.setLevel(numeric_level)  # Set root logger level
+    root_logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     
     # Remove any existing handlers to avoid duplicates
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
-
-    # Always use ColoredFormatter for console output in development
-    console_formatter = ColoredFormatter()
-    file_formatter = JsonFormatter(include_timestamp=logging_config.file.include_timestamp)
-
-    # Create and configure console handler if enabled
+    
+    # Create formatters
+    json_formatter = JsonFormatter(include_timestamp=True)
+    console_formatter = ColoredFormatter() if logging_config.console.color else logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Set up console handler
     if logging_config.console.enabled:
         console_handler = get_console_handler(console_formatter)
-        console_handler.setLevel(numeric_level)  # Set handler level explicitly
-        # Add sensitive data filter to console handler
-        if logging_config.sensitive_data.enabled:
-            console_handler.addFilter(SensitiveDataFilter(set(logging_config.sensitive_data.global_fields)))
+        # Only show debug logs if verbose is enabled
+        console_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
         root_logger.addHandler(console_handler)
-
-    # Add global file handler if enabled
+    
+    # Set up file handler if enabled
     if logging_config.file.enabled:
         file_handler = get_file_handler(
             logging_config.file.path,
-            file_formatter,
+            json_formatter,
             logging_config.file.max_size_mb * 1024 * 1024,
             logging_config.file.backup_count
         )
-        file_handler.setLevel(numeric_level)  # Set handler level explicitly
-        
-        # Add filters to file handler
-        if logging_config.sensitive_data.enabled:
-            file_handler.addFilter(SensitiveDataFilter(set(logging_config.sensitive_data.global_fields)))
-        
+        # File handler always logs at DEBUG level for troubleshooting
+        file_handler.setLevel(logging.DEBUG)
         root_logger.addHandler(file_handler)
     
-    # Configure library loggers
+    # Configure library logging
     for lib, level in logging_config.libraries.items():
-        logging.getLogger(lib).setLevel(getattr(logging, level.upper()))
-        
-    # Configure service loggers
-    for service_name, service_config in logging_config.services.items():
-        logger = logging.getLogger(service_name)
-        
-        # Debug - show handlers before configuration
-        print(f"\nBefore configuring {service_name} handlers:")
-        for i, h in enumerate(logger.handlers, start=1):
-            print(f"Handler #{i}: {h.__class__.__name__}, level={logging.getLevelName(h.level)}")
-        
-        # In verbose mode, force DEBUG level regardless of config
-        if verbose:
-            logger.setLevel(logging.DEBUG)
-            # Debug call to verify logger level
-            if root_logger.isEnabledFor(logging.DEBUG):
-                root_logger.debug("Set service logger level to DEBUG", extra={'service': service_name})
-        else:
-            logger.setLevel(getattr(logging, service_config.level.upper()))
-            # Debug call to verify logger level
-            if root_logger.isEnabledFor(logging.DEBUG):
-                root_logger.debug(f"Set service logger level to {service_config.level}", extra={'service': service_name})
-        
-        # Ensure propagation to root logger is disabled
-        logger.propagate = False
-        
-        # Add service-specific file handler if enabled
-        if hasattr(service_config, 'file') and service_config.file.enabled:
-            service_file_handler = get_file_handler(
-                service_config.file.path,
-                file_formatter,
-                service_config.file.max_size_mb * 1024 * 1024,
-                service_config.file.backup_count
-            )
-            
-            # In verbose mode, force DEBUG level for handler
-            if verbose:
-                service_file_handler.setLevel(logging.DEBUG)
-                # Debug call to verify handler level
-                if root_logger.isEnabledFor(logging.DEBUG):
-                    root_logger.debug("Set service file handler to DEBUG", extra={'service': service_name})
-            else:
-                service_file_handler.setLevel(getattr(logging, service_config.level.upper()))
-                # Debug call to verify handler level
-                if root_logger.isEnabledFor(logging.DEBUG):
-                    root_logger.debug(f"Set service file handler to {service_config.level}", extra={'service': service_name})
-            
-            # Add filters
-            if logging_config.sensitive_data.enabled:
-                sensitive_fields = set(logging_config.sensitive_data.global_fields)
-                if hasattr(service_config, 'sensitive_fields'):
-                    sensitive_fields.update(service_config.sensitive_fields)
-                service_file_handler.addFilter(SensitiveDataFilter(sensitive_fields))
-            
-            logger.addHandler(service_file_handler) 
-        
-        # Debug - show handlers after configuration
-        print(f"\nAfter configuring {service_name} handlers:")
-        for i, h in enumerate(logger.handlers, start=1):
-            print(f"Handler #{i}: {h.__class__.__name__}, level={logging.getLevelName(h.level)}") 
+        lib_logger = logging.getLogger(lib)
+        lib_logger.setLevel(getattr(logging, level.upper()))
+        # Ensure library loggers propagate to root
+        lib_logger.propagate = True
+    
+    # Register custom logger class
+    logging.setLoggerClass(StructuredLogger)
+    
+    # Set up service loggers
+    for service_name in logging_config.services:
+        service_logger = get_service_logger(
+            service_name,
+            logging_config,
+            logging.DEBUG if verbose else logging.INFO
+        )
+        # Ensure service loggers propagate to root
+        service_logger.propagate = True 

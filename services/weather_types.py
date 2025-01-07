@@ -163,56 +163,45 @@ class WeatherData:
     elaboration_time: datetime
     thunder_probability: Optional[float] = None
 
+@dataclass
+class WeatherResponse:
+    """Weather response container with data and expiry time."""
+    data: List[WeatherData]
+    expires: datetime
+
 class WeatherService(EnhancedLoggerMixin):
     """Base class for weather services."""
     
     def __init__(self, local_tz, utc_tz):
-        """Initialize weather service."""
+        """Initialize service."""
         super().__init__()
         self.local_tz = local_tz
         self.utc_tz = utc_tz
-        self.set_correlation_id()  # Generate unique ID for this service instance
+    
+    def get_expiry_time(self) -> datetime:
+        """Get expiry time for current weather data.
+        
+        Each service should implement this based on their update schedule.
+        Default implementation is 1 hour from now.
+        """
+        return datetime.now(self.utc_tz) + timedelta(hours=1)
     
     @log_execution(level='DEBUG')
-    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        """Get weather data for location and time range."""
-        try:
-            if not isinstance(start_time, datetime) or not isinstance(end_time, datetime):
-                raise ValueError("start_time and end_time must be datetime objects")
+    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> WeatherResponse:
+        """Get weather data for location and time range.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            start_time: Start time
+            end_time: End time
             
-            self.set_log_context(
-                latitude=lat,
-                longitude=lon,
-                start_time=start_time.isoformat(),
-                end_time=end_time.isoformat()
-            )
-            
-            self.debug("Fetching weather data", service=self.__class__.__name__)
-            forecasts = self._fetch_forecasts(lat, lon, start_time, end_time)
-            
-            if not forecasts:
-                self.warning(
-                    "No forecasts found",
-                    time_range=f"{start_time} to {end_time}"
-                )
-                return []
-            
-            self.info(
-                "Successfully fetched weather data",
-                forecast_count=len(forecasts)
-            )
-            return forecasts
-            
-        except Exception as e:
-            self.error(
-                "Failed to fetch weather data",
-                exc_info=e,
-                service=self.__class__.__name__
-            )
-            return []
-        finally:
-            self.clear_log_context()
-    
+        Returns:
+            WeatherResponse with data and expiry time
+        """
+        data = self._fetch_forecasts(lat, lon, start_time, end_time)
+        return WeatherResponse(data=data, expires=self.get_expiry_time())
+
     @log_execution(level='DEBUG', include_args=True)
     def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
         """Fetch forecasts from weather service."""

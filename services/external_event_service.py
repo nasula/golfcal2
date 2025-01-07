@@ -19,6 +19,7 @@ class ExternalEventService(LoggerMixin):
     
     def __init__(self, weather_service: WeatherService):
         """Initialize service."""
+        super().__init__()  # Initialize LoggerMixin
         self.weather_service = weather_service
         self.seen_uids: Set[str] = set()  # Track seen UIDs for deduplication
         self.default_timezone = ZoneInfo('Europe/Helsinki')  # Default timezone if not specified
@@ -26,6 +27,18 @@ class ExternalEventService(LoggerMixin):
         
         # Get config directory path relative to this file
         self.config_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'config'
+        
+        # Cache for processed events
+        self._processed_events: List[Event] = []
+        self._last_process_time: Optional[datetime] = None
+    
+    def get_events(self) -> List[Event]:
+        """Get the list of processed events.
+        
+        Returns:
+            List of processed events
+        """
+        return self._processed_events
     
     def load_events(self, dev_mode: bool = False) -> List[Dict[str, Any]]:
         """Load external events from YAML file."""
@@ -61,7 +74,8 @@ class ExternalEventService(LoggerMixin):
 
     def process_events(self, person_name: str, dev_mode: bool = False) -> List[Event]:
         """Process external events for a person."""
-        events = []
+        # Reset processed events
+        self._processed_events = []
         
         # Calculate cutoff time (24 hours ago) with timezone
         now = datetime.now(self.default_timezone)
@@ -71,13 +85,16 @@ class ExternalEventService(LoggerMixin):
         for event_data in self.load_events(dev_mode):
             # Handle repeating events
             if 'repeat' in event_data:
-                events.extend(self._process_recurring_event(event_data, person_name, cutoff_time))
+                events = self._process_recurring_event(event_data, person_name, cutoff_time)
+                self._processed_events.extend(events)
             else:
                 # Single event
                 event = self._create_event(event_data, person_name, cutoff_time)
                 if event:
-                    events.append(event)
-        return events
+                    self._processed_events.append(event)
+        
+        self._last_process_time = now
+        return self._processed_events
 
     def _process_recurring_event(
         self,

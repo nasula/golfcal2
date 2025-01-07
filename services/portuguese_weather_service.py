@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import math
 
 from golfcal2.services.weather_service import WeatherService
-from golfcal2.services.weather_types import WeatherData, WeatherCode
+from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse
 from golfcal2.services.weather_database import WeatherDatabase
 from golfcal2.services.weather_schemas import PORTUGUESE_SCHEMA
 from golfcal2.services.weather_cache import WeatherLocationCache
@@ -69,7 +69,7 @@ class PortugueseWeatherService(WeatherService):
             
             # Initialize database and cache
             self.db = WeatherDatabase('portuguese_weather', PORTUGUESE_SCHEMA)
-            self.location_cache = WeatherLocationCache()
+            self.location_cache = WeatherLocationCache(config)
             
             # Rate limiting configuration
             self._last_api_call = None
@@ -554,19 +554,45 @@ class PortugueseWeatherService(WeatherService):
     def _get_wind_direction(self, direction: Optional[str]) -> Optional[str]:
         """Convert wind direction to cardinal direction.
         
-        Handles both degree values and cardinal directions from IPMA.
+        Handles both degree values and cardinal directions from IPMA and AEMET.
+        Also handles Spanish/Portuguese abbreviations:
+        - N (Norte/North)
+        - NE (Nordeste/Northeast)
+        - E (Este/East)
+        - SE (Sudeste/Southeast)
+        - S (Sur/South)
+        - SO/SW (Sudoeste/Southwest)
+        - O/W (Oeste/West)
+        - NO/NW (Noroeste/Northwest)
         """
         if direction is None:
             return None
         
-        # If already a cardinal direction, return as is
-        cardinal_directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-        if direction in cardinal_directions:
-            return direction
+        # Map of Spanish/Portuguese abbreviations to standard cardinal directions
+        direction_map = {
+            'N': 'N',
+            'NE': 'NE',
+            'E': 'E',
+            'SE': 'SE',
+            'S': 'S',
+            'SO': 'SW',
+            'O': 'W',
+            'NO': 'NW',
+            'SW': 'SW',
+            'W': 'W',
+            'NW': 'NW'
+        }
+        
+        # If it's a known direction abbreviation, map it
+        if isinstance(direction, str):
+            direction = direction.upper()
+            if direction in direction_map:
+                return direction_map[direction]
         
         # Try to convert from degrees
         try:
             degrees = float(direction)
+            cardinal_directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
             index = round(degrees / 45) % 8
             return cardinal_directions[index]
         except (ValueError, TypeError):
@@ -574,36 +600,27 @@ class PortugueseWeatherService(WeatherService):
             return None
 
     def _convert_cached_data(self, cached_data: Dict[str, Dict[str, Any]]) -> List[WeatherData]:
-        """Convert cached data back to WeatherData objects."""
+        """Convert cached data to WeatherData objects."""
         self.debug("Converting cached data to WeatherData objects")
         forecasts = []
         
         for time_str, data in cached_data.items():
             try:
-                forecast_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=self.utc_tz)
+                # Parse ISO format time
+                time = datetime.fromisoformat(time_str)
                 
                 forecast = WeatherData(
-                    temperature=data.get('air_temperature', 0.0),
-                    precipitation=data.get('precipitation_amount', 0.0),
-                    precipitation_probability=data.get('probability_of_precipitation', 0.0),
-                    wind_speed=data.get('wind_speed', 0.0),
-                    wind_direction=data.get('wind_from_direction'),
-                    symbol=data.get('summary_code', 'cloudy'),
-                    elaboration_time=forecast_time,
-                    thunder_probability=data.get('probability_of_thunder', 0.0)
+                    temperature=data['air_temperature'],
+                    precipitation=data['precipitation_amount'],
+                    precipitation_probability=data['probability_of_precipitation'],
+                    wind_speed=data['wind_speed'],
+                    wind_direction=data['wind_from_direction'],
+                    symbol=data['summary_code'],
+                    elaboration_time=time,
+                    thunder_probability=data['probability_of_thunder']
                 )
                 forecasts.append(forecast)
-                
-                self.debug(
-                    "Converted cached forecast",
-                    time=forecast_time.isoformat(),
-                    temp=forecast.temperature,
-                    precip=forecast.precipitation,
-                    wind=forecast.wind_speed,
-                    symbol=forecast.symbol
-                )
-                
-            except (ValueError, KeyError) as e:
+            except Exception as e:
                 self.warning(
                     "Failed to convert cached forecast",
                     error=str(e),
@@ -621,3 +638,143 @@ class PortugueseWeatherService(WeatherService):
         Beyond 24 hours: 3-hour blocks
         """
         return 3 if hours_ahead > 24 else 1
+
+    def get_expiry_time(self) -> datetime:
+        """Get expiry time for IPMA weather data.
+        
+        IPMA updates their forecasts twice daily at 10:00 and 22:00 UTC.
+        """
+        now = datetime.now(self.utc_tz)
+        
+        # Calculate next update time
+        if now.hour < 10:
+            next_update = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        elif now.hour < 22:
+            next_update = now.replace(hour=22, minute=0, second=0, microsecond=0)
+        else:
+            next_update = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+        
+        return next_update
+
+    @log_execution(level='DEBUG', include_args=True)
+    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> WeatherResponse:
+        """Get weather data for a specific time and location."""
+        self.debug(">>> TEST DEBUG: Entering get_weather", lat=lat, lon=lon)
+        
+        with handle_errors(
+            WeatherError,
+            "portuguese_weather",
+            f"get weather for coordinates ({lat}, {lon})",
+            lambda: WeatherResponse(data=[], expires=datetime.now(self.utc_tz))  # Fallback to empty response on error
+        ):
+            # Check if forecast is beyond range (IPMA provides up to 5 days)
+            now = datetime.now(self.utc_tz)
+            max_forecast_time = now + timedelta(days=5)
+            if start_time > max_forecast_time:
+                self.debug(
+                    "Requested forecast beyond range",
+                    start_time=start_time.isoformat(),
+                    max_forecast=max_forecast_time.isoformat()
+                )
+                return WeatherResponse(data=[], expires=now + timedelta(hours=1))
+            
+            # Check cache first
+            location = f"{lat},{lon}"
+            
+            # Generate time points for the entire day containing the requested range
+            day_start = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            times = []
+            current_time = day_start
+            while current_time <= end_time:
+                times.append(current_time.strftime("%Y-%m-%d %H:%M:%S"))
+                current_time += timedelta(hours=1)
+            
+            self.debug(
+                "Checking cache",
+                location=location,
+                start=start_time.isoformat(),
+                end=end_time.isoformat(),
+                time_points=len(times),
+                first_time=times[0] if times else None,
+                last_time=times[-1] if times else None
+            )
+            
+            cached_data = self.db.get_weather_data(
+                location=location,
+                times=times,
+                data_type="daily",
+                fields=[
+                    'air_temperature',
+                    'precipitation_amount',
+                    'wind_speed',
+                    'wind_from_direction',
+                    'probability_of_precipitation',
+                    'probability_of_thunder',
+                    'summary_code'
+                ]
+            )
+            
+            if cached_data:
+                self.debug(
+                    "Found cached data",
+                    entries=len(cached_data),
+                    first_time=min(cached_data.keys()),
+                    last_time=max(cached_data.keys())
+                )
+                forecasts = self._convert_cached_data(cached_data)
+                
+                # Filter forecasts to requested time range
+                filtered_forecasts = [
+                    f for f in forecasts 
+                    if start_time <= datetime.strptime(f['time'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=self.utc_tz) <= end_time
+                ]
+                
+                if filtered_forecasts:
+                    self.debug(
+                        "Using cached forecasts",
+                        total=len(filtered_forecasts),
+                        time_range=f"{filtered_forecasts[0]['time']} to {filtered_forecasts[-1]['time']}"
+                    )
+                    return WeatherResponse(data=filtered_forecasts, expires=self.get_expiry_time())
+                else:
+                    self.debug("No cached forecasts within requested time range")
+            
+            # Fetch new data if not in cache
+            self.debug("No cached data found, fetching from API")
+            forecasts = self._fetch_forecasts(lat, lon, start_time, end_time)
+            
+            if forecasts:
+                # Store in cache
+                self.debug(f"Storing {len(forecasts)} forecasts in cache")
+                cache_data = []
+                for forecast in forecasts:
+                    cache_entry = {
+                        'location': location,
+                        'time': forecast.elaboration_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        'data_type': 'daily',
+                        'air_temperature': forecast.temperature,
+                        'precipitation_amount': forecast.precipitation,
+                        'wind_speed': forecast.wind_speed,
+                        'wind_from_direction': forecast.wind_direction,
+                        'probability_of_precipitation': forecast.precipitation_probability,
+                        'probability_of_thunder': forecast.thunder_probability,
+                        'summary_code': forecast.symbol
+                    }
+                    cache_data.append(cache_entry)
+                
+                # Calculate expiration (next update time)
+                expires = self.get_expiry_time()
+                
+                self.db.store_weather_data(
+                    cache_data,
+                    expires=expires.strftime("%Y-%m-%d %H:%M:%S"),
+                    last_modified=datetime.now(self.utc_tz).strftime("%Y-%m-%d %H:%M:%S")
+                )
+                
+                self.debug(
+                    "Stored forecasts in cache",
+                    count=len(cache_data),
+                    expires=expires.isoformat()
+                )
+            
+            return WeatherResponse(data=forecasts, expires=self.get_expiry_time())

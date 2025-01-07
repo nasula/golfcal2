@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import DefaultDict, Dict, List, Optional, Set
+import traceback
 
 from golfcal2.config.logging_config import ErrorAggregationConfig
 
@@ -41,6 +42,9 @@ class ErrorAggregator:
         self._lock = threading.Lock()
         self._config = config
         self._last_report = datetime.now()
+        
+        # Initialize logger
+        self.logger = logging.getLogger('error_aggregator')
         
         # Start reporting thread if enabled
         self._stop_flag = threading.Event()
@@ -79,25 +83,28 @@ class ErrorAggregator:
                 self._report_error_group(message, error_group)
                 del self._errors[message]
     
-    def _report_error_group(self, message: str, group: ErrorGroup) -> None:
-        """Report error group to logging system."""
-        logger = logging.getLogger('error_aggregator')
+    def _report_error_group(self, message: str, error_group: ErrorGroup) -> None:
+        """Report an error group to the logger.
         
-        report = (
-            f"Error Group Report:\n"
-            f"Message: {message}\n"
-            f"Count: {group.count}\n"
-            f"First seen: {group.first_seen.isoformat()}\n"
-            f"Last seen: {group.last_seen.isoformat()}\n"
-            f"Services affected: {', '.join(sorted(group.services))}\n"
+        Args:
+            message: Error message
+            error_group: Error group to report
+        """
+        # Log the error message with count
+        self.logger.error(
+            f"{message} (occurred {error_group.count} times)",
+            extra={"error_group": error_group}
         )
         
-        if group.stack_traces and 'stack_trace' in self._config.categorize_by:
-            report += "\nUnique stack traces:\n"
-            for trace in sorted(group.stack_traces):
-                report += f"{trace}\n"
-        
-        logger.error(report)
+        # Log unique stack traces if available
+        if error_group.stack_traces:
+            trace_list = list(error_group.stack_traces)
+            for trace in trace_list:
+                if trace:
+                    self.logger.error(
+                        "Stack trace:",
+                        extra={"stack_trace": ''.join(traceback.format_tb(trace))}
+                    )
     
     def _periodic_report(self) -> None:
         """Periodically report all accumulated errors."""

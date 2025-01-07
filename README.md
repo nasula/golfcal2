@@ -83,50 +83,44 @@ pip install -r requirements.txt
 
 ### Process Reservations
 ```bash
-# Process all users
-python -m golfcal process
-
 # Process specific user (development mode)
-python -m golfcal -u USERNAME process
+python -m golfcal2 -u USERNAME --dev process
+
+# Process with debug logging
+python -m golfcal2 -u USERNAME -v process
 
 # Process with debug logging to file
-python -m golfcal -v --log-file golfcal.log process
-
-# Dry run with specific past days
-python -m golfcal process --dry-run --days 14
-
-# Development mode (separate calendar files)
-python -m golfcal --dev process
+python -m golfcal2 -u USERNAME -v --log-file golfcal.log process
 ```
 
 ### List Reservations
 ```bash
-# List all reservations
-python -m golfcal list
+# List reservations for specific user
+python -m golfcal2 -u USERNAME list
 
-# List active reservations for specific user
-python -m golfcal -u USERNAME list --active
-
-# List upcoming reservations for next 14 days
-python -m golfcal list --upcoming --days 14
-
-# Export reservations as JSON
-python -m golfcal list --format json > reservations.json
+# List reservations in development mode
+python -m golfcal2 -u USERNAME --dev list
 ```
 
-### Check Reservations
+### Check Configuration
 ```bash
-# Check all potential issues
-python -m golfcal check
+# Check configuration for specific user
+python -m golfcal2 -u USERNAME check
 
-# Check specific issues
-python -m golfcal check --check overlaps
-python -m golfcal check --check future --future-threshold 3
-python -m golfcal check --check times
-
-# Check issues for specific user
-python -m golfcal -u USERNAME check --check all
+# Check configuration in development mode
+python -m golfcal2 -u USERNAME --dev check
 ```
+
+### Global Options
+- `-u USERNAME, --user USERNAME`: Specify the user (required)
+- `--dev`: Enable development mode
+- `-v, --verbose`: Enable verbose (debug) logging
+- `--log-file LOG_FILE`: Specify log file path
+
+### Commands
+- `process`: Process reservations and create calendar files
+- `list`: List current reservations
+- `check`: Check configuration validity
 
 ## Troubleshooting Guide
 

@@ -28,12 +28,18 @@ class EventBuilder(ABC, LoggerMixin):
     def _get_weather(self, coordinates: Dict[str, float], start_time: datetime, duration_minutes: int, club_name: str) -> Optional[str]:
         """Get weather data if available."""
         try:
-            return self.weather_service.get_weather(
+            weather_data = self.weather_service.get_weather(
                 club=club_name,
                 teetime=start_time,
                 coordinates=coordinates,
                 duration_minutes=duration_minutes
             )
+            if weather_data:
+                from golfcal2.utils.weather_utils import format_weather_data
+                # Handle both WeatherResponse objects and direct lists of forecasts
+                forecasts = weather_data.data if hasattr(weather_data, 'data') else weather_data
+                return format_weather_data(forecasts)
+            return None
         except Exception as e:
             self.logger.error(f"Failed to get weather data: {e}")
             return None

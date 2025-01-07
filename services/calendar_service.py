@@ -75,6 +75,42 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                 aggregate_error(str(error), "calendar", e.__traceback__)
                 raise error
 
+    def check_config(self) -> bool:
+        """Check if the service configuration is valid.
+        
+        Returns:
+            True if configuration is valid, False otherwise
+        """
+        try:
+            # Check if ICS directory exists or can be created
+            if os.path.isabs(self.config.ics_dir):
+                ics_dir = Path(self.config.ics_dir)
+            else:
+                # Use workspace directory as base for relative paths
+                workspace_dir = Path(__file__).parent.parent
+                ics_dir = workspace_dir / self.config.ics_dir
+                
+            if not ics_dir.exists():
+                try:
+                    ics_dir.mkdir(parents=True, exist_ok=True)
+                    self.info(f"Created ICS directory: {ics_dir}")
+                except Exception as e:
+                    self.error(f"Failed to create ICS directory {ics_dir}: {str(e)}")
+                    return False
+            
+            # Check if ICS directory is writable
+            if not os.access(ics_dir, os.W_OK):
+                self.error(f"ICS directory {ics_dir} is not writable")
+                return False
+            
+            # All checks passed
+            self.info("Calendar configuration is valid")
+            return True
+            
+        except Exception as e:
+            self.error(f"Error checking configuration: {str(e)}")
+            return False
+
     def process_user_reservations(self, user: User, reservations: List[Reservation]) -> None:
         """Process reservations for a user."""
         try:
@@ -153,7 +189,10 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             f"process external events for user {user_name}",
             lambda: None
         ):
+            # Process events first
             external_events = self.external_event_service.process_events(user_name, dev_mode=self.dev_mode)
+            
+            # Now get the processed events
             for event in external_events:
                 self._add_event_to_calendar(event, calendar)
                 self.debug(f"Added external event: {event.get('summary')}")

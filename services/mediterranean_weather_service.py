@@ -334,3 +334,105 @@ class MediterraneanWeatherService(WeatherService):
         Always uses 3-hour blocks
         """
         return 3
+    
+    def get_expiry_time(self) -> datetime:
+        """Get expiry time for Mediterranean weather data.
+        
+        Mediterranean weather service updates their forecasts every 6 hours at:
+        - 00:00 UTC
+        - 06:00 UTC
+        - 12:00 UTC
+        - 18:00 UTC
+        """
+        now = datetime.now(self.utc_tz)
+        
+        # Calculate next update time
+        current_hour = now.hour
+        update_hours = [0, 6, 12, 18]
+        
+        # Find the next update hour
+        next_update_hour = next((hour for hour in update_hours if hour > current_hour), update_hours[0])
+        
+        # If we're past all update hours today, the next update is tomorrow at 00:00
+        if next_update_hour <= current_hour:
+            next_update = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            next_update = now.replace(hour=next_update_hour, minute=0, second=0, microsecond=0)
+        
+        return next_update
+    
+    @log_execution(level='DEBUG')
+    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+        """Get weather data for a specific time and location."""
+        with handle_errors(
+            WeatherError,
+            "mediterranean_weather",
+            f"get weather for coordinates ({lat}, {lon})",
+            lambda: []  # Fallback to empty list on error
+        ):
+            # Check cache first
+            location = f"{lat},{lon}"
+            times = [
+                t.strftime("%Y-%m-%d %H:%M:%S")
+                for t in [start_time + timedelta(hours=i) for i in range(24)]
+            ]
+            
+            self.debug(
+                "Checking cache",
+                location=location,
+                start=start_time.isoformat(),
+                end=end_time.isoformat()
+            )
+            
+            cached_data = self.db.get_weather_data(
+                location=location,
+                times=times,
+                data_type="daily",
+                fields=[
+                    'air_temperature',
+                    'precipitation_amount',
+                    'wind_speed',
+                    'wind_from_direction',
+                    'probability_of_precipitation',
+                    'probability_of_thunder',
+                    'summary_code'
+                ]
+            )
+            
+            if cached_data:
+                self.debug(f"Found {len(cached_data)} cached entries")
+                return self._convert_cached_data(cached_data)
+            
+            # Fetch new data if not in cache
+            self.debug("No cached data found, fetching from API")
+            forecasts = self._fetch_forecasts(lat, lon, start_time, end_time)
+            
+            if forecasts:
+                # Store in cache
+                self.debug(f"Storing {len(forecasts)} forecasts in cache")
+                cache_data = []
+                for forecast in forecasts:
+                    cache_entry = {
+                        'location': location,
+                        'time': forecast.elaboration_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        'data_type': 'daily',
+                        'air_temperature': forecast.temperature,
+                        'precipitation_amount': forecast.precipitation,
+                        'wind_speed': forecast.wind_speed,
+                        'wind_from_direction': forecast.wind_direction,
+                        'probability_of_precipitation': forecast.precipitation_probability,
+                        'probability_of_thunder': forecast.thunder_probability,
+                        'summary_code': forecast.symbol
+                    }
+                    cache_data.append(cache_entry)
+                
+                # Calculate expiration (next update time)
+                expires = self.get_expiry_time()
+                
+                self.db.store_weather_data(
+                    cache_data,
+                    expires=expires.strftime("%Y-%m-%d %H:%M:%S"),
+                    last_modified=datetime.now(self.utc_tz).strftime("%Y-%m-%d %H:%M:%S")
+                )
+            
+            return forecasts

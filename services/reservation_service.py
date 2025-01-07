@@ -48,7 +48,33 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             # Initialize services
             self.auth_service = AuthService()
             self.weather_service = WeatherManager(self.local_tz, self.utc_tz, self.config)
-    
+            
+    def check_config(self) -> bool:
+        """Check if the service configuration is valid.
+        
+        Returns:
+            True if configuration is valid, False otherwise
+        """
+        try:
+            # Check if user exists in config
+            if not self.user_name in self.config.users:
+                self.error(f"User {self.user_name} not found in configuration")
+                return False
+                
+            # Check if user has any memberships configured
+            user_config = self.config.users[self.user_name]
+            if not user_config.get('memberships'):
+                self.error(f"No memberships configured for user {self.user_name}")
+                return False
+                
+            # All checks passed
+            self.info(f"Configuration valid for user {self.user_name}")
+            return True
+            
+        except Exception as e:
+            self.error(f"Error checking configuration: {str(e)}")
+            return False
+
     def _make_api_request(self, method: str, url: str, headers: Dict[str, str] = None, data: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Make an API request with error handling.
@@ -442,5 +468,36 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         if club_id in self.config.clubs:
             return self.config.clubs[club_id].get('abbreviation', '')
         return ''
+
+    def list_courses(self, include_all: bool = False) -> List[str]:
+        """
+        List available golf courses.
+        
+        Args:
+            include_all: If True, list all courses in config, otherwise only user's courses
+            
+        Returns:
+            List of course names/IDs
+        """
+        with handle_errors(
+            APIError,
+            "reservation",
+            "list courses",
+            lambda: []  # Fallback to empty list
+        ):
+            if include_all:
+                return sorted(self.config.clubs.keys())
+            
+            # Get user's memberships
+            if self.user_name not in self.config.users:
+                self.warning(f"User {self.user_name} not found in configuration")
+                return []
+                
+            user_config = self.config.users[self.user_name]
+            user = User.from_config(self.user_name, user_config)
+            
+            # Get unique clubs from user's memberships
+            courses = {membership.club for membership in user.memberships}
+            return sorted(courses)
 
     

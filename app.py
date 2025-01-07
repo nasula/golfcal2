@@ -13,7 +13,7 @@ from .services.calendar_service import CalendarService
 from .services.weather_service import WeatherManager
 from .utils.logging_utils import setup_logging
 
-def create_app(config_file=None):
+def create_app(config_file=None, dev_mode=False, verbose=False):
     """Create and configure the Flask application."""
     app = Flask(__name__)
     CORS(app)
@@ -23,8 +23,8 @@ def create_app(config_file=None):
     if config_file:
         app.config.from_pyfile(config_file)
     
-    # Set up logging
-    setup_logging(app.config.get('LOG_LEVEL', 'INFO'))
+    # Set up logging with proper flags
+    setup_logging(app.config, dev_mode=dev_mode, verbose=verbose)
     
     # Initialize services
     local_tz = ZoneInfo('Europe/Helsinki')
