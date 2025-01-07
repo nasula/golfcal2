@@ -1,120 +1,215 @@
 # Weather Services
 
-This document describes the weather service implementations in GolfCal.
+This document describes the weather service architecture and implementations in GolfCal.
 
-## WeatherService Interface
+## Architecture Overview
 
-The `WeatherService` class serves as the base interface for implementing weather data providers. It provides a standardized way to fetch and process weather data from different sources while maintaining consistent data formats and error handling.
+### WeatherManager
 
-### Base Class Overview
+The `WeatherManager` class serves as the central coordinator for all weather services:
+
+```python
+class WeatherManager(EnhancedLoggerMixin):
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
+        """Initialize weather services with timezone and configuration."""
+        self.services = {
+            'mediterranean': MediterraneanWeatherService(local_tz, utc_tz, config),
+            'iberian': IberianWeatherService(local_tz, utc_tz, config),
+            'met': MetWeatherService(local_tz, utc_tz, config),
+            'portuguese': PortugueseWeatherService(local_tz, utc_tz, config)
+        }
+        
+        self.regions = {
+            'norway': {
+                'service': 'met',
+                'bounds': (57.0, 71.5, 4.0, 31.5)  # lat_min, lat_max, lon_min, lon_max
+            },
+            'mediterranean': {
+                'service': 'mediterranean',
+                'bounds': (35.0, 45.0, 20.0, 45.0)
+            },
+            'portugal': {
+                'service': 'portuguese',
+                'bounds': (36.5, 42.5, -9.5, -7.5)
+            },
+            'spain_mainland': {
+                'service': 'iberian',
+                'bounds': (36.0, 44.0, -7.5, 3.5)
+            },
+            'spain_canary': {
+                'service': 'iberian',
+                'bounds': (27.5, 29.5, -18.5, -13.0)
+            }
+        }
+```
+
+### WeatherService Interface
+
+The `WeatherService` class provides the base interface that all regional weather services must implement:
 
 ```python
 class WeatherService(EnhancedLoggerMixin):
-    def __init__(self, local_tz, utc_tz):
-        # Initialize timezones and logging
-        pass
-
+    """Base class for regional weather service implementations."""
+    
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
+        """Initialize with timezone settings and configuration."""
+        self.local_tz = local_tz
+        self.utc_tz = utc_tz
+        self.config = config
+        self._setup_logging()
+    
+    @abstractmethod
     def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        # Main public interface for fetching weather data
+        """Fetch weather data for given coordinates and time range."""
         pass
-
-    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        # Abstract method to be implemented by subclasses
-        raise NotImplementedError("Subclasses must implement _fetch_forecasts")
-
+    
+    @abstractmethod
     def get_block_size(self, hours_ahead: float) -> int:
-        # Get forecast block size based on how far ahead the forecast is
-        raise NotImplementedError("Subclasses must implement get_block_size")
+        """Get forecast block size based on forecast time."""
+        pass
 ```
 
-## Service Overview
+## Regional Services
 
-GolfCal uses multiple weather services to provide accurate forecasts for different regions:
+### 1. Met Weather Service (Nordic)
+- **Coverage**: Norway and surrounding Nordic regions
+- **API**: Met.no LocationForecast 2.0
+- **Features**:
+  - High-resolution forecasts
+  - No API key required
+  - 1-hour intervals for first 24 hours
+  - 6-hour intervals thereafter
+- **Block Sizes**:
+  - 1 hour for 0-24 hours ahead
+  - 6 hours for 24-48 hours ahead
+  - 12 hours beyond 48 hours
 
-### 1. Met.no (Nordic Weather Service)
-**Coverage**: Nordic countries
-Features:
-- High-resolution forecasts for Nordic region
-- No API key required
-- Free for non-commercial use
+### 2. Iberian Weather Service (Spain)
+- **Coverage**: Spain mainland and Canary Islands
+- **API**: AEMET OpenData
+- **Features**:
+  - Official Spanish meteorological service
+  - Requires API key
+  - Municipality-based forecasts
+  - Separate handling for mainland and islands
+- **Block Sizes**:
+  - 1 hour for first 48 hours
+  - 3 hours thereafter
 
-### 2. AEMET (Spanish Weather Service)
-**Coverage**: Spain
-Features:
-- Official Spanish weather service
-- Requires API key
-- Municipality-based forecasts
+### 3. Portuguese Weather Service
+- **Coverage**: Portugal mainland
+- **API**: IPMA API
+- **Features**:
+  - Official Portuguese weather service
+  - No API key required
+  - Daily forecasts with hourly details
+  - 10-day forecast range
+- **Block Sizes**:
+  - 1 hour for first 24 hours
+  - 3 hours for 24-72 hours
+  - 6 hours beyond 72 hours
 
-### 3. IPMA (Portuguese Weather Service)
-**Coverage**: Portugal
-Features:
-- Official Portuguese weather service
-- No API key required
-- Daily forecasts
+### 4. Mediterranean Weather Service
+- **Coverage**: Mediterranean region
+- **API**: OpenWeather API
+- **Features**:
+  - Wide coverage area
+  - 3-hour interval forecasts
+  - 5-day forecast range
+  - Comprehensive weather data
+- **Block Sizes**:
+  - 3 hours consistently
 
-### 4. OpenWeather (Mediterranean Service)
-**Coverage**: Mediterranean region
-Features:
-- Wide coverage
-- 3-hour interval forecasts
-- 5-day forecast range
-
-## Weather Codes
-
-### Standard Weather Codes
+## Weather Data Model
 
 ```python
-class WeatherCode:
-    CLEAR_DAY = "clearsky_day"
-    CLEAR_NIGHT = "clearsky_night"
-    FAIR_DAY = "fair_day"
-    FAIR_NIGHT = "fair_night"
-    PARTLY_CLOUDY_DAY = "partlycloudy_day"
-    PARTLY_CLOUDY_NIGHT = "partlycloudy_night"
+@dataclass
+class WeatherData:
+    elaboration_time: datetime
+    temperature: float  # Celsius
+    precipitation_probability: float  # 0-100%
+    wind_speed: float  # meters/second
+    wind_direction: float  # degrees (0-360)
+    weather_symbol: str
+    cloud_coverage: Optional[float] = None  # 0-100%
+```
+
+## Weather Symbols
+
+The application uses a standardized set of weather symbols across all services:
+
+```python
+class WeatherSymbol(str, Enum):
+    CLEAR = "clear"
+    PARTLY_CLOUDY = "partly_cloudy"
     CLOUDY = "cloudy"
-    LIGHT_RAIN = "lightrain"
+    LIGHT_RAIN = "light_rain"
     RAIN = "rain"
-    HEAVY_RAIN = "heavyrain"
-    RAIN_AND_THUNDER = "rainandthunder"
-    HEAVY_RAIN_AND_THUNDER = "heavyrainandthunder"
-    LIGHT_SNOW = "lightsnow"
+    HEAVY_RAIN = "heavy_rain"
+    THUNDERSTORM = "thunderstorm"
     SNOW = "snow"
-    HEAVY_SNOW = "heavysnow"
-    LIGHT_SLEET = "lightsleet"
-    HEAVY_SLEET = "heavysleet"
     FOG = "fog"
 ```
 
-## Service Selection
+## Caching Strategy
+
+### 1. Location-based Cache
+- SQLite database for persistent storage
+- Caches weather data by location and time range
+- Automatic expiration based on forecast age
+- Configurable cache duration per service
+
+### 2. Memory Cache
+- In-memory caching for frequent requests
+- Short-term caching (1-3 hours)
+- Automatic cleanup of expired entries
+- Reduces API calls for same location/time
+
+### 3. Station Cache
+- Caches weather station mappings
+- Used by AEMET and IPMA services
+- 30-day validity for mappings
+- Periodic background updates
+
+## Error Handling
+
+Weather services implement comprehensive error handling:
 
 ```python
-def select_weather_service(lat: float, lon: float) -> WeatherService:
-    """Select appropriate weather service based on coordinates."""
-    if 55 <= lat <= 72 and 3 <= lon <= 32:  # Nordic
-        return MetNoWeatherService()
-    elif -9.5 <= lon <= -6.2:  # Portugal
-        return IberianWeatherService()  # IPMA
-    elif -7 <= lon <= 5:  # Spain
-        return IberianWeatherService()  # AEMET
-    else:  # Mediterranean
-        return MediterraneanWeatherService()  # OpenWeather
+@handle_errors(WeatherError, "weather", "get weather data")
+def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+    try:
+        data = self._fetch_weather_data(lat, lon, start_time, end_time)
+        return [self._parse_weather_data(item) for item in data]
+    except Exception as e:
+        raise WeatherError(
+            f"Failed to get weather data: {str(e)}",
+            ErrorCode.SERVICE_ERROR,
+            {
+                "coordinates": {"lat": lat, "lon": lon},
+                "timeframe": {"start": start_time, "end": end_time}
+            }
+        )
 ```
 
-## Cache Management
+## Best Practices
 
-The application uses different caching strategies:
+1. **Service Selection**
+   - Use `WeatherManager` for all weather data requests
+   - Let the manager handle service selection
+   - Provide accurate coordinates
 
-### Met.no Weather Data Cache
-- SQLite database storage
-- Location and time-based caching
-- Automatic expiry management
+2. **Error Handling**
+   - Handle service-specific errors appropriately
+   - Implement proper retries
+   - Use fallback services when available
 
-### Weather Station Cache (AEMET)
-- 30-day station mapping cache
-- Coordinate to station mapping
-- Periodic updates
+3. **Data Processing**
+   - Convert all units to standard format
+   - Validate data ranges
+   - Handle timezone conversions properly
 
-### Simple Memory Cache
-- Used for IPMA and OpenWeather
-- Short-term caching (1-3 hours)
-- Automatic cleanup 
+4. **Caching**
+   - Use appropriate cache strategy
+   - Implement cache invalidation
+   - Handle cache misses gracefully 
