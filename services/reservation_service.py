@@ -177,7 +177,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                     club_details = self.config.clubs[membership.club]
                     self.debug(f"Club details from config: {club_details}")
                     
-                    club = GolfClubFactory.create_club(club_details, membership, self.auth_service)
+                    club = GolfClubFactory.create_club(club_details, membership, self.auth_service, self.config)
                     if not club:
                         error = APIError(
                             f"Unsupported club type: {club_details['type']}",

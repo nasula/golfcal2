@@ -39,8 +39,8 @@ def create_app(config_file=None, dev_mode=False, verbose=False):
     local_tz = ZoneInfo(config.global_config.get('timezone', 'UTC'))
     utc_tz = ZoneInfo('UTC')
     
-    app.weather_manager = WeatherManager(local_tz, utc_tz, app.config)
-    app.calendar_service = CalendarService(app.weather_manager, local_tz, utc_tz)
+    app.weather_manager = WeatherManager(local_tz, utc_tz, config)
+    app.calendar_service = CalendarService(config, dev_mode)
     
     # Register routes
     from .routes import register_routes

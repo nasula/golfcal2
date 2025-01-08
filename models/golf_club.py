@@ -29,10 +29,13 @@ class GolfClub(ABC, LoggerMixin):
     auth_service: Optional[AuthService] = None
     club_details: Optional[Dict[str, Any]] = None
     _tz_manager: Optional[TimezoneManager] = None
+    local_tz: Optional[ZoneInfo] = None
+    utc_tz: Optional[ZoneInfo] = None
+    config: Optional[AppConfig] = None
 
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
-        """Initialize service."""
-        super().__init__(local_tz, utc_tz)
+    def __post_init__(self):
+        """Initialize after dataclass initialization."""
+        super().__init__()
         
         # Configure logger
         for handler in self.logger.handlers:
@@ -257,7 +260,8 @@ class GolfClubFactory:
     def create_club(
         club_details: Dict[str, Any],
         membership: Membership,
-        auth_service: AuthService
+        auth_service: AuthService,
+        config: AppConfig
     ) -> Optional[GolfClub]:
         """Create golf club instance based on type."""
         club_type = club_details.get("type")
@@ -285,6 +289,8 @@ class GolfClubFactory:
 
         # Get timezone from club config, fallback to UTC
         timezone = club_details.get("timezone", "UTC")
+        local_tz = ZoneInfo(timezone)
+        utc_tz = ZoneInfo('UTC')
 
         common_args = {
             "name": club_name,
@@ -294,7 +300,10 @@ class GolfClubFactory:
             "address": club_details.get("address", "Unknown"),
             "timezone": timezone,
             "auth_service": auth_service,
-            "club_details": club_details
+            "club_details": club_details,
+            "local_tz": local_tz,
+            "utc_tz": utc_tz,
+            "config": config
         }
 
         if club_type == "wisegolf":
