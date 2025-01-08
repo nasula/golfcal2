@@ -13,6 +13,7 @@ from golfcal2.services.mediterranean_weather_service import MediterraneanWeather
 from golfcal2.services.iberian_weather_service import IberianWeatherService
 from golfcal2.services.portuguese_weather_service import PortugueseWeatherService
 from golfcal2.services.met_weather_service import MetWeatherService
+from golfcal2.services.weather_database import WeatherDatabase
 from golfcal2.config.types import AppConfig
 
 
@@ -90,84 +91,25 @@ class WeatherManager(EnhancedLoggerMixin):
                 time.sleep(sleep_time)
     
     @log_execution(level='DEBUG')
-    def get_weather(
-        self,
-        lat: Optional[float] = None,
-        lon: Optional[float] = None,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        club: Optional[str] = None,
-        teetime: Optional[datetime] = None,
-        coordinates: Optional[Dict[str, float]] = None,
-        duration_minutes: Optional[int] = None
-    ) -> Optional[WeatherResponse]:
-        """Get weather data for a specific time and location.
-        
-        Supports both old and new parameter styles:
-        Old style:
-            - club: Club identifier
-            - teetime: Event time
-            - coordinates: Dict with lat/lon
-            - duration_minutes: Duration in minutes
-        
-        New style:
-            - lat: Latitude in decimal degrees
-            - lon: Longitude in decimal degrees
-            - start_time: Start time for weather data
-            - end_time: End time for weather data
-            - club: Optional club identifier
-            
-        Returns:
-            WeatherResponse object containing weather data and expiry time
-        """
-        with handle_errors(
-            WeatherError,
-            "weather_manager",
-            "get weather data",
-            lambda: None  # Return None on error
-        ):
-            # Handle old style parameters
-            if coordinates:
-                lat = coordinates.get('lat')
-                lon = coordinates.get('lon')
-            
-            if teetime:
-                start_time = teetime
-                if duration_minutes:
-                    end_time = teetime + timedelta(minutes=duration_minutes)
-                else:
-                    end_time = teetime + timedelta(hours=2)  # Default 2 hour duration
-            
-            # Validate required parameters
-            if not all([lat, lon, start_time, end_time]):
-                self.error("Missing required parameters", lat=lat, lon=lon, start=start_time, end=end_time)
-                return None
-            
+    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime, club: str) -> Optional[WeatherResponse]:
+        """Get weather data for a location and time range."""
+        try:
             # Get appropriate service for location
             service = self._get_service_for_location(lat, lon, club)
             if not service:
-                self.error(f"No weather service available for coordinates: {lat}, {lon}")
                 return None
-            
-            # Check if we need to apply rate limiting
-            now = datetime.now(self.utc_tz)
-            max_forecast_time = now + timedelta(days=10)  # Most services have max 10 day forecast
-            if start_time > max_forecast_time:
-                self.debug("Skipping rate limit - forecast beyond range")
-                return WeatherResponse(data=[], expires=now + timedelta(hours=1))
-            
-            # Apply rate limiting only if we'll make an API call
-            self._apply_rate_limit()
             
             # Get weather data from service
-            response = service.get_weather(lat, lon, start_time, end_time)
-            if not response or not response.data:
+            weather_data = service.get_weather(lat, lon, start_time, end_time, club)
+            if not weather_data:
                 return None
             
-            # Update last API call time
-            self._last_api_call = datetime.now()
-            
-            return response
+            # Create response with expiry time
+            now_utc = datetime.now(ZoneInfo("UTC"))
+            return WeatherResponse(data=weather_data, expires=now_utc + timedelta(hours=1))
+        except Exception as e:
+            self.error(f"Failed to get weather data: {e}")
+            return None
     
     @log_execution(level='DEBUG')
     def _get_service_for_location(self, lat: float, lon: float, club: Optional[str] = None) -> Optional[WeatherService]:

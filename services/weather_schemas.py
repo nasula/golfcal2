@@ -44,6 +44,7 @@ WEATHER_COLUMNS = [
     'temperature_max REAL',
     'temperature_min REAL',
     'summary_code TEXT',
+    'block_duration_hours REAL',
     'expires TEXT',
     'last_modified TEXT',
     'UNIQUE(location, time, data_type)'

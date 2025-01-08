@@ -31,24 +31,25 @@ from golfcal2.config.error_aggregator import aggregate_error
 class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
     """Service for handling reservations."""
     
-    def __init__(self, config: AppConfig, user_name: str):
+    def __init__(self, user_name: str, config: AppConfig):
         """Initialize service."""
         super().__init__()
-        self.config = config
         self.user_name = user_name
+        self.config = config
         
-        with handle_errors(APIError, "reservation", "initialize services"):
-            # Test debug call
-            self.debug(">>> TEST DEBUG: ReservationService initialized")
-            
-            # Initialize timezone settings
-            self.utc_tz = pytz.UTC
-            self.local_tz = pytz.timezone('Europe/Helsinki')  # Finland timezone
-            
-            # Initialize services
-            self.auth_service = AuthService()
-            self.weather_service = WeatherManager(self.local_tz, self.utc_tz, self.config)
-            
+        # Get user's timezone from config, fallback to global timezone
+        user_config = config.users.get(user_name, {})
+        user_timezone = user_config.get('timezone', config.global_config.get('timezone', 'UTC'))
+        self.local_tz = ZoneInfo(user_timezone)
+        self.utc_tz = ZoneInfo('UTC')
+        
+        # Initialize services
+        self.auth_service = AuthService()
+        self.weather_service = WeatherManager(self.local_tz, self.utc_tz, config)
+        
+        # Configure logger
+        self.set_log_context(service="reservation")
+        
     def check_config(self) -> bool:
         """Check if the service configuration is valid.
         

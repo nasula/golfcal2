@@ -15,6 +15,7 @@ from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.utils.timezone_utils import TimezoneManager
 from golfcal2.services.auth_service import AuthService
 from golfcal2.models.mixins import PlayerFetchMixin
+from golfcal2.config.settings import AppConfig
 
 @dataclass
 class GolfClub(ABC, LoggerMixin):
@@ -24,14 +25,21 @@ class GolfClub(ABC, LoggerMixin):
     variant: Optional[str] = None
     product: Optional[str] = None
     address: str = "Unknown"
-    timezone: str = "Europe/Helsinki"
+    timezone: str = "UTC"
     auth_service: Optional[AuthService] = None
     club_details: Optional[Dict[str, Any]] = None
     _tz_manager: Optional[TimezoneManager] = None
 
-    def __post_init__(self):
-        """Initialize after dataclass creation."""
-        super().__init__()
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
+        """Initialize service."""
+        super().__init__(local_tz, utc_tz)
+        
+        # Configure logger
+        for handler in self.logger.handlers:
+            handler.set_name('golf_club')  # Ensure unique handler names
+        self.logger.propagate = False  # Prevent duplicate logs
+        
+        # Initialize timezone manager with club's timezone
         if self._tz_manager is None:
             self._tz_manager = TimezoneManager(self.timezone)
 
@@ -275,13 +283,16 @@ class GolfClubFactory:
         if not url:
             raise ValueError(f"No URL found for club {club_name}")
 
+        # Get timezone from club config, fallback to UTC
+        timezone = club_details.get("timezone", "UTC")
+
         common_args = {
             "name": club_name,
             "url": url,
             "variant": club_details.get("variant"),
             "product": club_details.get("product"),
             "address": club_details.get("address", "Unknown"),
-            "timezone": club_details.get("timezone", "Europe/Helsinki"),
+            "timezone": timezone,
             "auth_service": auth_service,
             "club_details": club_details
         }

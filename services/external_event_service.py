@@ -10,20 +10,28 @@ import os
 from pathlib import Path
 
 from icalendar import Event
-from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.services.weather_service import WeatherService
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+from golfcal2.services.weather_service import WeatherService, WeatherManager
 from golfcal2.services.calendar.builders import ExternalEventBuilder
+from golfcal2.config.settings import AppConfig
 
-class ExternalEventService(LoggerMixin):
+class ExternalEventService(EnhancedLoggerMixin):
     """Service for handling external golf events."""
     
-    def __init__(self, weather_service: WeatherService):
+    def __init__(self, weather_service: WeatherManager, config: AppConfig):
         """Initialize service."""
-        super().__init__()  # Initialize LoggerMixin
+        super().__init__()
         self.weather_service = weather_service
+        self.config = config
+        
+        # Initialize event builder
+        self.event_builder = ExternalEventBuilder(weather_service, config)
+        
+        # Configure logger
+        self.set_log_context(service="external_events")
+        
         self.seen_uids: Set[str] = set()  # Track seen UIDs for deduplication
         self.default_timezone = ZoneInfo('Europe/Helsinki')  # Default timezone if not specified
-        self.event_builder = ExternalEventBuilder(weather_service)
         
         # Get config directory path relative to this file
         self.config_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'config'

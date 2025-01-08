@@ -47,12 +47,12 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         with handle_errors(CalendarError, "calendar", "initialize services"):
             # Initialize services
             self.weather_service = WeatherManager(self.local_tz, self.utc_tz, self.config)
-            self.external_event_service = ExternalEventService(self.weather_service)
+            self.external_event_service = ExternalEventService(self.weather_service, self.config)
             
             # Initialize builders
             self.calendar_builder = CalendarBuilder(self.local_tz)
-            self.reservation_builder = ReservationEventBuilder(self.weather_service)
-            self.external_builder = ExternalEventBuilder(self.weather_service)
+            self.reservation_builder = ReservationEventBuilder(self.weather_service, self.config)
+            self.external_builder = ExternalEventBuilder(self.weather_service, self.config)
             
             # Set up ICS directory
             try:

@@ -227,30 +227,90 @@ class Reservation(LoggerMixin):
     def _format_weather_data(self, weather_data: List[WeatherData]) -> str:
         """Format weather data into a human-readable string."""
         if not weather_data:
+            self.debug("No weather data provided")
             return "No weather data available"
         
-        formatted_lines = []
+        # Get event timezone
+        event_tz = self.start_time.tzinfo
+        self.debug(
+            "Starting weather data formatting",
+            total_forecasts=len(weather_data),
+            event_time_range=f"{self.start_time.isoformat()} to {self.end_time.isoformat()}",
+            event_timezone=str(event_tz)
+        )
+        
+        # Convert all forecasts to event timezone
+        normalized_data = []
         for forecast in weather_data:
-            time_str = forecast.elaboration_time.strftime('%H:%M')
+            if forecast.elaboration_time.tzinfo != event_tz:
+                forecast.elaboration_time = forecast.elaboration_time.astimezone(event_tz)
+            normalized_data.append(forecast)
+        
+        # Sort forecasts by time
+        normalized_data = sorted(normalized_data, key=lambda x: x.elaboration_time)
+        self.debug(
+            "Sorted forecasts by time",
+            times=[f.elaboration_time.isoformat() for f in normalized_data]
+        )
+        
+        # Filter forecasts to only include those within event time range
+        filtered_data = [
+            forecast for forecast in normalized_data
+            if self.start_time <= forecast.elaboration_time <= self.end_time
+        ]
+        self.debug(
+            "Filtered forecasts to event time range",
+            original_count=len(normalized_data),
+            filtered_count=len(filtered_data),
+            filtered_times=[f.elaboration_time.isoformat() for f in filtered_data],
+            start_time=self.start_time.isoformat(),
+            end_time=self.end_time.isoformat()
+        )
+        
+        formatted_lines = []
+        for forecast in filtered_data:
+            # Format time string based on block duration
+            interval_hours = forecast.block_duration.total_seconds() / 3600
+            if interval_hours == 1:
+                time_str = forecast.elaboration_time.strftime('%H:%M')
+            else:
+                end_time = forecast.elaboration_time + forecast.block_duration
+                time_str = f"{forecast.elaboration_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}"
+            
+            # Get weather symbol
             symbol = get_weather_symbol(forecast.symbol)
-            temp = f"{forecast.temperature:.1f}°C"
-            wind = f"{forecast.wind_speed:.1f}m/s"
             
             # Build weather line with optional precipitation and thunder probability
-            parts = [f"{time_str}", symbol, temp, wind]
+            parts = [time_str, symbol, f"{forecast.temperature:.1f}°C", f"{forecast.wind_speed:.1f}m/s"]
             
-            if forecast.precipitation_probability is not None and forecast.precipitation_probability > 0:
-                parts.append(f"💧{forecast.precipitation_probability:.1f}%")
+            if forecast.precipitation_probability is not None and forecast.precipitation_probability > 5:
+                if forecast.precipitation and forecast.precipitation > 0:
+                    parts.append(f"💧{forecast.precipitation_probability:.0f}% {forecast.precipitation:.1f}mm")
+                else:
+                    parts.append(f"💧{forecast.precipitation_probability:.0f}%")
             
-            # Add thunder probability if available (assuming it's in the raw data)
-            # This might need to be added to the WeatherData class if not already present
-            thunder_prob = getattr(forecast, 'thunder_probability', None)
-            if thunder_prob is not None and thunder_prob > 0:
-                parts.append(f"⚡{thunder_prob:.1f}%")
+            if forecast.thunder_probability is not None and forecast.thunder_probability > 0:
+                parts.append(f"⚡{forecast.thunder_probability:.0f}%")
             
-            formatted_lines.append(" ".join(parts))
+            line = " ".join(parts)
+            formatted_lines.append(line)
+            self.debug(
+                "Formatted forecast line",
+                time=forecast.elaboration_time.isoformat(),
+                block_duration_hours=interval_hours,
+                temperature=forecast.temperature,
+                wind_speed=forecast.wind_speed,
+                symbol=forecast.symbol,
+                formatted=line
+            )
         
-        return "\n".join(formatted_lines)
+        result = "\n".join(formatted_lines)
+        self.debug(
+            "Completed weather data formatting",
+            total_lines=len(formatted_lines),
+            result=result
+        )
+        return result
 
     def get_event_description(self, weather: Optional[Union[str, List[WeatherData]]] = None) -> str:
         """Get event description for calendar."""

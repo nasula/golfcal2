@@ -13,6 +13,7 @@ from golfcal2.config.logging import setup_logging
 from golfcal2.services.calendar_service import CalendarService
 from golfcal2.services.reservation_service import ReservationService
 from golfcal2.models.user import User
+from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
 
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser."""
@@ -69,7 +70,7 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, config: Ap
         if args.dry_run:
             logger.info("Dry run mode - no changes will be made")
         
-        reservation_service = ReservationService(config, args.user)
+        reservation_service = ReservationService(args.user, config)
         calendar_service = CalendarService(config, dev_mode=is_dev)
         
         # Get reservations
@@ -242,7 +243,7 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
             
         elif args.list_type == 'courses':
             logger.info(f"Listing courses for user {args.user}")
-            reservation_service = ReservationService(config, args.user)
+            reservation_service = ReservationService(args.user, config)
             courses = reservation_service.list_courses(include_all=args.all)
             
             if not courses:
@@ -256,7 +257,7 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
             logger.info(f"Listing reservations for user {args.user}")
             
             # Initialize reservation service
-            reservation_service = ReservationService(config, args.user)
+            reservation_service = ReservationService(args.user, config)
             
             # Get regular reservations
             reservations = reservation_service.list_reservations(
@@ -366,7 +367,7 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppC
             # TODO: Implement full check
         
         # Basic check
-        reservation_service = ReservationService(config, args.user)
+        reservation_service = ReservationService(args.user, config)
         calendar_service = CalendarService(config)
         
         if reservation_service.check_config() and calendar_service.check_config():
@@ -381,39 +382,43 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppC
         return 1
 
 def main() -> int:
-    """Main entry point for the CLI."""
-    parser = create_parser()
-    args = parser.parse_args()
-    
+    """Main entry point."""
     try:
-        # Load config first with proper flags
-        config = load_config(dev_mode=args.dev, verbose=args.verbose)
+        # Parse arguments
+        parser = create_parser()
+        args = parser.parse_args()
         
-        # Set up logging through config system with proper flags
-        setup_logging(config, dev_mode=args.dev, verbose=args.verbose)
+        # Load configuration
+        config = load_config()
         
-        # Get logger after logging is configured
+        # Set up logging
+        setup_logging(config, dev_mode=args.dev, verbose=args.verbose, log_file=args.log_file)
         logger = get_logger(__name__)
         
-        if not args.command:
-            parser.print_help()
-            return 0
+        # Initialize error aggregator
+        error_config = ErrorAggregationConfig(
+            enabled=True,
+            report_interval=config.get('ERROR_REPORT_INTERVAL', 3600),
+            error_threshold=config.get('ERROR_THRESHOLD', 5),
+            time_threshold=config.get('ERROR_TIME_THRESHOLD', 300),  # 5 minutes
+            categorize_by=['service', 'error_type']  # Categorize errors by service and type
+        )
+        init_error_aggregator(error_config)
         
         # Execute command
-        if args.command == "process":
-            return process_command(args, logger, config, is_dev=args.dev)
-        elif args.command == "list":
+        if args.command == 'process':
+            return process_command(args, logger, config, args.dev)
+        elif args.command == 'list':
             return list_command(args, logger, config)
-        elif args.command == "check":
+        elif args.command == 'check':
             return check_command(args, logger, config)
         else:
             logger.error(f"Unknown command: {args.command}")
             return 1
             
     except Exception as e:
-        # Get logger for error handling
         logger = get_logger(__name__)
-        logger.error(f"Failed to run CLI: {e}", exc_info=True)
+        logger.exception("Unhandled exception")
         return 1
 
 if __name__ == '__main__':

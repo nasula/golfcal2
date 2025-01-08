@@ -12,6 +12,7 @@ from .config import Config
 from .services.calendar_service import CalendarService
 from .services.weather_service import WeatherManager
 from .utils.logging_utils import setup_logging
+from .config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
 
 def create_app(config_file=None, dev_mode=False, verbose=False):
     """Create and configure the Flask application."""
@@ -26,11 +27,19 @@ def create_app(config_file=None, dev_mode=False, verbose=False):
     # Set up logging with proper flags
     setup_logging(app.config, dev_mode=dev_mode, verbose=verbose)
     
-    # Initialize services
-    local_tz = ZoneInfo('Europe/Helsinki')
+    # Initialize error aggregator
+    error_config = ErrorAggregationConfig(
+        report_interval=app.config.get('ERROR_REPORT_INTERVAL', 3600),
+        error_threshold=app.config.get('ERROR_THRESHOLD', 5)
+    )
+    init_error_aggregator(error_config)
+    
+    # Initialize timezone from config
+    config = load_config()
+    local_tz = ZoneInfo(config.global_config.get('timezone', 'UTC'))
     utc_tz = ZoneInfo('UTC')
     
-    app.weather_manager = WeatherManager(local_tz, utc_tz)
+    app.weather_manager = WeatherManager(local_tz, utc_tz, app.config)
     app.calendar_service = CalendarService(app.weather_manager, local_tz, utc_tz)
     
     # Register routes

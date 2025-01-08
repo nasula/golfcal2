@@ -2,6 +2,7 @@
 
 from typing import List, Optional
 from golfcal2.services.weather_types import WeatherData
+from datetime import timedelta
 
 def get_weather_symbol(code: str) -> str:
     """Get weather symbol for weather code."""
@@ -31,27 +32,27 @@ def get_weather_symbol(code: str) -> str:
     }
     return symbol_map.get(code, '☁️')  # Default to cloudy if code not found
 
-def format_weather_data(weather_data: List[WeatherData]) -> str:
-    """Format weather data into a human-readable string."""
-    if not weather_data:
-        return "No weather data available"
+def _get_symbol_severity(symbol: str) -> int:
+    """Get severity level for a weather symbol for sorting."""
+    severity_map = {
+        'clearsky': 0,
+        'fair': 1,
+        'partlycloudy': 2,
+        'cloudy': 3,
+        'fog': 4,
+        'lightrain': 5,
+        'rain': 6,
+        'heavyrain': 7,
+        'lightsnow': 8,
+        'snow': 9,
+        'heavysnow': 10,
+        'sleet': 11,
+        'thunder': 12,
+        'thunderstorm': 13
+    }
     
-    formatted_lines = []
-    for forecast in weather_data:
-        time_str = forecast.elaboration_time.strftime('%H:%M')
-        symbol = get_weather_symbol(forecast.symbol)
-        temp = f"{forecast.temperature:.1f}°C"
-        wind = f"{forecast.wind_speed:.1f}m/s"
-        
-        # Build weather line with optional precipitation and thunder probability
-        parts = [f"{time_str}", symbol, temp, wind]
-        
-        if forecast.precipitation_probability is not None and forecast.precipitation_probability > 0:
-            parts.append(f"💧{forecast.precipitation_probability:.1f}%")
-        
-        if forecast.thunder_probability is not None and forecast.thunder_probability > 0:
-            parts.append(f"⚡{forecast.thunder_probability:.1f}%")
-        
-        formatted_lines.append(" ".join(parts))
+    # Remove day/night suffix and get base symbol
+    base_symbol = symbol.rstrip('_day').rstrip('_night').rstrip('_polartwilight')
     
-    return "\n".join(formatted_lines) 
+    # Return severity or 0 if symbol not found
+    return severity_map.get(base_symbol, 0) 

@@ -110,7 +110,7 @@ class WeatherDatabase(LoggerMixin):
                     WHERE location = ? 
                     AND time IN ({placeholders})
                     AND data_type = ?
-                    AND (expires IS NULL OR expires > datetime('now'))
+                    AND (expires IS NULL OR expires > datetime('now', 'utc'))
                     ORDER BY time ASC
                 '''
                 

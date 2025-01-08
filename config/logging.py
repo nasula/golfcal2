@@ -249,13 +249,14 @@ def init_error_aggregator(config: Optional[Dict[str, Any]] = None) -> None:
     # Currently a placeholder - can be implemented later if error aggregation is needed
     pass
 
-def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = False) -> None:
+def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = False, log_file: Optional[str] = None) -> None:
     """Set up logging based on configuration and mode.
     
     Args:
         config: Application configuration
         dev_mode: Whether to run in development mode
         verbose: Whether to enable verbose (DEBUG) logging
+        log_file: Optional path to log file, overrides config setting
     """
     # Load logging config
     logging_config = load_logging_config()
@@ -286,8 +287,10 @@ def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = Fal
     
     # Set up file handler if enabled
     if logging_config.file.enabled:
+        # Override log file path if provided
+        log_path = log_file if log_file else logging_config.file.path
         file_handler = get_file_handler(
-            logging_config.file.path,
+            log_path,
             json_formatter,
             logging_config.file.max_size_mb * 1024 * 1024,
             logging_config.file.backup_count

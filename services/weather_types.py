@@ -162,6 +162,7 @@ class WeatherData:
     symbol: str
     elaboration_time: datetime
     thunder_probability: Optional[float] = None
+    block_duration: timedelta = timedelta(hours=1)  # Default to 1 hour
 
 @dataclass
 class WeatherResponse:
@@ -177,6 +178,12 @@ class WeatherService(EnhancedLoggerMixin):
         super().__init__()
         self.local_tz = local_tz
         self.utc_tz = utc_tz
+        self.db = None  # Database instance will be set by subclasses
+        self.cache = None  # Cache instance will be set by subclasses
+        
+    def _get_cache_key(self, lat: float, lon: float, club: str, base_time: datetime) -> str:
+        """Get cache key for weather data."""
+        return f"{club}_{lat:.4f}_{lon:.4f}_{base_time.strftime('%Y%m%d%H')}"
     
     def get_expiry_time(self) -> datetime:
         """Get expiry time for current weather data.
