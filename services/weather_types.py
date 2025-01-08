@@ -163,6 +163,7 @@ class WeatherData:
     elaboration_time: datetime
     thunder_probability: Optional[float] = None
     block_duration: timedelta = timedelta(hours=1)  # Default to 1 hour
+    symbol_time_range: Optional[str] = None  # For 6h blocks, shows time range like "18:00 to 24:00"
 
 @dataclass
 class WeatherResponse:

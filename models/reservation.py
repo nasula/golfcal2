@@ -275,7 +275,7 @@ class Reservation(LoggerMixin):
                 time_str = forecast.elaboration_time.strftime('%H:%M')
             else:
                 end_time = forecast.elaboration_time + forecast.block_duration
-                time_str = f"{forecast.elaboration_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}"
+                time_str = f"{forecast.elaboration_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
             
             # Get weather symbol
             symbol = get_weather_symbol(forecast.symbol)

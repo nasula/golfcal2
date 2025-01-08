@@ -936,35 +936,27 @@ class IberianWeatherService(WeatherService):
                     base_date = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
                     base_date = base_date.replace(tzinfo=local_tz)
                     
+                    # Determine if this is a short-term or medium-term forecast
+                    now_utc = datetime.now(ZoneInfo("UTC"))
+                    hours_ahead = (base_date - now_utc).total_seconds() / 3600
+                    is_short_term = hours_ahead <= 48  # Short term = first 48 hours
+                    
+                    self.debug(
+                        "Processing forecast",
+                        date=date_str,
+                        hours_ahead=hours_ahead,
+                        is_short_term=is_short_term
+                    )
+                    
                     # Get temperature data
                     temp_data = day.get('temperatura')
-                    if not isinstance(temp_data, dict):
-                        self.warning(
-                            "Invalid temperature data format",
-                            expected="dictionary",
-                            actual_type=type(temp_data).__name__,
-                            data=temp_data
-                        )
-                        continue
-
-                    try:
-                        min_temp = float(temp_data.get('minima', 0))
-                        max_temp = float(temp_data.get('maxima', 0))
-                    except (ValueError, TypeError) as e:
-                        self.warning(
-                            "Invalid temperature values",
-                            error=str(e),
-                            data=temp_data
-                        )
-                        continue
-                    
-                    # Map hours to temperatures if available
-                    temp_hours = {}
-                    if isinstance(temp_data.get('dato'), list):
-                        for temp_point in temp_data['dato']:
+                    if is_short_term and isinstance(temp_data, list):
+                        # Short-term hourly format
+                        temp_hours = {}
+                        for temp_point in temp_data:
                             if isinstance(temp_point, dict):
                                 try:
-                                    hour = int(temp_point.get('hora', 0))
+                                    hour = int(temp_point.get('periodo', 0))
                                     value = float(temp_point.get('value', 0))
                                     temp_hours[hour] = value
                                 except (ValueError, TypeError) as e:
@@ -974,6 +966,45 @@ class IberianWeatherService(WeatherService):
                                         data=temp_point
                                     )
                                     continue
+                        
+                        # For hourly data, we don't need min/max
+                        min_temp = max_temp = None
+                    elif isinstance(temp_data, dict):
+                        # Medium-term 6h block format
+                        try:
+                            min_temp = float(temp_data.get('minima', 0))
+                            max_temp = float(temp_data.get('maxima', 0))
+                            # Map hours to temperatures if available
+                            temp_hours = {}
+                            if isinstance(temp_data.get('dato'), list):
+                                for temp_point in temp_data['dato']:
+                                    if isinstance(temp_point, dict):
+                                        try:
+                                            hour = int(temp_point.get('hora', 0))
+                                            value = float(temp_point.get('value', 0))
+                                            temp_hours[hour] = value
+                                        except (ValueError, TypeError) as e:
+                                            self.warning(
+                                                "Invalid temperature point",
+                                                error=str(e),
+                                                data=temp_point
+                                            )
+                                            continue
+                        except (ValueError, TypeError) as e:
+                            self.warning(
+                                "Invalid temperature values",
+                                error=str(e),
+                                data=temp_data
+                            )
+                            continue
+                    else:
+                        self.warning(
+                            "Invalid temperature data format",
+                            expected="list (hourly) or dictionary (6h blocks)",
+                            actual_type=type(temp_data).__name__,
+                            data=temp_data
+                        )
+                        continue
                     
                     # Get all available periods from estadoCielo
                     periods = set()
@@ -983,11 +1014,28 @@ class IberianWeatherService(WeatherService):
                             if isinstance(item, dict):
                                 period = item.get('periodo')
                                 if period and period != '00-24':  # Skip full-day period
-                                    periods.add(period)
+                                    # Handle both period ranges and single hours
+                                    if '-' in str(period):
+                                        periods.add(period)
+                                    elif is_short_term:
+                                        # Convert single hour to range for short-term forecasts
+                                        try:
+                                            hour = int(period)
+                                            periods.add(f"{hour:02d}-{(hour+1):02d}")
+                                        except (ValueError, TypeError):
+                                            self.warning(
+                                                "Invalid hour value",
+                                                period=period
+                                            )
                     
-                    # If no specific periods found, use 12-hour blocks
+                    # If no specific periods found, use appropriate blocks based on forecast type
                     if not periods:
-                        periods = ['00-12', '12-24']
+                        if is_short_term:
+                            # For hourly data, use 1-hour blocks
+                            periods = [f"{h:02d}-{(h+1):02d}" for h in range(24)]
+                        else:
+                            # For 6h blocks, use standard blocks
+                            periods = ['00-06', '06-12', '12-18', '18-24']
                     
                     # Sort periods for consistent processing
                     periods = sorted(list(periods))
@@ -1019,6 +1067,22 @@ class IberianWeatherService(WeatherService):
                             # Skip if outside requested range
                             if forecast_time < start_time or forecast_time > end_time:
                                 continue
+                            
+                            # Get temperature based on data format
+                            if isinstance(temp_data, list):
+                                # For hourly data, use exact hour
+                                temp = temp_hours.get(period_start)
+                            else:
+                                # For 6h blocks, interpolate if needed
+                                temp = temp_hours.get(period_start)
+                                if temp is None:
+                                    # Simple interpolation based on time of day
+                                    if period_start < 6:
+                                        temp = min_temp
+                                    elif period_start < 14:
+                                        temp = max_temp
+                                    else:
+                                        temp = min_temp + (max_temp - min_temp) * 0.5
                             
                             # Get precipitation probability
                             prob_precip = 0
@@ -1053,21 +1117,6 @@ class IberianWeatherService(WeatherService):
                                     if isinstance(sky, dict) and sky.get('periodo') == period:
                                         sky_value = sky.get('value', '')
                                         break
-                            
-                            # Get temperature
-                            temp = None
-                            if period_start in temp_hours:
-                                temp = temp_hours[period_start]
-                            elif period_end in temp_hours:
-                                temp = temp_hours[period_end]
-                            else:
-                                # Simple interpolation based on time of day
-                                if period_start < 6:
-                                    temp = min_temp
-                                elif period_start < 14:
-                                    temp = max_temp
-                                else:
-                                    temp = min_temp + (max_temp - min_temp) * 0.5
                             
                             block_duration = timedelta(hours=period_end - period_start)
                             
