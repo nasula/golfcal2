@@ -362,17 +362,21 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             all_reservations = []
             now = datetime.now(self.local_tz)
             
-            for user_name, user_config in self.config.users.items():
-                _, reservations = self.process_user(user_name, user_config, days)
+            if self.user_name not in self.config.users:
+                self.warning(f"User {self.user_name} not found in configuration")
+                return []
+            
+            user_config = self.config.users[self.user_name]
+            _, reservations = self.process_user(self.user_name, user_config, days)
+            
+            for reservation in reservations:
+                if active_only and not self._is_active(reservation, now):
+                    continue
                 
-                for reservation in reservations:
-                    if active_only and not self._is_active(reservation, now):
-                        continue
-                    
-                    if upcoming_only and not self._is_upcoming(reservation, now, days):
-                        continue
-                    
-                    all_reservations.append(reservation)
+                if upcoming_only and not self._is_upcoming(reservation, now, days):
+                    continue
+                
+                all_reservations.append(reservation)
             
             return sorted(all_reservations, key=lambda r: r.start_time)
     

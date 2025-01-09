@@ -81,46 +81,96 @@ pip install -r requirements.txt
 
 ## Usage Examples
 
-### Process Reservations
+### Process Golf Calendar
 ```bash
-# Process specific user (development mode)
-python -m golfcal2 -u USERNAME --dev process
+# Process all users
+golfcal2 process
 
-# Process with debug logging
-python -m golfcal2 -u USERNAME -v process
+# Process specific user
+golfcal2 -U USERNAME process
 
-# Process with debug logging to file
-python -m golfcal2 -u USERNAME -v --log-file golfcal.log process
+# Dry run to see what would be done
+golfcal2 process --dry-run
+
+# Force processing even if no changes detected
+golfcal2 process --force
 ```
 
-### List Reservations
+### List Information
 ```bash
-# List reservations for specific user
-python -m golfcal2 -u USERNAME list
+# List all golf courses for current user
+golfcal2 list courses
 
-# List reservations in development mode
-python -m golfcal2 -u USERNAME --dev list
+# List all configured courses
+golfcal2 list courses --all
+
+# List reservations
+golfcal2 list reservations
+
+# List only active reservations
+golfcal2 list reservations --active
+
+# List upcoming reservations for next 7 days
+golfcal2 list reservations --upcoming --days 7
+
+# List reservations in JSON format
+golfcal2 list reservations --format json
+
+# List weather cache contents
+golfcal2 list weather-cache
+
+# List weather cache for specific service
+golfcal2 list weather-cache --service met
+
+# List weather cache for specific date
+golfcal2 list weather-cache --date 2025-01-11
+
+# Clear weather cache (use with caution)
+golfcal2 list weather-cache --clear
+
+# Clear specific service's cache
+golfcal2 list weather-cache --service met --clear
 ```
 
 ### Check Configuration
 ```bash
-# Check configuration for specific user
-python -m golfcal2 -u USERNAME check
+# Basic configuration check
+golfcal2 check
 
-# Check configuration in development mode
-python -m golfcal2 -u USERNAME --dev check
+# Full check including API connectivity
+golfcal2 check --full
 ```
 
 ### Global Options
-- `-u USERNAME, --user USERNAME`: Specify the user (required)
-- `--dev`: Enable development mode
-- `-v, --verbose`: Enable verbose (debug) logging
-- `--log-file LOG_FILE`: Specify log file path
+- `-U USERNAME, --user USERNAME`: Process specific user only (default: process all configured users)
+- `--dev`: Run in development mode with additional debug output and test data
+- `-v, --verbose`: Enable verbose logging output
+- `--log-file PATH`: Path to write log output (default: logs to stdout)
 
 ### Commands
-- `process`: Process reservations and create calendar files
-- `list`: List current reservations
-- `check`: Check configuration validity
+- `process`: Process golf calendar by fetching reservations and updating calendar files
+  - `--dry-run`: Show what would be done without making changes
+  - `--force`: Force processing even if no changes detected
+
+- `list`: List various types of information
+  - `courses`: List available golf courses
+    - `--all`: List all configured courses (default: only current user's courses)
+  
+  - `reservations`: List golf reservations
+    - `--active`: Show only currently active reservations
+    - `--upcoming`: Show only upcoming reservations
+    - `--format`: Output format ('text' or 'json', default: text)
+    - `--days`: Number of days to look ahead/behind (default: 1)
+  
+  - `weather-cache`: List or manage weather cache contents
+    - `--service`: Filter by service ('met', 'portuguese', 'iberian')
+    - `--location`: Filter by coordinates (format: lat,lon)
+    - `--date`: Filter by date (format: YYYY-MM-DD)
+    - `--format`: Output format ('text' or 'json', default: text)
+    - `--clear`: Clear the cache (optionally for specific service)
+
+- `check`: Check application configuration and connectivity
+  - `--full`: Perform comprehensive check including API tests
 
 ## Troubleshooting Guide
 
