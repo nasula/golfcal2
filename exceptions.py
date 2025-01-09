@@ -1,9 +1,12 @@
 """Centralized error definitions for golf calendar application."""
 
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Type, Callable, TypeVar, ContextManager
 from enum import Enum
 import requests
+from contextlib import contextmanager
+
+T = TypeVar('T')
 
 class ErrorCode(Enum):
     """Enumeration of all possible error codes."""
@@ -56,75 +59,76 @@ class APIError(GolfCalError):
         super().__init__(message, code, details)
         self.response = response
 
-# Legacy compatibility classes - these maintain the old behavior
 class LegacyAPIError(Exception):
-    """Legacy API error for backward compatibility."""
+    """Legacy API error class for backward compatibility."""
     def __init__(self, message: str):
         super().__init__(message)
 
 class APITimeoutError(APIError):
-    """Request timeout errors."""
+    """API timeout error."""
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, ErrorCode.TIMEOUT, details=details)
 
 class APIRateLimitError(APIError):
-    """Rate limiting errors."""
+    """API rate limit error."""
     def __init__(self, message: str, retry_after: Optional[int] = None):
-        details = {"retry_after": retry_after} if retry_after else None
-        super().__init__(message, ErrorCode.RATE_LIMITED, details=details)
+        super().__init__(message, ErrorCode.RATE_LIMITED, details={"retry_after": retry_after})
 
 class APIResponseError(APIError):
-    """Invalid API response errors."""
+    """API response error."""
     def __init__(self, message: str, response: Optional[requests.Response] = None):
         super().__init__(message, ErrorCode.INVALID_RESPONSE, response=response)
 
 class AuthError(GolfCalError):
-    """Authentication-related errors."""
+    """Authentication error."""
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, ErrorCode.AUTH_FAILED, details)
 
 class ConfigError(GolfCalError):
-    """Configuration-related errors."""
+    """Configuration error."""
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, ErrorCode.CONFIG_INVALID, details)
 
 class ValidationError(GolfCalError):
-    """Data validation errors."""
+    """Validation error."""
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, ErrorCode.VALIDATION_FAILED, details)
 
 class WeatherError(GolfCalError):
-    """Weather service specific errors."""
+    """Weather service error."""
     def __init__(self, message: str, code: ErrorCode = ErrorCode.SERVICE_ERROR, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, code, details)
 
+class WeatherServiceUnavailable(WeatherError):
+    """Weather service unavailable error."""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, ErrorCode.SERVICE_UNAVAILABLE, details)
+
+class WeatherDataError(WeatherError):
+    """Weather data error."""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, ErrorCode.INVALID_RESPONSE, details)
+
 class CalendarError(GolfCalError):
-    """Calendar service specific errors."""
+    """Calendar service error."""
     def __init__(self, message: str, code: ErrorCode = ErrorCode.SERVICE_ERROR, details: Optional[Dict[str, Any]] = None):
         super().__init__(message, code, details)
 
 class CalendarWriteError(CalendarError):
-    """Error writing calendar to file."""
+    """Calendar write error."""
     def __init__(self, message: str, file_path: str, details: Optional[Dict[str, Any]] = None):
-        error_details = {"file_path": file_path}
-        if details:
-            error_details.update(details)
-        super().__init__(message, ErrorCode.SERVICE_ERROR, error_details)
+        if details is None:
+            details = {}
+        details["file_path"] = file_path
+        super().__init__(message, ErrorCode.SERVICE_ERROR, details)
 
 class CalendarEventError(CalendarError):
-    """Error creating or processing calendar events."""
+    """Calendar event error."""
     def __init__(self, message: str, event_type: str, details: Optional[Dict[str, Any]] = None):
-        error_details = {"event_type": event_type}
-        if details:
-            error_details.update(details)
-        super().__init__(message, ErrorCode.INVALID_RESPONSE, error_details)
-
-# Error handling utilities
-from contextlib import contextmanager
-from typing import Type, TypeVar, Callable
-from golfcal2.config.error_aggregator import aggregate_error
-
-T = TypeVar('T')
+        if details is None:
+            details = {}
+        details["event_type"] = event_type
+        super().__init__(message, ErrorCode.VALIDATION_FAILED, details)
 
 @contextmanager
 def handle_errors(
@@ -133,35 +137,18 @@ def handle_errors(
     operation: str,
     fallback: Optional[Callable[[], T]] = None
 ) -> Optional[T]:
-    """Context manager for consistent error handling.
-    
-    Args:
-        error_type: Type of error to catch and convert
-        service: Service name for error aggregation
-        operation: Description of the operation being performed
-        fallback: Optional fallback function to call on error
-        
-    Yields:
-        None if no fallback provided, or the result of the fallback function
-        
-    Example:
-        with handle_errors(APIError, "weather", "fetch forecast", lambda: cached_data):
-            return weather_service.get_forecast(lat, lon)
-    """
+    """Context manager for handling errors and providing fallback behavior."""
     try:
         yield
     except error_type as e:
-        aggregate_error(str(e), service, getattr(e, "__traceback__", None))
+        from golfcal2.config.error_aggregator import aggregate_error
+        aggregate_error(str(e), service, e.__traceback__)
         if fallback:
             return fallback()
         raise
     except Exception as e:
-        error = error_type(
-            f"Unexpected error during {operation}: {str(e)}",
-            ErrorCode.SERVICE_ERROR,
-            details={"original_error": str(e)}
-        )
-        aggregate_error(str(error), service, getattr(e, "__traceback__", None))
+        from golfcal2.config.error_aggregator import aggregate_error
+        aggregate_error(f"Unexpected error during {operation}: {str(e)}", service, e.__traceback__)
         if fallback:
             return fallback()
-        raise error from e 
+        raise 

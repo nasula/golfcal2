@@ -440,8 +440,9 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         # Add description
         event.add('description', reservation.get_event_description())
         
-        # Add weather if not wisegolf0
-        if reservation.membership.club not in self.config.clubs or self.config.clubs[reservation.membership.club].get('crm') != 'wisegolf0':
+        # Add weather for all clubs that have coordinates
+        club_config = self.config.clubs.get(reservation.membership.club)
+        if club_config and 'coordinates' in club_config:
             self._add_weather_to_event(event, reservation.membership.clubAbbreviation, reservation.start_time, self.weather_service)
         
         self._add_event_to_calendar(event, cal)

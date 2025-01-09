@@ -242,6 +242,7 @@ class MetWeatherService(WeatherService):
                 )
             
             return forecasts
+            
         except Exception as e:
             self.error(f"Failed to get weather data: {e}")
             return None

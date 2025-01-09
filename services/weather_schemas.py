@@ -14,6 +14,13 @@ Weather services:
   - Updates multiple times per day
   - Requires API key from https://opendata.aemet.es/centrodedescargas/altaUsuario
   - Must cite AEMET as data source
+
+- OpenWeather
+  - API: https://api.openweathermap.org/
+  - Global coverage with 5-day forecasts
+  - Updates every 3 hours
+  - Requires API key from https://openweathermap.org/
+  - Free tier: 60 calls/minute
 """
 
 from typing import Dict, List
@@ -69,8 +76,8 @@ PORTUGUESE_SCHEMA = {
     'weather': WEATHER_COLUMNS
 }
 
-# OpenWeather schema
-MEDITERRANEAN_SCHEMA = {
+# OpenWeather schema (used for both global and Mediterranean regions)
+OPEN_WEATHER_SCHEMA = {
     'weather': WEATHER_COLUMNS
 }
 

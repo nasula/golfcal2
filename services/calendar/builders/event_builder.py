@@ -79,11 +79,12 @@ class EventBuilder(ABC, LoggerMixin):
                 # Handle both WeatherResponse objects and direct lists of forecasts
                 forecasts = weather_data.data if hasattr(weather_data, 'data') else weather_data
                 
-                # Convert forecast times back to local timezone
-                for forecast in forecasts:
-                    if forecast.elaboration_time.tzinfo is None:
-                        forecast.elaboration_time = forecast.elaboration_time.replace(tzinfo=ZoneInfo('UTC'))
-                    forecast.elaboration_time = forecast.elaboration_time.astimezone(self.local_tz)
+                # Convert forecast times back to local timezone only if they are WeatherData objects
+                if forecasts and isinstance(forecasts, list) and all(hasattr(f, 'elaboration_time') for f in forecasts):
+                    for forecast in forecasts:
+                        if forecast.elaboration_time.tzinfo is None:
+                            forecast.elaboration_time = forecast.elaboration_time.replace(tzinfo=ZoneInfo('UTC'))
+                        forecast.elaboration_time = forecast.elaboration_time.astimezone(self.local_tz)
                 
                 return temp_reservation._format_weather_data(forecasts)
             return None

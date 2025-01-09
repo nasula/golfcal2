@@ -6,6 +6,7 @@ import sys
 import logging
 import argparse
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from golfcal2.config.settings import load_config, AppConfig
 from golfcal2.utils.logging_utils import get_logger
@@ -14,6 +15,8 @@ from golfcal2.services.calendar_service import CalendarService
 from golfcal2.services.reservation_service import ReservationService
 from golfcal2.models.user import User
 from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
+from golfcal2.services.external_event_service import ExternalEventService
+from golfcal2.services.weather_service import WeatherManager
 
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser."""
@@ -23,7 +26,7 @@ def create_parser() -> argparse.ArgumentParser:
     
     # Global options
     parser.add_argument(
-        '-U', '--user',
+        '-u', '--user',
         help='Process specific user only (default: process all configured users)'
     )
     parser.add_argument(
@@ -206,6 +209,11 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
             logger.error("Please specify what to list: 'courses', 'reservations', or 'weather-cache'")
             return 1
             
+        # Initialize weather manager if needed for reservations
+        weather_manager = None
+        if args.list_type == 'reservations':
+            weather_manager = WeatherManager(config.timezone, ZoneInfo('UTC'), config)
+        
         if args.list_type == 'weather-cache':
             logger.info("Listing weather cache contents")
             from golfcal2.services.weather_database import WeatherDatabase
@@ -454,29 +462,39 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
                                 print("\nReservations:")
                                 print("=" * 60)
                             for reservation in reservations:
-                                # Format time in local timezone
-                                start_time = reservation.start_time.strftime('%Y-%m-%d %H:%M')
-                                end_time = reservation.end_time.strftime('%H:%M')
+                                # Get weather data for the reservation
+                                weather_data = None
+                                try:
+                                    if reservation.club and reservation.club.club_details and 'coordinates' in reservation.club.club_details:
+                                        weather_response = weather_manager.get_weather(
+                                            lat=reservation.club.club_details['coordinates']['lat'],
+                                            lon=reservation.club.club_details['coordinates']['lon'],
+                                            start_time=reservation.start_time,
+                                            end_time=reservation.end_time,
+                                            club=reservation.club.name
+                                        )
+                                        if weather_response:
+                                            weather_data = weather_response.data
+                                except Exception as e:
+                                    logger.warning(f"Failed to get weather data for reservation: {e}")
+
+                                # Format times
+                                start_str = reservation.start_time.strftime('%Y-%m-%d %H:%M')
+                                end_str = reservation.end_time.strftime('%H:%M')
                                 
-                                # Get club and variant info
-                                club_name = reservation.club.name
-                                variant = reservation.club.variant if hasattr(reservation.club, 'variant') else None
-                                variant_str = f" - {variant}" if variant else ""
+                                # Print reservation details
+                                print(f"{start_str} - {end_str}: {reservation.club.name}")
+                                if reservation.club.address:
+                                    print(f"Location: {reservation.club.address}")
                                 
-                                # Print header with time and club info
-                                print(f"{start_time} - {end_time}: {club_name}{variant_str}")
+                                # Print players
+                                players_str = ", ".join([f"{p.name} (HCP: {p.handicap})" for p in reservation.players])
+                                print(f"Players: {players_str}")
                                 
-                                # Print players with handicaps
-                                if reservation.players:
-                                    print("Players:")
-                                    for player in reservation.players:
-                                        if player.handicap > 0:
-                                            print(f"  - {player.name} (HCP: {player.handicap})")
-                                        else:
-                                            print(f"  - {player.name}")
-                                    print(f"Total HCP: {reservation.total_handicap}")
-                                else:
-                                    print("No player information available")
+                                # Print weather if available
+                                if weather_data:
+                                    weather_str = reservation._format_weather_data(weather_data)
+                                    print(f"Weather: {weather_str}")
                                 
                                 print("-" * 60)
                         
@@ -578,6 +596,11 @@ def main() -> int:
             categorize_by=['service', 'error_type']  # Categorize errors by service and type
         )
         init_error_aggregator(error_config)
+        
+        # Initialize services
+        weather_manager = WeatherManager(config.timezone, ZoneInfo('UTC'), config)
+        calendar_service = CalendarService(config)
+        external_event_service = ExternalEventService(weather_manager, config)
         
         # Execute command
         if args.command == 'process':

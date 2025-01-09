@@ -22,10 +22,11 @@ class GolfClub(ABC, LoggerMixin):
     """Abstract base class for golf clubs."""
     name: str
     url: str
-    variant: Optional[str] = None
-    product: Optional[str] = None
     address: str = "Unknown"
     timezone: str = "UTC"
+    coordinates: Dict[str, float] = None
+    variant: Optional[str] = None
+    product: Optional[str] = None
     auth_service: Optional[AuthService] = None
     club_details: Optional[Dict[str, Any]] = None
     _tz_manager: Optional[TimezoneManager] = None
@@ -155,6 +156,14 @@ class WiseGolfClub(GolfClub, PlayerFetchMixin):
 class WiseGolf0Club(GolfClub, PlayerFetchMixin):
     """WiseGolf0 golf club implementation."""
     
+    def __post_init__(self):
+        """Initialize after dataclass initialization."""
+        super().__post_init__()
+        
+        # Initialize coordinates from club details if available
+        if self.club_details and 'coordinates' in self.club_details:
+            self.coordinates = self.club_details['coordinates']
+
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from WiseGolf0 API."""
         from golfcal2.api.wise_golf import WiseGolf0API
@@ -253,39 +262,88 @@ class TeeTimeClub(GolfClub):
         )
         return self._tz_manager.localize_datetime(start_time)
 
+@dataclass
+class ExternalGolfClub(GolfClub):
+    """Golf club for external events."""
+    name: str
+    url: str
+    address: str = "Unknown"
+    timezone: str = "UTC"
+    coordinates: Dict[str, float] = None
+    variant: Optional[str] = None
+    product: Optional[str] = None
+    auth_service: Optional[AuthService] = None
+    club_details: Optional[Dict[str, Any]] = None
+    _tz_manager: Optional[TimezoneManager] = None
+    local_tz: Optional[ZoneInfo] = None
+    utc_tz: Optional[ZoneInfo] = None
+    config: Optional[AppConfig] = None
+
+    def get_event_location(self) -> str:
+        """Get formatted location string."""
+        return self.address
+
+    def get_event_summary(self) -> str:
+        """Get event summary."""
+        return f"Golf: {self.name}"
+
+    def get_coordinates(self) -> Optional[Dict[str, float]]:
+        """Get club coordinates."""
+        return self.coordinates
+
+    def get_timezone(self) -> str:
+        """Get club timezone."""
+        return self.timezone
+
+    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
+        """External clubs don't fetch reservations."""
+        return []
+
+    def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
+        """External clubs don't parse start times."""
+        return datetime.now(ZoneInfo(self.timezone))
+
 class GolfClubFactory:
     """Factory for creating golf club instances."""
     
-    @staticmethod
+    _clubs: Dict[str, GolfClub] = {}  # Cache for club instances
+    
+    @classmethod
     def create_club(
+        cls,
         club_details: Dict[str, Any],
         membership: Membership,
         auth_service: AuthService,
         config: AppConfig
     ) -> Optional[GolfClub]:
         """Create golf club instance based on type."""
-        club_type = club_details.get("type")
-        if not club_type:
-            return None
-
-        # Get club name with fallbacks
+        # Return cached club if available
         club_name = (
             club_details.get("name") or  # Explicit name
             membership.club or  # Club name from membership
             club_details.get("clubAbbreviation") or  # Club abbreviation
-            club_type.title()  # Fallback to capitalized type
+            club_details.get("type", "").title()  # Fallback to capitalized type
         )
+        if club_name in cls._clubs:
+            return cls._clubs[club_name]
+            
+        club_type = club_details.get("type")
+        if not club_type:
+            return None
 
         # Get appropriate URL based on club type
         if club_type == "wisegolf":
-            url = club_details.get("ajaxUrl") or club_details.get("url")
+            url = club_details.get("ajaxUrl")  # Use ajaxUrl for WiseGolf
         elif club_type == "wisegolf0":
-            url = club_details.get("shopURL") or club_details.get("url")
+            url = club_details.get("shopURL")  # Use shopURL for WiseGolf0
         else:
-            url = club_details.get("url")
+            url = club_details.get("url")  # Use standard URL for others
 
         if not url:
-            raise ValueError(f"No URL found for club {club_name}")
+            # Fallback to standard URL if specific URL not found
+            url = club_details.get("url")
+            if not url:
+                raise ValueError(f"No URL found for club {club_name}")
 
         # Get timezone from club config, fallback to UTC
         timezone = club_details.get("timezone", "UTC")
@@ -306,14 +364,18 @@ class GolfClubFactory:
             "config": config
         }
 
+        club = None
         if club_type == "wisegolf":
-            return WiseGolfClub(**common_args)
+            club = WiseGolfClub(**common_args)
         elif club_type == "wisegolf0":
-            return WiseGolf0Club(**common_args)
+            club = WiseGolf0Club(**common_args)
         elif club_type == "nexgolf":
-            return NexGolfClub(**common_args)
+            club = NexGolfClub(**common_args)
         elif club_type == "teetime":
-            return TeeTimeClub(**common_args)
+            club = TeeTimeClub(**common_args)
         
-        return None
+        if club:
+            cls._clubs[club_name] = club
+        
+        return club
 

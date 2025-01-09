@@ -38,7 +38,11 @@ class WeatherServiceManager(WeatherService):
         
         # Initialize weather services
         self.services = [
-            OpenWeatherService(local_tz, utc_tz, config),
+            # Global OpenWeather service (fallback)
+            OpenWeatherService(local_tz, utc_tz, config, region="global"),
+            # Mediterranean OpenWeather service (specialized configuration)
+            OpenWeatherService(local_tz, utc_tz, config, region="mediterranean"),
+            # Regional specialized services
             MetWeatherService(local_tz, utc_tz, config),
             IberianWeatherService(local_tz, utc_tz, config),
             PortugueseWeatherService(local_tz, utc_tz, config)
@@ -70,12 +74,13 @@ class WeatherServiceManager(WeatherService):
         for service in self.services:
             try:
                 response = service.get_weather(lat, lon, start_time, end_time)
-                all_data.extend(response.data)
-                
-                if latest_expiry is None or (
-                    response.expires is not None and response.expires > latest_expiry
-                ):
-                    latest_expiry = response.expires
+                if response and response.data:
+                    all_data.extend(response.data)
+                    
+                    if latest_expiry is None or (
+                        response.expires is not None and response.expires > latest_expiry
+                    ):
+                        latest_expiry = response.expires
                     
             except WeatherError as e:
                 aggregate_error(str(e), "weather_manager", e.__traceback__)

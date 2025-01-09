@@ -257,7 +257,7 @@ class Reservation(LoggerMixin):
         filtered_data = []
         for forecast in normalized_data:
             forecast_end = forecast.elaboration_time + forecast.block_duration
-            if not (forecast_end <= self.start_time or forecast.elaboration_time >= self.end_time):
+            if forecast.elaboration_time < self.end_time and forecast_end > self.start_time:
                 filtered_data.append(forecast)
         
         self.debug(
@@ -339,12 +339,53 @@ class Reservation(LoggerMixin):
 
     def format_for_display(self) -> str:
         """Format reservation for display in terminal."""
-        return (
+        # Get club configuration to check for coordinates
+        from golfcal2.config.settings import AppConfig
+        config = AppConfig()
+        club_config = config.clubs.get(self.membership.club)
+        self.debug(f"Club config for {self.membership.club}: {club_config}")
+        
+        # Format basic reservation info
+        output = [
             f"{self.start_time.strftime('%Y-%m-%d %H:%M')} - "
             f"{self.end_time.strftime('%H:%M')}: "
-            f"{self.club.name} - {self.club.variant}\n"
-            f"Players: {', '.join(p.name for p in self.players)}"
-        )
+            f"{self.club.name} - {self.club.variant}"
+        ]
+        
+        # Add player information
+        if self.players:
+            output.append("Players:")
+            for player in self.players:
+                output.append(f"  - {player.name} (HCP: {player.handicap})")
+            output.append(f"Total HCP: {self.total_handicap}")
+        
+        # Add weather data if coordinates are available
+        if club_config and 'coordinates' in club_config:
+            self.debug(f"Found coordinates for {self.membership.club}: {club_config['coordinates']}")
+            from golfcal2.services.weather_service import WeatherManager
+            from golfcal2.utils.timezone_utils import TimezoneManager
+            
+            tz_manager = TimezoneManager()
+            weather_manager = WeatherManager(tz_manager.local_tz, tz_manager.utc_tz, config)
+            
+            weather_data = weather_manager.get_weather(
+                lat=club_config['coordinates']['lat'],
+                lon=club_config['coordinates']['lon'],
+                start_time=self.start_time,
+                end_time=self.end_time,
+                club=self.membership.clubAbbreviation
+            )
+            
+            if weather_data:
+                self.debug(f"Got weather data for {self.membership.club}: {len(weather_data)} forecasts")
+                output.append("\nWeather:")
+                output.append(self._format_weather_data(weather_data))
+            else:
+                self.debug(f"No weather data returned for {self.membership.club}")
+        else:
+            self.debug(f"No coordinates found for {self.membership.club}")
+        
+        return "\n".join(output)
 
     def overlaps_with(self, other: "Reservation") -> bool:
         """Check if this reservation overlaps with another."""
@@ -593,4 +634,90 @@ class Reservation(LoggerMixin):
             raw_data=data,
             _tz_manager=tz_manager
         )
+
+    @classmethod
+    def from_external_event(cls, event_data: Dict[str, Any], user: User) -> "Reservation":
+        """Create reservation from external event data."""
+        from golfcal2.models.golf_club import ExternalGolfClub
+        
+        # Create external golf club
+        club = ExternalGolfClub(
+            name=event_data["name"],
+            location=event_data["location"],
+            coordinates=event_data["coordinates"],
+            timezone=event_data["timezone"],
+            address=event_data.get("address")
+        )
+        
+        # Create a pseudo-membership for the external event
+        membership = Membership(
+            club=club.name,
+            clubAbbreviation="EXT",  # External event marker
+            duration={"hours": 0, "minutes": 0}  # Duration will be calculated from event times
+        )
+        
+        # Parse start and end times
+        if 'start_time' in event_data and 'end_time' in event_data:
+            # Handle dynamic dates
+            start = cls._parse_dynamic_time(event_data['start_time'], club.timezone)
+            end = cls._parse_dynamic_time(event_data['end_time'], club.timezone)
+        else:
+            # Handle fixed dates
+            start = datetime.fromisoformat(event_data['start'])
+            end = datetime.fromisoformat(event_data['end'])
+            
+            # Set timezone if not already set
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=ZoneInfo(club.timezone))
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=ZoneInfo(club.timezone))
+        
+        # Create players list from event users
+        players = []
+        if 'users' in event_data:
+            for username in event_data['users']:
+                players.append(Player(
+                    name=username,
+                    club="EXT",  # External event marker
+                    handicap=0.0  # No handicap for external events
+                ))
+        
+        return cls(
+            club=club,
+            user=user,
+            membership=membership,
+            start_time=start,
+            end_time=end,
+            players=players,
+            raw_data=event_data
+        )
+
+    @staticmethod
+    def _parse_dynamic_time(time_str: str, timezone: str) -> datetime:
+        """Parse dynamic time string (e.g., 'tomorrow 10:00')."""
+        parts = time_str.split()
+        if len(parts) != 2:
+            raise ValueError(f"Invalid time format: {time_str}")
+        
+        time_parts = parts[1].split(':')
+        if len(time_parts) != 2:
+            raise ValueError(f"Invalid time format: {parts[1]}")
+        
+        hour = int(time_parts[0])
+        minute = int(time_parts[1])
+        
+        now = datetime.now(ZoneInfo(timezone))
+        if parts[0] == 'tomorrow':
+            target_date = now.date() + timedelta(days=1)
+        elif parts[0] == 'today':
+            target_date = now.date()
+        else:
+            # Format: "N days"
+            try:
+                days = int(parts[0].split()[0])
+                target_date = now.date() + timedelta(days=days)
+            except (ValueError, IndexError):
+                raise ValueError(f"Invalid date format: {parts[0]}")
+        
+        return datetime.combine(target_date, datetime.min.time().replace(hour=hour, minute=minute), tzinfo=ZoneInfo(timezone))
 
