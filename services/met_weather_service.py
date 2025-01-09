@@ -93,28 +93,20 @@ class MetWeatherService(WeatherService):
             
             # Calculate the base time for fetching weather data
             if interval == 6:
-                # For 6h blocks, align to the block that contains start time
-                base_hour = ((start_time_utc.hour) // 6) * 6
-                base_time = start_time_utc.replace(hour=base_hour, minute=0, second=0, microsecond=0)
+                # Round down start time to nearest 6-hour block
+                block_start = ((start_time_utc.hour) // 6) * 6
+                base_time = start_time_utc.replace(hour=block_start, minute=0, second=0, microsecond=0)
+                
+                # Round up end time to next 6-hour block
+                block_end = ((end_time_utc.hour + 5) // 6) * 6
+                if block_end == 24:  # Handle case where we need the next day
+                    fetch_end_time = (end_time_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                else:
+                    fetch_end_time = end_time_utc.replace(hour=block_end, minute=0, second=0, microsecond=0)
             else:
                 # For 1h blocks, just use the exact hour
                 base_time = start_time_utc.replace(minute=0, second=0, microsecond=0)
-            
-            # Calculate end time to ensure we cover the event end
-            if interval == 6:
-                # For 6h blocks, align to the block that contains end time
-                # If end hour would be 24, use 18 (last block of the day)
-                end_block = (end_time_utc.hour // 6) + (1 if end_time_utc.hour % 6 > 0 else 0)
-                if end_block == 4:  # Would result in hour 24
-                    end_hour = 18
-                else:
-                    end_hour = end_block * 6
-                fetch_end_time = end_time_utc.replace(hour=end_hour, minute=0, second=0, microsecond=0)
-                # If we need the next day's block
-                if end_hour == 18 and end_time_utc.hour >= 18:
-                    fetch_end_time += timedelta(days=1)
-            else:
-                # For 1h blocks, round up to next hour
+                # Round up to next hour if needed
                 fetch_end_time = end_time_utc.replace(minute=0, second=0, microsecond=0)
                 if fetch_end_time < end_time_utc:
                     fetch_end_time += timedelta(hours=1)
@@ -164,30 +156,23 @@ class MetWeatherService(WeatherService):
                         else:
                             # Convert cached data to WeatherData objects
                             forecasts = []
-                            for time_str, data in cached_data.items():
+                            for time_str, data in sorted(cached_data.items()):
                                 time = datetime.fromisoformat(time_str)
-                                forecast = WeatherData(
-                                    temperature=data['air_temperature'],
-                                    precipitation=data['precipitation_amount'],
-                                    precipitation_probability=data['probability_of_precipitation'],
-                                    wind_speed=data['wind_speed'],
-                                    wind_direction=data['wind_from_direction'],
-                                    symbol=data['summary_code'],
-                                    elaboration_time=time,
-                                    thunder_probability=data['probability_of_thunder'],
-                                    block_duration=timedelta(hours=interval)
-                                )
+                                block_end = time + timedelta(hours=interval)
                                 
-                                # For 6h blocks, check if block overlaps with event time
-                                if interval == 6:
-                                    block_end = time + timedelta(hours=6)
-                                    if not (block_end <= start_time_utc or time >= end_time_utc):
-                                        block_start = time.astimezone(self.local_tz)
-                                        block_end = (time + timedelta(hours=6)).astimezone(self.local_tz)
-                                        forecast.symbol_time_range = f"{block_start.strftime('%H:%M')} to {block_end.strftime('%H:%M')}"
-                                        forecasts.append(forecast)
-                                # For 1h blocks, use exact time comparison
-                                elif start_time_utc <= time <= end_time_utc:
+                                # Only include blocks that overlap with the event time range
+                                if not (block_end <= start_time_utc or time >= end_time_utc):
+                                    forecast = WeatherData(
+                                        temperature=data['air_temperature'],
+                                        precipitation=data['precipitation_amount'],
+                                        precipitation_probability=data['probability_of_precipitation'],
+                                        wind_speed=data['wind_speed'],
+                                        wind_direction=data['wind_from_direction'],
+                                        symbol=data['summary_code'],
+                                        elaboration_time=time,
+                                        thunder_probability=data['probability_of_thunder'],
+                                        block_duration=timedelta(hours=interval)
+                                    )
                                     forecasts.append(forecast)
                             
                             self.debug(
@@ -998,14 +983,9 @@ class MetWeatherService(WeatherService):
                         # Store all forecasts for caching
                         all_forecasts.append(forecast)
                         
-                        # Only return forecasts within the requested time range (comparing in UTC)
-                        if start_time <= forecast_time <= end_time:
-                            # For 6h blocks, set the block time range in the symbol
-                            if block_duration == timedelta(hours=6):
-                                block_start = forecast_time.astimezone(self.local_tz)
-                                block_end = (forecast_time + timedelta(hours=6)).astimezone(self.local_tz)
-                                forecast.symbol_time_range = f"{block_start.strftime('%H:%M')} to {block_end.strftime('%H:%M')}"
-                            
+                        # Include forecasts that overlap with the requested time range
+                        forecast_end = forecast_time + block_duration
+                        if not (forecast_end <= start_time or forecast_time >= end_time):
                             self.debug(
                                 "Added forecast within time range",
                                 time=forecast_time.isoformat(),
@@ -1108,9 +1088,9 @@ class MetWeatherService(WeatherService):
         """Get block size for MET.no forecasts.
         
         First 48 hours: 1-hour blocks
-        Beyond 48 hours: 6-hour blocks
+        Beyond 48 hours: 12-hour blocks
         """
-        return 6 if hours_ahead > 48 else 1 
+        return 12 if hours_ahead > 48 else 1 
 
     def get_expiry_time(self, forecast_time: Optional[datetime] = None) -> datetime:
         """Get expiry time for cached weather data.

@@ -112,24 +112,42 @@ class IberianWeatherService(WeatherService):
                 return None
             
             # Determine forecast interval based on how far ahead we're looking
-            interval_hours = 1 if hours_ahead <= 48 else 6
+            interval = 1 if hours_ahead <= 48 else 12
             
-            # For 6-hour blocks, align start and end times to block boundaries
-            if interval_hours == 6:
-                # Round down start time to nearest 6-hour block
-                block_start = (start_time.hour // 6) * 6
-                start_time = start_time.replace(hour=block_start, minute=0, second=0, microsecond=0)
+            # Convert event times to UTC for API
+            start_time_utc = start_time.astimezone(self.utc_tz)
+            end_time_utc = end_time.astimezone(self.utc_tz)
+            
+            # For 12-hour blocks, align start and end times to block boundaries
+            if interval == 12:
+                # Round down start time to nearest 12-hour block in local time
+                local_start = start_time
+                block_start = ((local_start.hour) // 12) * 12
+                base_time = local_start.replace(hour=block_start, minute=0, second=0, microsecond=0)
+                base_time = base_time.astimezone(timezone.utc)  # Convert to UTC after aligning
                 
-                # Round up end time to next 6-hour block
-                block_end = ((end_time.hour + 5) // 6) * 6
-                end_time = end_time.replace(hour=block_end, minute=0, second=0, microsecond=0)
+                # Round up end time to next 12-hour block in local time
+                local_end = end_time
+                block_end = ((local_end.hour + 11) // 12) * 12
+                if block_end == 24:  # Handle case where we need the next day
+                    fetch_end_time = (local_end + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                else:
+                    fetch_end_time = local_end.replace(hour=block_end, minute=0, second=0, microsecond=0)
+                fetch_end_time = fetch_end_time.astimezone(timezone.utc)  # Convert to UTC after aligning
+            else:
+                # For 1h blocks, just use the exact hour
+                base_time = start_time_utc.replace(minute=0, second=0, microsecond=0)
+                # Round up to next hour if needed
+                fetch_end_time = end_time_utc.replace(minute=0, second=0, microsecond=0)
+                if fetch_end_time < end_time_utc:
+                    fetch_end_time += timedelta(hours=1)
             
             self.debug(
                 "Using forecast interval",
                 hours_ahead=hours_ahead,
-                interval_hours=interval_hours,
-                aligned_start=start_time.isoformat(),
-                aligned_end=end_time.isoformat()
+                interval=interval,
+                aligned_start=base_time.isoformat(),
+                aligned_end=fetch_end_time.isoformat()
             )
             
             # Check cache first
@@ -137,20 +155,17 @@ class IberianWeatherService(WeatherService):
             # Generate a list of times to check in cache
             cache_times = []
             # Round down to nearest hour for cache checking
-            current_time = start_time.replace(minute=0, second=0, microsecond=0)
-            while current_time <= end_time:
-                # Convert to UTC for cache lookup since we store everything in UTC
-                if current_time.tzinfo != timezone.utc:
-                    current_time = current_time.astimezone(timezone.utc)
+            current_time = base_time.astimezone(timezone.utc)  # Convert to UTC for cache lookup
+            while current_time <= fetch_end_time:
                 cache_times.append(current_time.isoformat())
-                current_time += timedelta(hours=interval_hours)
+                current_time += timedelta(hours=interval)  # Use interval for cache lookup
                 
             fields = ['air_temperature', 'precipitation_amount', 'probability_of_precipitation', 
                      'wind_speed', 'wind_from_direction', 'summary_code', 'probability_of_thunder',
                      'block_duration_hours']
             
-            # Try both hourly and daily data types
-            data_type = 'daily' if hours_ahead > 54 else 'hourly'
+            # Use data type based on interval
+            data_type = 'hourly' if interval == 1 else 'daily'
             cached_data = self.db.get_weather_data(location, cache_times, data_type, fields)
             if cached_data:
                 self.debug(
@@ -178,22 +193,22 @@ class IberianWeatherService(WeatherService):
                         "Cache hit - using cached forecasts",
                         location=location,
                         count=len(forecasts),
-                        time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
+                        time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}"
                     )
                     return sorted(forecasts, key=lambda x: x.elaboration_time)
             
             self.info(
                 "Cache miss - fetching from AEMET API",
                 location=location,
-                time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
+                time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}"
             )
             
             # Convert start and end times to local timezone for AEMET
-            start_time_local = start_time
-            end_time_local = end_time
+            start_time_local = base_time
+            end_time_local = fetch_end_time
             
             # Get the forecasts using local time
-            forecasts = self._fetch_forecasts(lat, lon, start_time_local, end_time_local, local_tz, now_utc, interval_hours)
+            forecasts = self._fetch_forecasts(lat, lon, start_time_local, end_time_local, local_tz, now_utc, interval)
             if not forecasts:
                 return None
                 
@@ -210,7 +225,7 @@ class IberianWeatherService(WeatherService):
                     cache_entry = {
                         'location': location,  # Use the same truncated location key
                         'time': forecast.elaboration_time.isoformat(),
-                        'data_type': 'daily' if hours_ahead > 54 else 'hourly',  # Use correct data type
+                        'data_type': 'hourly' if interval == 1 else 'daily',  # Use data type based on interval
                         'air_temperature': forecast.temperature,
                         'precipitation_amount': forecast.precipitation,
                         'probability_of_precipitation': forecast.precipitation_probability,
@@ -259,14 +274,14 @@ class IberianWeatherService(WeatherService):
             self.debug(
                 "Completed forecast processing",
                 total_forecasts=len(forecasts),
-                time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
+                time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}"
             )
             
             if not forecasts:
                 self.warning(
                     "No forecasts available for requested time range",
-                    start_time=start_time.isoformat(),
-                    end_time=end_time.isoformat(),
+                    start_time=base_time.isoformat(),
+                    end_time=fetch_end_time.isoformat(),
                     available_dates=[dia.get('fecha') for dia in forecast_data[0].get('prediccion', {}).get('dia', [])]
                 )
                 
@@ -276,7 +291,7 @@ class IberianWeatherService(WeatherService):
             return None
 
     @log_execution(level='DEBUG', include_args=True)
-    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime, local_tz: ZoneInfo, now_utc: datetime, interval_hours: int) -> List[WeatherData]:
+    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime, local_tz: ZoneInfo, now_utc: datetime, interval: int) -> List[WeatherData]:
         """Fetch forecasts from AEMET API."""
         with handle_errors(
             WeatherError,
@@ -605,6 +620,10 @@ class IberianWeatherService(WeatherService):
         if direction is None:
             return None
             
+        # Handle calm conditions
+        if direction == 'C':
+            return 'CALM'
+            
         # Map of Spanish abbreviations to standard cardinal directions
         direction_map = {
             'N': 'N',
@@ -896,6 +915,10 @@ class IberianWeatherService(WeatherService):
             return []
 
         try:
+            # Convert start and end times to UTC for comparison
+            start_time_utc = start_time.astimezone(timezone.utc)
+            end_time_utc = end_time.astimezone(timezone.utc)
+            
             prediccion = forecast_data[0].get('prediccion', {})
             if not prediccion or not isinstance(prediccion, dict):
                 self.warning(
@@ -1034,8 +1057,8 @@ class IberianWeatherService(WeatherService):
                             # For hourly data, use 1-hour blocks
                             periods = [f"{h:02d}-{(h+1):02d}" for h in range(24)]
                         else:
-                            # For 6h blocks, use standard blocks
-                            periods = ['00-06', '06-12', '12-18', '18-24']
+                            # For 12h blocks, use standard blocks
+                            periods = ['00-12', '12-24']
                     
                     # Sort periods for consistent processing
                     periods = sorted(list(periods))
@@ -1061,104 +1084,95 @@ class IberianWeatherService(WeatherService):
                                     period=period
                                 )
                                 continue
-
-                            forecast_time = base_date.replace(hour=period_start)
-                            
-                            # Skip if outside requested range
-                            if forecast_time < start_time or forecast_time > end_time:
-                                continue
-                            
-                            # Get temperature based on data format
-                            if isinstance(temp_data, list):
-                                # For hourly data, use exact hour
-                                temp = temp_hours.get(period_start)
                             else:
-                                # For 6h blocks, interpolate if needed
-                                temp = temp_hours.get(period_start)
-                                if temp is None:
-                                    # Simple interpolation based on time of day
-                                    if period_start < 6:
-                                        temp = min_temp
-                                    elif period_start < 14:
-                                        temp = max_temp
-                                    else:
-                                        temp = min_temp + (max_temp - min_temp) * 0.5
-                            
-                            # Get precipitation probability
-                            prob_precip = 0
-                            prob_precipitacion = day.get('probPrecipitacion', [])
-                            if isinstance(prob_precipitacion, list):
-                                for prob in prob_precipitacion:
-                                    if isinstance(prob, dict) and prob.get('periodo') == period:
-                                        try:
-                                            prob_precip = float(prob.get('value', 0))
-                                        except (ValueError, TypeError):
-                                            pass
-                                        break
-                            
-                            # Get wind data
-                            wind_speed = 0
-                            wind_dir = 'C'
-                            viento = day.get('viento', [])
-                            if isinstance(viento, list):
-                                for wind in viento:
-                                    if isinstance(wind, dict) and wind.get('periodo') == period:
-                                        try:
-                                            wind_speed = float(wind.get('velocidad', 0))
-                                            wind_dir = wind.get('direccion', 'C')
-                                        except (ValueError, TypeError):
-                                            pass
-                                        break
-                            
-                            # Get sky condition
-                            sky_value = ''
-                            if isinstance(estado_cielo, list):
-                                for sky in estado_cielo:
-                                    if isinstance(sky, dict) and sky.get('periodo') == period:
-                                        sky_value = sky.get('value', '')
-                                        break
-                            
-                            block_duration = timedelta(hours=period_end - period_start)
-                            
-                            forecast = WeatherData(
-                                temperature=float(temp),
-                                precipitation=0.0,  # Daily forecast doesn't provide precipitation amount
-                                precipitation_probability=prob_precip,
-                                wind_speed=wind_speed / 3.6,  # Convert km/h to m/s
-                                wind_direction=self._get_wind_direction(wind_dir),
-                                symbol=self._map_aemet_code(sky_value, period_start) if sky_value else 'cloudy',
-                                elaboration_time=forecast_time,
-                                thunder_probability=0.0,
-                                block_duration=block_duration
-                            )
-                            
-                            forecasts.append(forecast)
-                            
-                        except (ValueError, TypeError, KeyError) as e:
-                            self.warning(
-                                "Failed to process period",
-                                error=str(e),
-                                period=period,
-                                date=date_str,
-                                exc_info=True
-                            )
+                                forecast_time = base_date.replace(hour=period_start)
+                                # Ensure forecast_time is in Europe/Madrid timezone
+                                if forecast_time.tzinfo != local_tz:
+                                    forecast_time = forecast_time.replace(tzinfo=local_tz)
+                                # Convert to UTC for storage and align to 12-hour blocks
+                                forecast_time = forecast_time.astimezone(timezone.utc)
+                                # Align to 12-hour blocks in UTC
+                                block_start = ((forecast_time.hour) // 12) * 12
+                                forecast_time = forecast_time.replace(hour=block_start, minute=0, second=0, microsecond=0)
+                                forecast_end = forecast_time + timedelta(hours=12)  # Always use 12-hour blocks
+                                
+                                # Skip if outside requested range (using UTC times)
+                                if forecast_end <= start_time_utc or forecast_time >= end_time_utc:
+                                    continue
+                                
+                                # Get temperature based on data format
+                                if isinstance(temp_data, list):
+                                    # For hourly data, use exact hour
+                                    temp = temp_hours.get(period_start)
+                                else:
+                                    # For 6h blocks, interpolate if needed
+                                    temp = temp_hours.get(period_start)
+                                    if temp is None:
+                                        # Simple interpolation based on time of day
+                                        if period_start < 6:
+                                            temp = min_temp
+                                        elif period_start < 14:
+                                            temp = max_temp
+                                        else:
+                                            temp = min_temp + (max_temp - min_temp) * 0.5
+                                
+                                # Get precipitation probability
+                                prob_precip = 0
+                                prob_precipitacion = day.get('probPrecipitacion', [])
+                                if isinstance(prob_precipitacion, list):
+                                    for prob in prob_precipitacion:
+                                        if isinstance(prob, dict) and prob.get('periodo') == period:
+                                            try:
+                                                prob_precip = float(prob.get('value', 0))
+                                            except (ValueError, TypeError):
+                                                pass
+                                            break
+                                
+                                # Get wind data
+                                wind_speed = 0
+                                wind_dir = 'C'
+                                viento = day.get('viento', [])
+                                if isinstance(viento, list):
+                                    for wind in viento:
+                                        if isinstance(wind, dict) and wind.get('periodo') == period:
+                                            try:
+                                                wind_speed = float(wind.get('velocidad', 0))
+                                                wind_dir = wind.get('direccion', 'C')
+                                            except (ValueError, TypeError):
+                                                pass
+                                            break
+                                
+                                # Get sky condition
+                                sky_value = ''
+                                if isinstance(estado_cielo, list):
+                                    for sky in estado_cielo:
+                                        if isinstance(sky, dict) and sky.get('periodo') == period:
+                                            sky_value = sky.get('value', '')
+                                            break
+                                
+                                block_duration = timedelta(hours=period_end - period_start)
+                                
+                                forecast = WeatherData(
+                                    temperature=float(temp),
+                                    precipitation=0.0,  # Daily forecast doesn't provide precipitation amount
+                                    precipitation_probability=prob_precip,
+                                    wind_speed=wind_speed / 3.6,  # Convert km/h to m/s
+                                    wind_direction=self._get_wind_direction(wind_dir),
+                                    symbol=self._map_aemet_code(sky_value, period_start) if sky_value else 'cloudy',
+                                    elaboration_time=forecast_time,
+                                    thunder_probability=0.0,
+                                    block_duration=block_duration
+                                )
+                                
+                                forecasts.append(forecast)
+                        except Exception as e:
+                            self.warning(f"Failed to process period {period}: {e}")
                             continue
-                        
                 except Exception as e:
-                    self.warning(
-                        "Failed to process day",
-                        error=str(e),
-                        data=day,
-                        exc_info=True
-                    )
+                    self.warning(f"Failed to process day {day.get('fecha')}: {e}")
                     continue
-            
-            return sorted(forecasts, key=lambda x: x.elaboration_time)
         except Exception as e:
-            self.warning(
-                "Failed to parse forecast data",
-                error=str(e),
-                data=forecast_data,
-                exc_info=True
-            )
+            self.error(f"Failed to parse daily forecast: {e}")
             return []
+        else:
+            return forecasts

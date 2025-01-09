@@ -7,7 +7,7 @@ import os
 import json
 import time
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -154,74 +154,78 @@ class MediterraneanWeatherService(WeatherService):
                         "process forecast entry",
                         lambda: None
                     ):
-                        # Convert timestamp to datetime
+                        # Convert timestamp to datetime (OpenWeather returns UTC times)
                         time_str = forecast['dt_txt']
                         forecast_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
                         forecast_time = forecast_time.replace(tzinfo=self.utc_tz)
                         
-                        # Skip if outside our time range
-                        if forecast_time < start_time or forecast_time > end_time:
-                            continue
+                        # Calculate block end time (in UTC)
+                        block_end_time = forecast_time + timedelta(hours=3)
                         
-                        # Extract weather data
-                        main = forecast.get('main', {})
-                        wind = forecast.get('wind', {})
-                        weather = forecast.get('weather', [{}])[0]
-                        rain = forecast.get('rain', {})
-                        
-                        # Map OpenWeather codes to our codes
-                        weather_id = str(weather.get('id', '800'))  # Default to clear sky
-                        hour = forecast_time.hour
-                        try:
-                            symbol_code = self._map_openweather_code(weather_id, hour)
-                        except Exception as e:
-                            error = WeatherError(
-                                f"Failed to map weather code: {str(e)}",
-                                ErrorCode.VALIDATION_FAILED,
-                                {
-                                    "code": weather_id,
-                                    "hour": hour,
-                                    "forecast_time": forecast_time.isoformat()
+                        # Include block if it overlaps with our time range
+                        # (block starts before range ends AND block ends after range starts)
+                        # Note: start_time and end_time are already in UTC
+                        if forecast_time <= end_time and block_end_time >= start_time:
+                            # Extract weather data
+                            main = forecast.get('main', {})
+                            wind = forecast.get('wind', {})
+                            weather = forecast.get('weather', [{}])[0]
+                            rain = forecast.get('rain', {})
+                            
+                            # Map OpenWeather codes to our codes
+                            weather_id = str(weather.get('id', '800'))  # Default to clear sky
+                            hour = forecast_time.hour
+                            try:
+                                symbol_code = self._map_openweather_code(weather_id, hour)
+                            except Exception as e:
+                                error = WeatherError(
+                                    f"Failed to map weather code: {str(e)}",
+                                    ErrorCode.VALIDATION_FAILED,
+                                    {
+                                        "code": weather_id,
+                                        "hour": hour,
+                                        "forecast_time": forecast_time.isoformat()
+                                    }
+                                )
+                                aggregate_error(str(error), "mediterranean_weather", e.__traceback__)
+                                continue
+
+                            # Calculate thunder probability based on weather code
+                            thunder_prob = 0.0
+                            if weather_id.startswith('2'):  # 2xx codes are thunderstorm conditions
+                                # Convert weather code to probability:
+                                # 200-202: Light to heavy thunderstorm with rain
+                                # 210-212: Light to heavy thunderstorm
+                                # 221: Ragged thunderstorm
+                                # 230-232: Thunderstorm with drizzle
+                                intensity_map = {
+                                    '200': 30.0,  # Light thunderstorm
+                                    '201': 60.0,  # Thunderstorm
+                                    '202': 90.0,  # Heavy thunderstorm
+                                    '210': 20.0,  # Light thunderstorm
+                                    '211': 50.0,  # Thunderstorm
+                                    '212': 80.0,  # Heavy thunderstorm
+                                    '221': 40.0,  # Ragged thunderstorm
+                                    '230': 25.0,  # Light thunderstorm with drizzle
+                                    '231': 45.0,  # Thunderstorm with drizzle
+                                    '232': 65.0   # Heavy thunderstorm with drizzle
                                 }
+                                thunder_prob = intensity_map.get(weather_id, 50.0)
+
+                            forecast_data = WeatherData(
+                                temperature=main.get('temp'),
+                                precipitation=rain.get('3h', 0.0) / 3.0,  # Convert 3h to 1h
+                                precipitation_probability=forecast.get('pop', 0.0) * 100,  # Convert to percentage
+                                wind_speed=wind.get('speed'),
+                                wind_direction=self._get_wind_direction(wind.get('deg')),
+                                symbol=symbol_code,
+                                elaboration_time=forecast_time,
+                                thunder_probability=thunder_prob,
+                                block_duration=timedelta(hours=3)  # OpenWeather uses 3-hour blocks
                             )
-                            aggregate_error(str(error), "mediterranean_weather", e.__traceback__)
-                            continue
+                            forecasts.append(forecast_data)
 
-                        # Calculate thunder probability based on weather code
-                        thunder_prob = 0.0
-                        if weather_id.startswith('2'):  # 2xx codes are thunderstorm conditions
-                            # Convert weather code to probability:
-                            # 200-202: Light to heavy thunderstorm with rain
-                            # 210-212: Light to heavy thunderstorm
-                            # 221: Ragged thunderstorm
-                            # 230-232: Thunderstorm with drizzle
-                            intensity_map = {
-                                '200': 30.0,  # Light thunderstorm
-                                '201': 60.0,  # Thunderstorm
-                                '202': 90.0,  # Heavy thunderstorm
-                                '210': 20.0,  # Light thunderstorm
-                                '211': 50.0,  # Thunderstorm
-                                '212': 80.0,  # Heavy thunderstorm
-                                '221': 40.0,  # Ragged thunderstorm
-                                '230': 25.0,  # Light thunderstorm with drizzle
-                                '231': 45.0,  # Thunderstorm with drizzle
-                                '232': 65.0   # Heavy thunderstorm with drizzle
-                            }
-                            thunder_prob = intensity_map.get(weather_id, 50.0)
-
-                        forecast_data = WeatherData(
-                            temperature=main.get('temp'),
-                            precipitation=rain.get('3h', 0.0) / 3.0,  # Convert 3h to 1h
-                            precipitation_probability=forecast.get('pop', 0.0) * 100,  # Convert to percentage
-                            wind_speed=wind.get('speed'),
-                            wind_direction=self._get_wind_direction(wind.get('deg')),
-                            symbol=symbol_code,
-                            elaboration_time=forecast_time,
-                            thunder_probability=thunder_prob
-                        )
-                        forecasts.append(forecast_data)
-
-                return forecasts
+                return sorted(forecasts, key=lambda x: x.elaboration_time)
                 
             except requests.exceptions.Timeout:
                 error = APITimeoutError(
@@ -343,152 +347,193 @@ class MediterraneanWeatherService(WeatherService):
     def get_expiry_time(self) -> datetime:
         """Get expiry time for Mediterranean weather data.
         
-        Mediterranean weather service updates their forecasts every 6 hours at:
-        - 00:00 UTC
-        - 06:00 UTC
-        - 12:00 UTC
-        - 18:00 UTC
+        OpenWeather updates their 5-day/3-hour forecast data every hour.
+        We'll set expiry to the next hour to ensure fresh data.
         """
         now = datetime.now(self.utc_tz)
         
-        # Calculate next update time
-        current_hour = now.hour
-        update_hours = [0, 6, 12, 18]
+        # Set expiry to the next hour
+        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         
-        # Find the next update hour
-        next_update_hour = next((hour for hour in update_hours if hour > current_hour), update_hours[0])
-        
-        # If we're past all update hours today, the next update is tomorrow at 00:00
-        if next_update_hour <= current_hour:
-            next_update = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        else:
-            next_update = now.replace(hour=next_update_hour, minute=0, second=0, microsecond=0)
-        
-        return next_update
+        return next_hour
     
     @log_execution(level='DEBUG', include_args=True)
     def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime, club: str = None) -> Optional[List[WeatherData]]:
-        """Get weather data from Mediterranean weather service."""
+        """Get weather data from OpenWeather API."""
         try:
-            now_utc = datetime.now(ZoneInfo("UTC"))
+            # Ensure we have timezone-aware datetimes
+            if start_time.tzinfo is None or end_time.tzinfo is None:
+                raise ValueError("start_time and end_time must be timezone-aware")
             
-            # Determine if the start time is more than 48 hours in the future
-            is_far_future = (start_time - now_utc).total_seconds() > 48 * 3600
-            interval = 6 if is_far_future else 1
+            now_utc = datetime.now(self.utc_tz)
             
-            # Calculate the base time for fetching weather data
-            base_hour = (start_time.hour // interval) * interval
-            base_time = start_time.replace(hour=base_hour, minute=0, second=0, microsecond=0)
+            # Use the timezone from the start_time parameter for all local time operations
+            local_tz = start_time.tzinfo
+            self.debug(
+                "Using timezone for weather data",
+                timezone=str(local_tz),
+                coordinates=f"({lat}, {lon})"
+            )
             
-            # Adjust base_time if necessary to ensure we cover the event start
-            if base_time > start_time:
-                base_time -= timedelta(hours=interval)
+            # Check forecast range - OpenWeather provides:
+            # - 3-hour blocks for 5 days
+            hours_ahead = (start_time - now_utc).total_seconds() / 3600
+            if hours_ahead > 120:  # 5 days
+                self.info(
+                    "Requested time beyond OpenWeather forecast range",
+                    requested_time=start_time.isoformat(),
+                    hours_ahead=hours_ahead,
+                    max_hours=120
+                )
+                return None
             
-            # Calculate end time to ensure we cover the event end
-            end_hour = min(23, ((end_time.hour + interval - 1) // interval) * interval)  # Ensure hour doesn't exceed 23
-            fetch_end_time = end_time.replace(hour=end_hour, minute=0, second=0, microsecond=0)
-            if fetch_end_time < end_time:
-                # If we need to go to the next day, add a day and set hour to 0
-                fetch_end_time = (fetch_end_time + timedelta(days=1)).replace(hour=0)
+            # Always use 3-hour blocks for OpenWeather
+            interval = 3
             
-            # Check if we have cached data
-            if club and self.cache:
-                location = f"{lat:.4f},{lon:.4f}"
-                times = [base_time.strftime('%Y-%m-%dT%H:%M:%S+00:00')]
-                fields = ['air_temperature', 'precipitation_amount', 'probability_of_precipitation', 'wind_speed', 'wind_from_direction', 'summary_code', 'probability_of_thunder']
-                cached_data = self.cache.get_weather_data(location, times, 'hourly', fields)
-                if cached_data:
-                    # Convert cached data to WeatherData objects
-                    forecasts = []
-                    for time_str, data in cached_data.items():
-                        time = datetime.fromisoformat(time_str)
-                        forecast = WeatherData(
-                            temperature=data['air_temperature'],
-                            precipitation=data['precipitation_amount'],
-                            precipitation_probability=data['probability_of_precipitation'],
-                            wind_speed=data['wind_speed'],
-                            wind_direction=data['wind_from_direction'],
-                            symbol=data['summary_code'],
-                            elaboration_time=time,
-                            thunder_probability=data['probability_of_thunder'],
-                            block_duration=timedelta(hours=interval)
-                        )
-                        forecasts.append(forecast)
-                    return forecasts
+            # Use data type based on interval
+            data_type = 'hourly'  # OpenWeather always provides hourly data
             
-            # Fetch data from API
+            # For 3-hour blocks, align start and end times to block boundaries in local time
+            local_start = start_time.astimezone(local_tz)
+            block_start = ((local_start.hour) // 3) * 3
+            base_time = local_start.replace(hour=block_start, minute=0, second=0, microsecond=0)
+            base_time = base_time.astimezone(self.utc_tz)  # Convert to UTC after aligning
+            
+            # Round up end time to next 3-hour block in local time
+            local_end = end_time.astimezone(local_tz)
+            block_end = ((local_end.hour + 2) // 3) * 3
+            if block_end == 24:  # Handle case where we need the next day
+                fetch_end_time = (local_end + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            else:
+                fetch_end_time = local_end.replace(hour=block_end, minute=0, second=0, microsecond=0)
+            fetch_end_time = fetch_end_time.astimezone(self.utc_tz)  # Convert to UTC after aligning
+            
+            self.debug(
+                "Using forecast interval",
+                hours_ahead=hours_ahead,
+                interval=interval,
+                aligned_start=base_time.isoformat(),
+                aligned_end=fetch_end_time.isoformat()
+            )
+            
+            # Check cache first
+            location = f"{lat:.4f},{lon:.4f}"
+            # Generate a list of times to check in cache
+            cache_times = []
+            current_time = base_time
+            while current_time <= fetch_end_time:
+                cache_times.append(current_time.isoformat())
+                current_time += timedelta(hours=interval)
+                
+            fields = ['air_temperature', 'precipitation_amount', 'probability_of_precipitation', 
+                     'wind_speed', 'wind_from_direction', 'summary_code', 'probability_of_thunder',
+                     'block_duration_hours']
+            
+            self.debug(
+                "Checking cache",
+                location=location,
+                times=cache_times
+            )
+
+            cached_data = self.db.get_weather_data(location, cache_times, data_type, fields)
+            if cached_data and len(cached_data) == len(cache_times):
+                self.info(
+                    "Cache hit",
+                    location=location,
+                    start_time=base_time.isoformat(),
+                    end_time=fetch_end_time.isoformat(),
+                    block_count=len(cached_data)
+                )
+                return self._process_cached_data(cached_data)
+
+            self.info(
+                "Cache miss",
+                location=location,
+                start_time=base_time.isoformat(),
+                end_time=fetch_end_time.isoformat(),
+                cached_count=len(cached_data) if cached_data else 0,
+                expected_count=len(cache_times)
+            )
+            
+            # Get the forecasts
             forecasts = self._fetch_forecasts(lat, lon, base_time, fetch_end_time)
             if not forecasts:
                 return None
+                
+            # Sort forecasts by time
+            forecasts.sort(key=lambda x: x.elaboration_time)
             
-            # Set block duration for each forecast
-            for forecast in forecasts:
-                forecast.block_duration = timedelta(hours=interval)
-            
-            # Cache the results
-            if club and self.cache:
-                # Convert forecasts to database format
+            # Update cache with new forecasts
+            try:
                 cache_data = []
-                location = f"{lat:.4f},{lon:.4f}"
                 for forecast in forecasts:
-                    cache_data.append({
+                    cache_entry = {
                         'location': location,
-                        'time': forecast.elaboration_time.strftime('%Y-%m-%dT%H:%M:%S+00:00'),
-                        'data_type': 'hourly',
+                        'time': forecast.elaboration_time.isoformat(),
+                        'data_type': data_type,
                         'air_temperature': forecast.temperature,
                         'precipitation_amount': forecast.precipitation,
                         'probability_of_precipitation': forecast.precipitation_probability,
                         'wind_speed': forecast.wind_speed,
                         'wind_from_direction': forecast.wind_direction,
                         'summary_code': forecast.symbol,
-                        'probability_of_thunder': forecast.thunder_probability
-                    })
-                self.cache.store_weather_data(
-                    cache_data,
-                    expires=(now_utc + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%S+00:00'),
-                    last_modified=now_utc.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                )
+                        'probability_of_thunder': forecast.thunder_probability,
+                        'block_duration_hours': interval
+                    }
+                    cache_data.append(cache_entry)
+                
+                if cache_data:  # Only store if we have data
+                    self.debug(
+                        "Storing forecasts in cache",
+                        count=len(cache_data),
+                        data_type=data_type,
+                        block_hours=[interval] * len(cache_data)
+                    )
+                    
+                    # Calculate expiry time based on OpenWeather's update schedule
+                    expires = self.get_expiry_time()
+                    
+                    self.debug(
+                        "Setting cache expiry",
+                        expires=expires.isoformat()
+                    )
+                    
+                    self.db.store_weather_data(
+                        cache_data,
+                        expires=expires.isoformat(),
+                        last_modified=now_utc.isoformat()
+                    )
+            except Exception as e:
+                self.warning(f"Failed to update cache: {e}")
             
             return forecasts
         except Exception as e:
             self.error(f"Failed to get weather data: {e}")
             return None
             
-    def _parse_response(self, data: Dict[str, Any], start_time: datetime, end_time: datetime, interval: int) -> List[WeatherData]:
-        """Parse weather data from Mediterranean weather service response."""
-        try:
-            forecasts = []
-            timeseries = data.get('properties', {}).get('timeseries', [])
+    def _process_cached_data(self, cached_data: Dict[str, Dict[str, Any]]) -> List[WeatherData]:
+        """Process cached weather data into WeatherData objects.
+        
+        Args:
+            cached_data: Dictionary mapping time strings to weather data dictionaries
             
-            for entry in timeseries:
-                time_str = entry.get('time')
-                if not time_str:
-                    continue
-                
-                time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                
-                # Only include times within our range
-                if time < start_time or time > end_time:
-                    continue
-                
-                # Skip entries not in the requested interval
-                if time.hour % interval != start_time.hour % interval:
-                    continue
-                
-                forecast = WeatherData(
-                    elaboration_time=time,
-                    temperature=entry.get('temperature'),
-                    precipitation=entry.get('precipitation'),
-                    wind_speed=entry.get('wind_speed'),
-                    wind_direction=entry.get('wind_direction'),
-                    precipitation_probability=entry.get('precipitation_probability'),
-                    thunder_probability=entry.get('thunder_probability'),
-                    symbol=entry.get('symbol', 'clearsky_day'),
-                    block_duration=timedelta(hours=interval)
-                )
-                forecasts.append(forecast)
-            
-            return forecasts
-        except Exception as e:
-            self.error(f"Failed to parse weather data: {e}")
-            return []
+        Returns:
+            List of WeatherData objects sorted by time
+        """
+        forecasts = []
+        for time_str, data in cached_data.items():
+            time = datetime.fromisoformat(time_str)
+            forecast = WeatherData(
+                temperature=data['air_temperature'],
+                precipitation=data['precipitation_amount'],
+                precipitation_probability=data['probability_of_precipitation'],
+                wind_speed=data['wind_speed'],
+                wind_direction=data['wind_from_direction'],
+                symbol=data['summary_code'],
+                elaboration_time=time,
+                thunder_probability=data['probability_of_thunder'],
+                block_duration=timedelta(hours=data.get('block_duration_hours', 3))  # Default to 3 hours
+            )
+            forecasts.append(forecast)
+        
+        return sorted(forecasts, key=lambda x: x.elaboration_time)

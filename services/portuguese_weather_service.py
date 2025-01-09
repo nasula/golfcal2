@@ -713,7 +713,7 @@ class PortugueseWeatherService(WeatherService):
                 # If we need to go to the next day, add a day and set hour to 0
                 fetch_end_time = (fetch_end_time + timedelta(days=1)).replace(hour=0)
             
-            # Check if we have cached data - use the adjusted times after applying limits
+            # Check if we have cached data
             if club and self.cache:
                 location = f"{lat:.4f},{lon:.4f}"
                 # Generate a list of times to check in cache
@@ -725,6 +725,10 @@ class PortugueseWeatherService(WeatherService):
                 
                 fields = ['air_temperature', 'precipitation_amount', 'probability_of_precipitation', 'wind_speed', 'wind_from_direction', 'summary_code', 'probability_of_thunder']
                 cached_data = self.cache.get_weather_data(location, cache_times, 'hourly', fields)
+                
+                # Log cache status
+                self._log_cache_status(location, cached_data, len(cache_times))
+                
                 if cached_data:
                     # Convert cached data to WeatherData objects
                     forecasts = []
@@ -778,6 +782,25 @@ class PortugueseWeatherService(WeatherService):
                 )
             
             return forecasts
+            
         except Exception as e:
             self.error(f"Failed to get weather data: {e}")
             return None
+
+    def _log_cache_status(self, location: str, cached_data: Optional[Dict], expected_count: int) -> None:
+        """Log cache hit/miss status at INFO level.
+        
+        Args:
+            location: Location string (lat,lon)
+            cached_data: The cached data if any
+            expected_count: Number of time blocks we expected
+        """
+        if cached_data and len(cached_data) == expected_count:
+            self.info("Cache hit", location=location, block_count=len(cached_data))
+        else:
+            self.info(
+                "Cache miss",
+                location=location,
+                cached_count=len(cached_data) if cached_data else 0,
+                expected_count=expected_count
+            )

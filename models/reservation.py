@@ -253,11 +253,13 @@ class Reservation(LoggerMixin):
             times=[f.elaboration_time.isoformat() for f in normalized_data]
         )
         
-        # Filter forecasts to only include those within event time range
-        filtered_data = [
-            forecast for forecast in normalized_data
-            if self.start_time <= forecast.elaboration_time <= self.end_time
-        ]
+        # Filter forecasts to only include those that overlap with event time range
+        filtered_data = []
+        for forecast in normalized_data:
+            forecast_end = forecast.elaboration_time + forecast.block_duration
+            if not (forecast_end <= self.start_time or forecast.elaboration_time >= self.end_time):
+                filtered_data.append(forecast)
+        
         self.debug(
             "Filtered forecasts to event time range",
             original_count=len(normalized_data),

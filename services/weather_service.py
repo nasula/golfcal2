@@ -230,9 +230,11 @@ class WeatherManager(EnhancedLoggerMixin):
                 )
                 block_end = block_start + timedelta(hours=block_size)
                 
-                if (block_start, block_end) not in periods:
-                    periods[(block_start, block_end)] = []
-                periods[(block_start, block_end)].append(data)
+                # Only include blocks that overlap with the event time range
+                if not (block_end <= start_time or block_start >= end_time):
+                    if (block_start, block_end) not in periods:
+                        periods[(block_start, block_end)] = []
+                    periods[(block_start, block_end)].append(data)
             
             # For 1-hour blocks, don't merge - use periods as is
             if block_size == 1:
@@ -316,7 +318,11 @@ class WeatherManager(EnhancedLoggerMixin):
                     # Use most common wind direction in the period
                     from collections import Counter
                     wind_dir = Counter(wind_dirs).most_common(1)[0][0]
-                    parts[3] = f"{avg_wind:.1f}m/s {wind_dir}"
+                    # Handle calm conditions
+                    if wind_dir == 'CALM':
+                        parts[3] = f"{avg_wind:.1f}m/s (calm)"
+                    else:
+                        parts[3] = f"{avg_wind:.1f}m/s {wind_dir}"
                 
                 # Add precipitation info if significant
                 if total_precip > 0:
