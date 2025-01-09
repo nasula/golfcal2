@@ -15,6 +15,8 @@ class AuthStrategy:
 
 class TokenAppAuthStrategy(AuthStrategy):
     def create_headers(self, cookie_name: str, auth_details: Dict[str, str]) -> Dict[str, str]:
+        if 'token' not in auth_details:
+            raise ValueError("Missing 'token' in auth_details for token_appauth authentication")
         return {
             'Authorization': auth_details['token'],
             'x-session-type': 'wisegolf',
@@ -22,6 +24,8 @@ class TokenAppAuthStrategy(AuthStrategy):
         }
 
     def build_full_url(self, club_details: Dict[str, Any], membership: Membership) -> str:
+        if 'appauth' not in membership.auth_details:
+            raise ValueError("Missing 'appauth' in auth_details for token_appauth authentication")
         url = club_details['url']
         return f"{url}&appauth={membership.auth_details['appauth']}"
 
