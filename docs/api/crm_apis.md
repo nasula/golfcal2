@@ -63,10 +63,11 @@ WiseGolf has two versions of their API, referred to as `wisegolf` and `wisegolf0
 ```http
 POST /auth/login
 Content-Type: application/json
+Accept: application/json, text/plain, */*
 
 {
-    "username": "user",
-    "password": "pass"
+    "username": "your-username",
+    "password": "your-password"
 }
 ```
 
@@ -78,10 +79,19 @@ Response:
 }
 ```
 
+After authentication, all subsequent requests should include:
+```http
+Authorization: Bearer <token>
+x-session-type: wisegolf
+Accept: application/json, text/plain, */*
+```
+
 #### Reservations
 ```http
 GET /reservations/my
 Authorization: Bearer <token>
+x-session-type: wisegolf
+Accept: application/json, text/plain, */*
 ```
 
 Response:
