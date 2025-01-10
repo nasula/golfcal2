@@ -22,8 +22,9 @@ class EventBuilder(ABC, LoggerMixin):
         self.weather_service = weather_service
         self.config = config
         
-        # Get timezone from config
-        self.local_tz = ZoneInfo(config.global_config.get('timezone', 'UTC'))
+        # Get timezone from config and ensure it's a ZoneInfo object
+        timezone_name = config.global_config.get('timezone', 'UTC')
+        self.local_tz = ZoneInfo(timezone_name)
         self.utc_tz = ZoneInfo('UTC')
         
         # Configure logger

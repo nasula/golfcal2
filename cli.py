@@ -212,7 +212,7 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
         # Initialize weather manager if needed for reservations
         weather_manager = None
         if args.list_type == 'reservations':
-            weather_manager = WeatherManager(config.timezone, ZoneInfo('UTC'), config)
+            weather_manager = WeatherManager(ZoneInfo(config.timezone), ZoneInfo('UTC'), config)
         
         if args.list_type == 'weather-cache':
             logger.info("Listing weather cache contents")
@@ -598,12 +598,15 @@ def main() -> int:
         init_error_aggregator(error_config)
         
         # Initialize services
-        weather_manager = WeatherManager(config.timezone, ZoneInfo('UTC'), config)
+        weather_manager = WeatherManager(ZoneInfo(config.timezone), ZoneInfo('UTC'), config)
         calendar_service = CalendarService(config)
         external_event_service = ExternalEventService(weather_manager, config)
         
         # Execute command
-        if args.command == 'process':
+        if not args.command:
+            parser.print_help()
+            return 1
+        elif args.command == 'process':
             return process_command(args, logger, config, args.dev)
         elif args.command == 'list':
             return list_command(args, logger, config)

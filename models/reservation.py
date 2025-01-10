@@ -364,9 +364,14 @@ class Reservation(LoggerMixin):
             self.debug(f"Found coordinates for {self.membership.club}: {club_config['coordinates']}")
             from golfcal2.services.weather_service import WeatherManager
             from golfcal2.utils.timezone_utils import TimezoneManager
+            from zoneinfo import ZoneInfo
             
             tz_manager = TimezoneManager()
-            weather_manager = WeatherManager(tz_manager.local_tz, tz_manager.utc_tz, config)
+            # Ensure we're using ZoneInfo objects
+            local_tz = ZoneInfo(tz_manager.timezone_name)
+            utc_tz = ZoneInfo('UTC')
+            
+            weather_manager = WeatherManager(local_tz, utc_tz, config)
             
             weather_data = weather_manager.get_weather(
                 lat=club_config['coordinates']['lat'],

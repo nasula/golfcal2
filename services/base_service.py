@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 from typing import List
+from zoneinfo import ZoneInfo
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin, log_execution
 from golfcal2.services.weather_types import WeatherData, WeatherResponse
 
@@ -11,6 +12,11 @@ class WeatherService(EnhancedLoggerMixin):
     def __init__(self, local_tz, utc_tz):
         """Initialize service."""
         super().__init__()
+        # Ensure we have proper ZoneInfo objects
+        if isinstance(local_tz, str):
+            local_tz = ZoneInfo(local_tz)
+        if isinstance(utc_tz, str):
+            utc_tz = ZoneInfo(utc_tz)
         self.local_tz = local_tz
         self.utc_tz = utc_tz
     

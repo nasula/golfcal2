@@ -1,9 +1,8 @@
 """
-Golf calendar application package.
+Golf calendar application.
 """
 
-__package__ = 'golfcal2'
-__version__ = '1.0.0'
+__version__ = '0.6.0'
 
 from golfcal2.exceptions import (
     GolfCalError,

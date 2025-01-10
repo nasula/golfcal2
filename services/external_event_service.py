@@ -31,6 +31,7 @@ class ExternalEventService(EnhancedLoggerMixin):
         self.set_log_context(service="external_events")
         
         self.seen_uids: Set[str] = set()  # Track seen UIDs for deduplication
+        # Ensure we're using ZoneInfo for default timezone
         self.default_timezone = ZoneInfo('Europe/Helsinki')  # Default timezone if not specified
         
         # Get config directory path relative to this file

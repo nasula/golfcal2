@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from zoneinfo import ZoneInfo
 import math
+from datetime import timezone
 
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse
@@ -115,9 +116,23 @@ class PortugueseWeatherService(WeatherService):
             f"fetch forecasts for coordinates ({lat}, {lon})",
             lambda: []  # Fallback to empty list on error
         ):
+            # Ensure we have proper timezone objects
+            if not isinstance(self.local_tz, ZoneInfo):
+                self.warning(
+                    "Invalid local timezone type",
+                    expected="ZoneInfo",
+                    actual=type(self.local_tz).__name__
+                )
+                local_tz = ZoneInfo("Europe/Lisbon")  # Fallback to default timezone
+            else:
+                local_tz = self.local_tz
+
+            # Convert times to UTC for comparison
+            start_time_utc = start_time.astimezone(timezone.utc)
+            end_time_utc = end_time.astimezone(timezone.utc)
+            
             try:
                 # Use the timezone from start_time
-                local_tz = start_time.tzinfo
                 self.debug(f"Using timezone {local_tz} for coordinates ({lat}, {lon})")
                 
                 # First, try to get location from cache

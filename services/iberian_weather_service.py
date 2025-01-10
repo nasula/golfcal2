@@ -949,18 +949,19 @@ class IberianWeatherService(WeatherService):
                             data=day
                         )
                         continue
-
+                    
                     # Get the date
                     date_str = day.get('fecha')
                     if not date_str:
                         self.warning("Missing fecha in day data", data=day)
                         continue
-
+                    
+                    # Parse date and ensure it has the correct timezone
                     base_date = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
                     base_date = base_date.replace(tzinfo=local_tz)
                     
                     # Determine if this is a short-term or medium-term forecast
-                    now_utc = datetime.now(ZoneInfo("UTC"))
+                    now_utc = datetime.now(timezone.utc)
                     hours_ahead = (base_date - now_utc).total_seconds() / 3600
                     is_short_term = hours_ahead <= 48  # Short term = first 48 hours
                     
@@ -968,7 +969,8 @@ class IberianWeatherService(WeatherService):
                         "Processing forecast",
                         date=date_str,
                         hours_ahead=hours_ahead,
-                        is_short_term=is_short_term
+                        is_short_term=is_short_term,
+                        timezone=str(local_tz)
                     )
                     
                     # Get temperature data

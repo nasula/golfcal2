@@ -39,7 +39,7 @@ class MetWeatherService(WeatherService):
     BASE_URL = "https://api.met.no/weatherapi/locationforecast/2.0/complete"
     USER_AGENT = "GolfCal/2.0 github.com/jahonen/golfcal (jarkko.ahonen@iki.fi)"
     
-    def __init__(self, local_tz, utc_tz, config):
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config):
         """Initialize service with API endpoints and credentials.
         
         Args:
@@ -47,6 +47,12 @@ class MetWeatherService(WeatherService):
             utc_tz: UTC timezone
             config: Application configuration
         """
+        # Ensure we have proper ZoneInfo objects
+        if isinstance(local_tz, str):
+            local_tz = ZoneInfo(local_tz)
+        if isinstance(utc_tz, str):
+            utc_tz = ZoneInfo(utc_tz)
+            
         super().__init__(local_tz, utc_tz)
         
         with handle_errors(WeatherError, "met_weather", "initialize service"):
@@ -69,40 +75,42 @@ class MetWeatherService(WeatherService):
     
     @log_execution(level='DEBUG', include_args=True)
     def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime, club: str = None) -> Optional[List[WeatherData]]:
-        """Get weather data from MET.no."""
+        """Get weather data from MET.no API."""
         try:
-            now_utc = datetime.now(ZoneInfo("UTC"))
+            # Ensure we have proper timezone objects
+            now_utc = datetime.now(self.utc_tz)
             
-            # MET.no only provides forecasts up to 10 days ahead
-            max_forecast_time = now_utc + timedelta(days=10)
-            if start_time > max_forecast_time:
-                self.debug(f"Requested time {start_time} is beyond maximum forecast range of 10 days")
-                return None
-                
-            if end_time > max_forecast_time:
-                self.debug(f"Limiting forecast end time to {max_forecast_time} (10 days ahead)")
-                end_time = max_forecast_time
-            
-            # Convert event times to UTC for API
+            # Convert input times to UTC if they aren't already
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=self.local_tz)
             start_time_utc = start_time.astimezone(self.utc_tz)
+            
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=self.local_tz)
             end_time_utc = end_time.astimezone(self.utc_tz)
             
-            # Determine if the start time is more than 48 hours in the future
-            is_far_future = (start_time_utc - now_utc).total_seconds() > 48 * 3600
-            interval = 6 if is_far_future else 1
+            # Calculate hours ahead for block size determination
+            hours_ahead = (start_time_utc - now_utc).total_seconds() / 3600
             
-            # Calculate the base time for fetching weather data
+            # Determine forecast interval based on how far ahead we're looking
+            interval = self.get_block_size(hours_ahead)
+            
+            # For 6h blocks, align start and end times to block boundaries
             if interval == 6:
-                # Round down start time to nearest 6-hour block
-                block_start = ((start_time_utc.hour) // 6) * 6
-                base_time = start_time_utc.replace(hour=block_start, minute=0, second=0, microsecond=0)
+                # Round down start time to nearest 6-hour block in local time
+                local_start = start_time
+                block_start = ((local_start.hour) // 6) * 6
+                base_time = local_start.replace(hour=block_start, minute=0, second=0, microsecond=0)
+                base_time = base_time.astimezone(self.utc_tz)  # Convert to UTC after aligning
                 
-                # Round up end time to next 6-hour block
-                block_end = ((end_time_utc.hour + 5) // 6) * 6
+                # Round up end time to next 6-hour block in local time
+                local_end = end_time
+                block_end = ((local_end.hour + 5) // 6) * 6
                 if block_end == 24:  # Handle case where we need the next day
-                    fetch_end_time = (end_time_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    fetch_end_time = (local_end + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                 else:
-                    fetch_end_time = end_time_utc.replace(hour=block_end, minute=0, second=0, microsecond=0)
+                    fetch_end_time = local_end.replace(hour=block_end, minute=0, second=0, microsecond=0)
+                fetch_end_time = fetch_end_time.astimezone(self.utc_tz)  # Convert to UTC after aligning
             else:
                 # For 1h blocks, just use the exact hour
                 base_time = start_time_utc.replace(minute=0, second=0, microsecond=0)
@@ -122,71 +130,59 @@ class MetWeatherService(WeatherService):
                 interval=interval
             )
             
-            # Check if we have cached data - use the adjusted times after applying limits
+            # Try to get from cache first
             if club and self.cache:
                 location = f"{lat:.4f},{lon:.4f}"
-                # Generate a list of times to check in cache
-                cache_times = []
-                current_time = base_time
-                while current_time <= fetch_end_time:
-                    cache_times.append(current_time.strftime('%Y-%m-%dT%H:%M:%S+00:00'))
-                    current_time += timedelta(hours=interval)
                 
-                fields = ['air_temperature', 'precipitation_amount', 'probability_of_precipitation', 'wind_speed', 'wind_from_direction', 'summary_code', 'probability_of_thunder']
-                cached_data = self.cache.get_weather_data(location, cache_times, 'hourly', fields)
+                # Generate list of times to check in cache
+                cache_times = []
+                current = base_time
+                while current <= fetch_end_time:
+                    cache_times.append(current.strftime('%Y-%m-%dT%H:%M:%S+00:00'))
+                    current += timedelta(hours=interval)
+                
+                # Required fields for weather data
+                fields = [
+                    'air_temperature',
+                    'precipitation_amount',
+                    'probability_of_precipitation',
+                    'wind_speed',
+                    'wind_from_direction',
+                    'summary_code',
+                    'probability_of_thunder'
+                ]
+                
+                # Get data from cache
+                cached_data = self.cache.get_weather_data(
+                    location=location,
+                    times=cache_times,
+                    data_type='hourly',
+                    fields=fields
+                )
+                
                 if cached_data:
-                    # For 6h blocks, we need both blocks that overlap with the event
-                    if interval == 6:
-                        needed_times = set()
-                        current = base_time
-                        while current <= fetch_end_time:
-                            block_end = current + timedelta(hours=6)
-                            if not (block_end <= start_time_utc or current >= end_time_utc):
-                                needed_times.add(current.strftime('%Y-%m-%dT%H:%M:%S+00:00'))
-                            current += timedelta(hours=6)
-                        
-                        # Check if we have all needed blocks in cache
-                        if not needed_times.issubset(set(cached_data.keys())):
-                            self.debug(
-                                "Missing needed blocks in cache",
-                                needed=list(needed_times),
-                                have=list(cached_data.keys())
-                            )
-                            # Fall through to API fetch
-                        else:
-                            # Convert cached data to WeatherData objects
-                            forecasts = []
-                            for time_str, data in sorted(cached_data.items()):
-                                time = datetime.fromisoformat(time_str)
-                                block_end = time + timedelta(hours=interval)
-                                
-                                # Only include blocks that overlap with the event time range
-                                if not (block_end <= start_time_utc or time >= end_time_utc):
-                                    forecast = WeatherData(
-                                        temperature=data['air_temperature'],
-                                        precipitation=data['precipitation_amount'],
-                                        precipitation_probability=data['probability_of_precipitation'],
-                                        wind_speed=data['wind_speed'],
-                                        wind_direction=data['wind_from_direction'],
-                                        symbol=data['summary_code'],
-                                        elaboration_time=time,
-                                        thunder_probability=data['probability_of_thunder'],
-                                        block_duration=timedelta(hours=interval)
-                                    )
-                                    forecasts.append(forecast)
-                            
-                            self.debug(
-                                "Processed cached forecasts",
-                                count=len(forecasts),
-                                times=[f.elaboration_time.isoformat() for f in forecasts]
-                            )
-                            return forecasts
+                    self.debug(f"Found {len(cached_data)} cached entries")
+                    
+                    # Calculate needed times based on interval
+                    needed_times = set(cache_times)  # Reuse the same times we queried
+                    
+                    # Check if we have all needed blocks in cache
+                    if not needed_times.issubset(set(cached_data.keys())):
+                        self.debug(
+                            "Missing needed blocks in cache",
+                            needed=list(needed_times),
+                            have=list(cached_data.keys())
+                        )
+                        # Fall through to API fetch
                     else:
-                        # For 1h blocks, proceed with existing logic
+                        # Convert cached data to WeatherData objects
                         forecasts = []
-                        for time_str, data in cached_data.items():
-                            time = datetime.fromisoformat(time_str)
-                            if start_time_utc <= time <= end_time_utc:
+                        for time_str, data in sorted(cached_data.items()):
+                            time = datetime.fromisoformat(time_str).replace(tzinfo=self.utc_tz)
+                            block_end = time + timedelta(hours=interval)
+                            
+                            # Only include blocks that overlap with the event time range
+                            if not (block_end <= start_time_utc or time >= end_time_utc):
                                 forecast = WeatherData(
                                     temperature=data['air_temperature'],
                                     precipitation=data['precipitation_amount'],
@@ -200,13 +196,12 @@ class MetWeatherService(WeatherService):
                                 )
                                 forecasts.append(forecast)
                         
-                        if forecasts:
-                            self.debug(
-                                "Processed cached forecasts",
-                                count=len(forecasts),
-                                times=[f.elaboration_time.isoformat() for f in forecasts]
-                            )
-                            return forecasts
+                        self.debug(
+                            "Processed cached forecasts",
+                            count=len(forecasts),
+                            times=[f.elaboration_time.isoformat() for f in forecasts]
+                        )
+                        return forecasts
             
             # Fetch data from API
             forecasts = self._fetch_forecasts(lat, lon, start_time_utc, end_time_utc)
@@ -247,52 +242,165 @@ class MetWeatherService(WeatherService):
             self.error(f"Failed to get weather data: {e}")
             return None
             
-    def _parse_response(self, data: Dict[str, Any], start_time: datetime, end_time: datetime, interval: int) -> List[WeatherData]:
-        """Parse weather data from MET.no response."""
+    def _parse_response(self, data: Dict[str, Any], lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+        """Parse MET.no API response.
+        
+        Args:
+            data: API response data
+            lat: Latitude in decimal degrees
+            lon: Longitude in decimal degrees
+            start_time: Start time in UTC
+            end_time: End time in UTC
+        """
         try:
             forecasts = []
-            timeseries = data.get('properties', {}).get('timeseries', [])
+            all_forecasts = []  # Store all forecasts for caching
             
-            for entry in timeseries:
-                time_str = entry.get('time')
-                if not time_str:
-                    continue
+            try:
+                timeseries = data['properties']['timeseries']
+                self.debug(f"Found {len(timeseries)} entries in timeseries")
                 
-                time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                for entry in timeseries:
+                    try:
+                        time_str = entry['time']
+                        # API returns times in UTC with 'Z' suffix
+                        # Replace 'Z' with '+00:00' for ISO format parsing
+                        time_str = time_str.replace('Z', '+00:00')
+                        # Parse the time string and ensure it uses our UTC ZoneInfo object
+                        forecast_time = datetime.fromisoformat(time_str).replace(tzinfo=self.utc_tz)
+                        
+                        # Get instant data
+                        instant = entry['data']['instant']['details']
+                        
+                        # Get precipitation data from next_1_hours if available, else next_6_hours
+                        precip_data = (
+                            entry['data'].get('next_1_hours', {}).get('details', {}) or
+                            entry['data'].get('next_6_hours', {}).get('details', {})
+                        )
+                        
+                        # Get symbol from next_1_hours if available, else next_6_hours
+                        symbol_data = (
+                            entry['data'].get('next_1_hours', {}).get('summary', {}) or
+                            entry['data'].get('next_6_hours', {}).get('summary', {})
+                        )
+                        
+                        # Determine block duration based on which data is available
+                        block_duration = (
+                            timedelta(hours=1) if 'next_1_hours' in entry['data']
+                            else timedelta(hours=6)
+                        )
+                        
+                        forecast = WeatherData(
+                            temperature=instant.get('air_temperature'),
+                            precipitation=precip_data.get('precipitation_amount', 0.0),
+                            precipitation_probability=precip_data.get('probability_of_precipitation'),
+                            wind_speed=instant.get('wind_speed', 0.0),
+                            wind_direction=self._get_wind_direction(instant.get('wind_from_direction')),
+                            symbol=symbol_data.get('symbol_code', 'cloudy'),
+                            elaboration_time=forecast_time,
+                            thunder_probability=precip_data.get('probability_of_thunder', 0.0),
+                            block_duration=block_duration
+                        )
+                        
+                        # Store all forecasts for caching
+                        all_forecasts.append(forecast)
+                        
+                        # Include forecasts that overlap with the requested time range
+                        forecast_end = forecast_time + block_duration
+                        if not (forecast_end <= start_time or forecast_time >= end_time):
+                            self.debug(
+                                "Added forecast within time range",
+                                time=forecast_time.isoformat(),
+                                time_local=forecast_time.astimezone(self.local_tz).isoformat(),
+                                temp=forecast.temperature,
+                                precip=forecast.precipitation,
+                                start_utc=start_time.isoformat(),
+                                end_utc=end_time.isoformat()
+                            )
+                            forecasts.append(forecast)
+                        else:
+                            self.debug(
+                                "Forecast outside requested range",
+                                time=forecast_time.isoformat(),
+                                time_local=forecast_time.astimezone(self.local_tz).isoformat(),
+                                start_utc=start_time.isoformat(),
+                                end_utc=end_time.isoformat()
+                            )
+                    except Exception as e:
+                        self.error(f"Failed to parse forecast entry: {e}", exc_info=True)  # Show full traceback
+                        continue
                 
-                # Only include times within our range
-                if time < start_time or time > end_time:
-                    continue
+                self.debug(f"Parsed {len(forecasts)} forecasts within time range")
+                self.debug(f"Total forecasts for caching: {len(all_forecasts)}")
                 
-                # Skip entries not in the requested interval
-                if time.hour % interval != start_time.hour % interval:
-                    continue
+                # Store all forecasts in cache
+                if all_forecasts:
+                    try:
+                        self.debug(f"Preparing to store {len(all_forecasts)} forecasts in cache")
+                        location = f"{lat},{lon}"
+                        
+                        # Get expiry time from response headers
+                        expires = data.get('_expires')
+                        if not expires:
+                            self.warning("No expiry time found in response headers")
+                            return forecasts
+                        
+                        # Convert datetime to ISO format string
+                        expires_str = expires.isoformat() if isinstance(expires, datetime) else expires
+                        self.debug("Using expiry time from headers", expires=expires_str)
+                        
+                        # Prepare cache entries
+                        cache_data = []
+                        for forecast in all_forecasts:
+                            cache_entry = {
+                                'location': location,
+                                'time': forecast.elaboration_time.strftime('%Y-%m-%dT%H:%M:%S+00:00'),  # Use ISO format to preserve timezone
+                                'data_type': 'hourly',  # Changed from 'daily' to match cache lookup
+                                'air_temperature': forecast.temperature,
+                                'precipitation_amount': forecast.precipitation,
+                                'wind_speed': forecast.wind_speed,
+                                'wind_from_direction': forecast.wind_direction,
+                                'probability_of_precipitation': forecast.precipitation_probability,
+                                'probability_of_thunder': forecast.thunder_probability,
+                                'summary_code': forecast.symbol
+                            }
+                            cache_data.append(cache_entry)
+                            self.debug(
+                                "Prepared cache entry",
+                                time=forecast.elaboration_time.isoformat(),
+                                expires=expires_str
+                            )
+                        
+                        # Store all entries with expiry time from headers
+                        self.debug(
+                            "Storing in cache",
+                            entries=len(cache_data),
+                            expires=expires_str
+                        )
+                        
+                        # Store data with expiry time from headers
+                        self.db.store_weather_data(
+                            cache_data,
+                            expires=expires_str,
+                            last_modified=datetime.now(self.utc_tz).isoformat()
+                        )
+                        self.debug(f"Successfully stored {len(cache_data)} entries in cache")
+                    except Exception as e:
+                        self.error(
+                            "Failed to store data in cache",
+                            error=str(e),
+                            entry_count=len(all_forecasts),
+                            first_entry=all_forecasts[0] if all_forecasts else None,
+                            exc_info=True  # Show full traceback
+                        )
                 
-                instant = entry.get('data', {}).get('instant', {}).get('details', {})
-                next_1_hours = entry.get('data', {}).get('next_1_hours', {})
-                next_6_hours = entry.get('data', {}).get('next_6_hours', {})
+                return forecasts
                 
-                # Use the appropriate time block data
-                block_data = next_1_hours if interval == 1 else next_6_hours
-                if not block_data:
-                    continue
-                
-                forecast = WeatherData(
-                    elaboration_time=time,
-                    temperature=instant.get('air_temperature'),
-                    precipitation=block_data.get('details', {}).get('precipitation_amount'),
-                    wind_speed=instant.get('wind_speed'),
-                    wind_direction=instant.get('wind_from_direction'),
-                    precipitation_probability=block_data.get('details', {}).get('probability_of_precipitation'),
-                    thunder_probability=block_data.get('details', {}).get('probability_of_thunder'),
-                    symbol=block_data.get('summary', {}).get('symbol_code', 'clearsky_day'),
-                    block_duration=timedelta(hours=interval)
-                )
-                forecasts.append(forecast)
-            
-            return forecasts
+            except Exception as e:
+                self.error(f"Failed to parse API response: {e}", exc_info=True)  # Show full traceback
+                return []
         except Exception as e:
-            self.error(f"Failed to parse weather data: {e}")
+            self.error(f"Failed to parse API response: {e}", exc_info=True)  # Show full traceback
             return []
 
     def _fetch_from_api(self, lat: float, lon: float, altitude: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -446,7 +554,9 @@ class MetWeatherService(WeatherService):
                     if not time_str:
                         continue
                         
+                    # Convert timestamp to datetime with proper timezone
                     forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    forecast_time = forecast_time.replace(tzinfo=ZoneInfo('UTC'))
                     
                     # Skip if outside our time range
                     if forecast_time < start_time or forecast_time > end_time:
@@ -484,7 +594,7 @@ class MetWeatherService(WeatherService):
                         else:
                             thunder_prob = 50.0
                     
-                    weather_data[time_str] = {
+                    weather_data[forecast_time.isoformat()] = {
                         'temperature': instant.get('air_temperature'),
                         'precipitation': details.get('precipitation_amount', 0.0),
                         'precipitation_probability': details.get('probability_of_precipitation'),
@@ -750,45 +860,15 @@ class MetWeatherService(WeatherService):
             return weather_data
 
     def _parse_met_data(self, data: Dict[str, Any], start_time: datetime, duration_minutes: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Parse MET API response into our format.
+        """Parse MET.no API response data.
         
-        API response format from https://api.met.no/weatherapi/locationforecast/2.0/swagger:
-        {
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [lon, lat, altitude]
-            },
-            "properties": {
-                "meta": {
-                    "updated_at": "2019-12-03T13:52:13Z",
-                    "units": {...}
-                },
-                "timeseries": [{
-                    "time": "2019-12-03T14:00:00Z",
-                    "data": {
-                        "instant": {
-                            "details": {
-                                "air_temperature": 17.1,
-                                "wind_speed": 5.9,
-                                "wind_from_direction": 121.3,
-                                ...
-                            }
-                        },
-                        "next_1_hours": {
-                            "summary": {
-                                "symbol_code": "cloudy"
-                            },
-                            "details": {
-                                "precipitation_amount": 1.71,
-                                "probability_of_precipitation": 37,
-                                "probability_of_thunder": 54.32
-                            }
-                        }
-                    }
-                }]
-            }
-        }
+        Args:
+            data: API response data
+            start_time: Start time in UTC
+            duration_minutes: Optional duration in minutes
+            
+        Returns:
+            Dictionary mapping time strings to weather data
         """
         with handle_errors(
             WeatherError,
@@ -840,9 +920,10 @@ class MetWeatherService(WeatherService):
                     "parse forecast entry",
                     lambda: None  # Skip entry on error
                 ):
-                    # Convert timestamp to datetime
+                    # Convert timestamp to datetime with proper timezone
                     time_str = entry['time']
                     forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    forecast_time = forecast_time.replace(tzinfo=ZoneInfo('UTC'))
                     
                     # Skip if outside our time range
                     if forecast_time < start_time or forecast_time > end_time:
@@ -912,178 +993,6 @@ class MetWeatherService(WeatherService):
             )
             
             return forecasts
-
-    @log_execution(level='DEBUG')
-    def _parse_response(self, data: Dict[str, Any], lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        """Parse MET.no API response.
-        
-        Args:
-            data: API response data
-            lat: Latitude in decimal degrees
-            lon: Longitude in decimal degrees
-            start_time: Start time in UTC
-            end_time: End time in UTC
-        """
-        with handle_errors(
-            WeatherError,
-            "met_weather",
-            "parse API response",
-            lambda: []  # Fallback to empty list on error
-        ):
-            forecasts = []
-            all_forecasts = []  # Store all forecasts for caching
-            
-            try:
-                timeseries = data['properties']['timeseries']
-                self.debug(f"Found {len(timeseries)} entries in timeseries")
-                
-                for entry in timeseries:
-                    with handle_errors(
-                        WeatherError,
-                        "met_weather",
-                        "parse forecast entry",
-                        lambda: None  # Skip entry on error
-                    ):
-                        time_str = entry['time']
-                        # API returns times in UTC with 'Z' suffix
-                        forecast_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                        
-                        # Get instant data
-                        instant = entry['data']['instant']['details']
-                        
-                        # Get precipitation data from next_1_hours if available, else next_6_hours
-                        precip_data = (
-                            entry['data'].get('next_1_hours', {}).get('details', {}) or
-                            entry['data'].get('next_6_hours', {}).get('details', {})
-                        )
-                        
-                        # Get symbol from next_1_hours if available, else next_6_hours
-                        symbol_data = (
-                            entry['data'].get('next_1_hours', {}).get('summary', {}) or
-                            entry['data'].get('next_6_hours', {}).get('summary', {})
-                        )
-                        
-                        # Determine block duration based on which data is available
-                        block_duration = (
-                            timedelta(hours=1) if 'next_1_hours' in entry['data']
-                            else timedelta(hours=6)
-                        )
-                        
-                        forecast = WeatherData(
-                            temperature=instant.get('air_temperature'),
-                            precipitation=precip_data.get('precipitation_amount', 0.0),
-                            precipitation_probability=precip_data.get('probability_of_precipitation'),
-                            wind_speed=instant.get('wind_speed', 0.0),
-                            wind_direction=self._get_wind_direction(instant.get('wind_from_direction')),
-                            symbol=symbol_data.get('symbol_code', 'cloudy'),
-                            elaboration_time=forecast_time,
-                            thunder_probability=precip_data.get('probability_of_thunder', 0.0),
-                            block_duration=block_duration
-                        )
-                        
-                        # Store all forecasts for caching
-                        all_forecasts.append(forecast)
-                        
-                        # Include forecasts that overlap with the requested time range
-                        forecast_end = forecast_time + block_duration
-                        if not (forecast_end <= start_time or forecast_time >= end_time):
-                            self.debug(
-                                "Added forecast within time range",
-                                time=forecast_time.isoformat(),
-                                time_local=forecast_time.astimezone(self.local_tz).isoformat(),
-                                temp=forecast.temperature,
-                                precip=forecast.precipitation,
-                                start_utc=start_time.isoformat(),
-                                end_utc=end_time.isoformat()
-                            )
-                            forecasts.append(forecast)
-                        else:
-                            self.debug(
-                                "Forecast outside requested range",
-                                time=forecast_time.isoformat(),
-                                time_local=forecast_time.astimezone(self.local_tz).isoformat(),
-                                start_utc=start_time.isoformat(),
-                                end_utc=end_time.isoformat()
-                            )
-                
-                self.debug(f"Parsed {len(forecasts)} forecasts within time range")
-                self.debug(f"Total forecasts for caching: {len(all_forecasts)}")
-                
-                # Store all forecasts in cache
-                if all_forecasts:
-                    try:
-                        self.debug(f"Preparing to store {len(all_forecasts)} forecasts in cache")
-                        location = f"{lat},{lon}"
-                        
-                        # Get expiry time from response headers
-                        expires = data.get('_expires')
-                        if not expires:
-                            self.warning("No expiry time found in response headers")
-                            return forecasts
-                        
-                        # Convert datetime to ISO format string
-                        expires_str = expires.isoformat() if isinstance(expires, datetime) else expires
-                        self.debug("Using expiry time from headers", expires=expires_str)
-                        
-                        # Prepare cache entries
-                        cache_data = []
-                        for forecast in all_forecasts:
-                            cache_entry = {
-                                'location': location,
-                                'time': forecast.elaboration_time.isoformat(),  # Use ISO format to preserve timezone
-                                'data_type': 'daily',
-                                'air_temperature': forecast.temperature,
-                                'precipitation_amount': forecast.precipitation,
-                                'wind_speed': forecast.wind_speed,
-                                'wind_from_direction': forecast.wind_direction,
-                                'probability_of_precipitation': forecast.precipitation_probability,
-                                'probability_of_thunder': forecast.thunder_probability,
-                                'summary_code': forecast.symbol,
-                                'expires': expires_str  # Add expiry time to each entry
-                            }
-                            cache_data.append(cache_entry)
-                            self.debug(
-                                "Prepared cache entry",
-                                time=forecast.elaboration_time.isoformat(),
-                                expires=expires_str
-                            )
-                        
-                        # Store all entries with expiry time from headers
-                        self.debug(
-                            "Storing in cache",
-                            entries=len(cache_data),
-                            expires=expires_str
-                        )
-                        
-                        # Store data with expiry time from headers
-                        self.db.store_weather_data(
-                            cache_data,
-                            expires=expires_str,
-                            last_modified=datetime.now(self.utc_tz).isoformat()
-                        )
-                        self.debug(f"Successfully stored {len(cache_data)} entries in cache")
-                    except Exception as e:
-                        self.error(
-                            "Failed to store data in cache",
-                            error=str(e),
-                            entry_count=len(all_forecasts),
-                            first_entry=all_forecasts[0] if all_forecasts else None,
-                            exc_info=True
-                        )
-                
-                return forecasts
-                
-            except KeyError as e:
-                error = WeatherError(
-                    "Invalid data structure in MET.no response",
-                    ErrorCode.INVALID_RESPONSE,
-                    {
-                        "error": str(e),
-                        "data_keys": list(data.keys()) if isinstance(data, dict) else None
-                    }
-                )
-                aggregate_error(str(error), "met_weather", e.__traceback__)
-                return []
 
     def get_block_size(self, hours_ahead: float) -> int:
         """Get block size for MET.no forecasts.
