@@ -64,7 +64,7 @@ class BaseAPI(LoggerMixin):
         # Get authentication strategy and create headers
         auth_type = club_details.get('auth_type', 'token_appauth')
         cookie_name = club_details.get('cookie_name', '')
-        self.headers = auth_service.create_headers(auth_type, cookie_name, membership.auth_details)
+        self.headers = auth_service.create_headers(auth_type, cookie_name, membership['auth_details'])
         self.session.headers.update(self.headers)
         
         # Build full URL with authentication parameters
@@ -126,7 +126,7 @@ class BaseAPI(LoggerMixin):
             
             raise APIResponseError(f"Request failed: {error_msg}")
     
-    def _parse_response(self, response: requests.Response) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    def _parse_response(self, response: requests.Response) -> Union[Dict[str, Any], List[Dict[str, Any]], None]:
         """
         Parse response content, handling different formats.
         
@@ -148,7 +148,7 @@ class BaseAPI(LoggerMixin):
             
             # Handle empty response
             if not content:
-                return {}
+                return None
             
             # Handle text that looks like a JSON array
             if content.startswith("[") and content.endswith("]"):
@@ -159,10 +159,10 @@ class BaseAPI(LoggerMixin):
             
             # Handle "null" response
             if content == "null":
-                return {}
+                return None
             
             # If we can't parse the content, raise an error
-            raise APIValidationError(f"Invalid response format: {content[:100]}...")
+            raise APIValidationError(f"Failed to parse response: {content[:100]}...")
     
     def _make_request(
         self,
@@ -172,7 +172,7 @@ class BaseAPI(LoggerMixin):
         data: Optional[Dict[str, Any]] = None,
         timeout: Optional[Tuple[int, int]] = None,
         validate_response: bool = True
-    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]], None]:
         """
         Make an API request.
         
