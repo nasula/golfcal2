@@ -1,8 +1,65 @@
 # CRM API Documentation
 
-## WiseGolf API
+## Overview
 
-### Authentication
+GolfCal2 supports multiple golf club booking systems through a unified interface. Each system has its own API implementation while maintaining consistent data structures internally.
+
+## Authentication Strategies
+
+The system supports three main authentication strategies:
+
+### 1. Token App Authentication (token_appauth)
+Used by modern WiseGolf implementations.
+
+Headers:
+```http
+Authorization: <token>
+x-session-type: wisegolf
+Accept: application/json, text/plain, */*
+```
+
+URL format:
+```
+<base_url>&appauth=<appauth_token>
+```
+
+### 2. Cookie Authentication (cookie)
+Used by WiseGolf0 (legacy) and NexGolf systems.
+
+WiseGolf0 format:
+```http
+Cookie: wisenetwork_session=<session_token>
+Accept: application/json, text/plain, */*
+Accept-Language: en-US,en;q=0.9
+```
+
+NexGolf format:
+```http
+Cookie: NGLOCALE=fi; JSESSIONID=<session_token>
+Accept: application/json, text/plain, */*
+```
+
+### 3. Query Authentication (query)
+Used by some legacy systems.
+
+Headers:
+```http
+Accept: application/json, text/plain, */*
+Content-Type: application/json
+```
+
+URL format:
+```
+<base_url>?token=<token>
+```
+
+## WiseGolf APIs
+
+WiseGolf has two versions of their API, referred to as `wisegolf` and `wisegolf0`.
+
+### WiseGolf (Modern)
+
+#### Authentication
 ```http
 POST /auth/login
 Content-Type: application/json
@@ -21,7 +78,7 @@ Response:
 }
 ```
 
-### Reservations
+#### Reservations
 ```http
 GET /reservations/my
 Authorization: Bearer <token>
@@ -49,6 +106,64 @@ Response:
                 "holes": 18,
                 "par": 72
             }
+        }
+    ]
+}
+```
+
+### WiseGolf0 (Legacy)
+
+#### Authentication
+Uses cookie-based authentication with session tokens.
+
+#### User Reservations
+```http
+GET /pd/simulaattorit/18/simulaattorit/?controller=ajax&reservations=getusergolfreservations
+Cookie: wisenetwork_session=<session-token>
+```
+
+Response:
+```json
+{
+    "success": true,
+    "rows": [
+        {
+            "reservationTimeId": 91588,
+            "dateTimeStart": "2025-01-05 11:00:00",
+            "dateTimeEnd": "2025-01-05 13:00:00",
+            "resourceId": 1,
+            "firstName": "John",
+            "familyName": "Doe",
+            "clubAbbreviation": "GC",
+            "handicapActive": "15.40",
+            "productName": "Simulators",
+            "variantName": "Simulator 1: Sunday 05.01.2025 11:00 - John Doe"
+        }
+    ],
+    "reservationsAdditionalResources": []
+}
+```
+
+#### Flight Players
+```http
+GET /api/1.0/reservations/?productid=18&date=2025-01-03&golf=1
+Cookie: wisenetwork_session=<session-token>
+```
+
+Response:
+```json
+{
+    "success": true,
+    "errors": [],
+    "reservationsGolfPlayers": [
+        {
+            "firstName": "John",
+            "familyName": "Doe",
+            "handicapActive": 15.4,
+            "clubName": "Golf Club",
+            "clubAbbreviation": "GC",
+            "status": "active",
+            "namePublic": 1
         }
     ]
 }
@@ -108,11 +223,6 @@ X-API-Key: <api_key>
 X-Club-ID: <club_id>
 ```
 
-Verify credentials:
-```http
-GET /api/verify
-```
-
 ### Reservations
 ```http
 GET /api/bookings
@@ -125,7 +235,7 @@ Response:
 {
     "data": [
         {
-            "teeTime": "2024-01-01 10:00:00",
+            "startTime": "2024-01-01 10:00:00",
             "playerList": [
                 {
                     "name": {
@@ -149,7 +259,7 @@ Response:
 }
 ```
 
-## Error Responses
+## Error Handling
 
 All APIs use standard HTTP status codes with additional details in response body:
 
@@ -180,33 +290,48 @@ All APIs use standard HTTP status codes with additional details in response body
 
 ## Implementation Notes
 
-### WiseGolf
+### WiseGolf (Modern)
 - JWT-based authentication
 - Token expires after 1 hour
 - Rate limit: 60 requests/minute
 - Timezone: UTC in responses
+- Real-time availability
+- Extended course details
+
+### WiseGolf0 (Legacy)
+- Cookie-based authentication
+- Session-based auth
+- Basic functionality
+- Local timezone in responses
+- Flight grouping support (1-4 players per flight)
 
 ### NexGolf
 - Cookie-based session
 - Session expires after 24 hours
 - Rate limit: 30 requests/minute
 - Timezone: Local club timezone in responses
+- Booking reference support
+- Cart management
 
 ### TeeTime
 - API key authentication
 - No token expiration
 - Rate limit: 100 requests/minute
 - Timezone: Local club timezone in responses
+- Rich course information
+- Player grouping support
 
 ## Common Patterns
 
 ### Date Formats
 - WiseGolf: ISO 8601 with timezone (UTC)
+- WiseGolf0: "YYYY-MM-DD HH:MM:SS" (local)
 - NexGolf: "YYYY-MM-DD HH:MM" (local)
 - TeeTime: "YYYY-MM-DD HH:MM:SS" (local)
 
 ### Handicap Formats
 - WiseGolf: Float
+- WiseGolf0: String (needs conversion)
 - NexGolf: String (needs conversion)
 - TeeTime: Float
 
@@ -221,7 +346,9 @@ All APIs provide:
 Common fields:
 - Name
 - Number of holes
+
 Additional fields vary:
 - WiseGolf: par
-- TeeTime: slope
-- NexGolf: none 
+- WiseGolf0: variant name
+- NexGolf: booking reference
+- TeeTime: slope rating
