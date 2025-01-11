@@ -79,6 +79,11 @@ class APIResponseError(APIError):
     def __init__(self, message: str, response: Optional[requests.Response] = None):
         super().__init__(message, ErrorCode.INVALID_RESPONSE, response=response)
 
+class APIValidationError(APIError):
+    """API validation error."""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, ErrorCode.VALIDATION_FAILED, details=details)
+
 class AuthError(GolfCalError):
     """Authentication error."""
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):

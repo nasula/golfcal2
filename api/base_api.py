@@ -14,22 +14,7 @@ from requests.packages.urllib3.util.retry import Retry
 
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.services.auth_service import AuthService
-
-class APIError(Exception):
-    """Base API error."""
-    pass
-
-class APITimeoutError(APIError):
-    """API timeout error."""
-    pass
-
-class APIResponseError(APIError):
-    """API response error."""
-    pass
-
-class APIValidationError(APIError):
-    """API validation error."""
-    pass
+from golfcal2.exceptions import APIError, APITimeoutError, APIResponseError, APIValidationError
 
 class BaseAPI(LoggerMixin):
     """Base class for API clients."""

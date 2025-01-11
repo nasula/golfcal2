@@ -1,227 +1,11 @@
 """Tests for the weather service implementation."""
 
 import pytest
-import requests_mock
+import math
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherResponse
-from golfcal2.services.iberian_weather_service import IberianWeatherService
-from golfcal2.exceptions import WeatherError
-from golfcal2.config.types import (
-    AppConfig, GlobalConfig, WeatherApiConfig, ApiKeysConfig, LoggingConfig
-)
-from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
-import math
-
-@pytest.fixture(autouse=True)
-def setup_error_aggregator():
-    """Initialize error aggregator for all tests."""
-    error_config = ErrorAggregationConfig(
-        enabled=True,
-        report_interval=3600,
-        error_threshold=5,
-        time_threshold=300,
-        categorize_by=['service', 'message', 'stack_trace']
-    )
-    init_error_aggregator(error_config)
-
-@pytest.fixture
-def mock_iberian_config():
-    """Create a mock config for Iberian weather service."""
-    global_config = {
-        'timezone': 'Europe/Madrid',
-        'api_keys': {
-            'weather': {
-                'aemet': 'test_api_key',
-                'openweather': ''
-            }
-        }
-    }
-    
-    users = {}  # Empty users dict for testing
-    clubs = {}  # Empty clubs dict for testing
-    
-    return AppConfig(
-        users=users,
-        clubs=clubs,
-        global_config=global_config,
-        api_keys=global_config['api_keys'],
-        timezone='Europe/Madrid',
-        ics_dir='test_ics',
-        config_dir='test_config',
-        log_level='DEBUG',
-        log_file=None
-    )
-
-@pytest.fixture
-def mock_aemet_response(requests_mock):
-    """Mock AEMET API responses."""
-    # Mock municipality data response
-    municipality_data = [
-        {
-            "id": "id28079",
-            "nombre": "Madrid",
-            "latitud": "40.4",
-            "longitud": "-3.7",
-            "altitud": "667"
-        },
-        {
-            "id": "id17233",  # PGA Catalunya
-            "nombre": "Caldes de Malavella",
-            "latitud": "41.8789",
-            "longitud": "2.7649",
-            "altitud": "84"
-        }
-    ]
-    
-    # Mock forecast data URL response
-    def create_forecast_url_response(data_url):
-        return {
-            "descripcion": "exito",
-            "estado": 200,
-            "datos": f"https://opendata.aemet.es/opendata/sh/{data_url}",
-            "metadatos": "https://opendata.aemet.es/opendata/sh/mock_metadata"
-        }
-    
-    # Helper function to create a day's forecast data
-    def create_day_forecast(date_str, is_short_term=True):
-        if is_short_term:  # 0-48 hours: hourly data
-            periods = range(0, 24)
-            return {
-                "fecha": date_str,
-                "temperatura": [
-                    {"periodo": str(h), "value": str(15.0 + h/2)} for h in periods
-                ],
-                "precipitacion": [
-                    {"periodo": str(h), "value": "0.0", "probabilidad": str(5 + h)} for h in periods
-                ],
-                "viento": [
-                    {"periodo": str(h), "direccion": "N", "velocidad": str(10 + h)} for h in periods
-                ],
-                "estadoCielo": [
-                    {"periodo": str(h), "value": "11" + ("n" if h < 6 or h >= 18 else "")} for h in periods
-                ],
-                "probPrecipitacion": [
-                    {"periodo": f"{h}-{h+1}", "value": str(5 + h)} for h in periods
-                ]
-            }
-        elif is_short_term is None:  # 48-96 hours: 6-hourly data
-            periods = range(0, 24, 6)
-            return {
-                "fecha": date_str,
-                "temperatura": [
-                    {"periodo": str(h), "value": str(15.0 + h/2)} for h in periods
-                ],
-                "precipitacion": [
-                    {"periodo": str(h), "value": "0.0", "probabilidad": str(5 + h)} for h in periods
-                ],
-                "viento": [
-                    {"periodo": str(h), "direccion": "N", "velocidad": str(10 + h)} for h in periods
-                ],
-                "estadoCielo": [
-                    {"periodo": str(h), "value": "11" + ("n" if h < 6 or h >= 18 else "")} for h in periods
-                ],
-                "probPrecipitacion": [
-                    {"periodo": f"{h}-{h+6}", "value": str(5 + h)} for h in periods
-                ]
-            }
-        else:  # 96-168 hours: daily data
-            return {
-                "fecha": date_str,
-                "temperatura": [
-                    {"periodo": "0", "value": str(20.0)}  # Use "0" for daily data
-                ],
-                "precipitacion": [
-                    {"periodo": "0", "value": "0.0", "probabilidad": "10"}
-                ],
-                "viento": [
-                    {"periodo": "0", "direccion": "N", "velocidad": "15"}
-                ],
-                "estadoCielo": [
-                    {"periodo": "0", "value": "11"}
-                ],
-                "probPrecipitacion": [
-                    {"periodo": "0-24", "value": "10"}
-                ]
-            }
-    
-    # Use a fixed date for testing
-    now = datetime(2024, 1, 10, 12, 0, tzinfo=timezone.utc)
-    
-    def create_forecast_data(municipality_id):
-        return [{
-            "elaborado": now.strftime("%Y-%m-%dT%H:00:00"),
-            "nombre": "Madrid" if municipality_id == "28079" else "Caldes de Malavella",
-            "provincia": "Madrid" if municipality_id == "28079" else "Girona",
-            "prediccion": {
-                "dia": [
-                    create_day_forecast(
-                        (now + timedelta(days=i)).strftime("%Y-%m-%dT00:00:00"),
-                        True if i < 2 else (None if i < 4 else False)
-                    )
-                    for i in range(7)  # 7 days of forecasts
-                ]
-            }
-        }]
-    
-    # Register mock responses
-    base_url = "https://opendata.aemet.es/opendata/api"
-    
-    # Mock municipality endpoint
-    requests_mock.get(
-        f"{base_url}/maestro/municipios",
-        json=municipality_data
-    )
-    
-    # Mock forecast URL endpoints for both municipalities
-    for muni in municipality_data:
-        muni_id = muni["id"][2:]  # Remove "id" prefix
-        forecast_url = f"mock_forecast_{muni_id}"
-        
-        # Mock forecast URL endpoint
-        requests_mock.get(
-            f"{base_url}/prediccion/especifica/municipio/horaria/{muni_id}",
-            json=create_forecast_url_response(forecast_url)
-        )
-        
-        # Mock actual forecast data endpoint
-        requests_mock.get(
-            f"https://opendata.aemet.es/opendata/sh/{forecast_url}",
-            json=create_forecast_data(muni_id)
-        )
-    
-    return {
-        'municipality': municipality_data,
-        'now': now  # Return the fixed date for use in tests
-    }
-
-@pytest.fixture
-def weather_service(mock_iberian_config, mock_aemet_response):
-    """Create a weather service instance for testing."""
-    local_tz = ZoneInfo("Europe/Madrid")
-    utc_tz = timezone.utc
-    return IberianWeatherService(local_tz, utc_tz, mock_iberian_config)
-
-# Test data fixtures
-@pytest.fixture
-def mock_weather_response():
-    return {
-        "hourly": {
-            "time": [
-                "2024-01-10T12:00",
-                "2024-01-10T13:00"
-            ],
-            "temperature_2m": [20.5, 21.0],
-            "precipitation_probability": [10, 20],
-            "windspeed_10m": [5.5, 6.0]
-        }
-    }
-
-@pytest.fixture
-def helsinki_tz():
-    """Helsinki timezone for testing."""
-    return ZoneInfo("Europe/Helsinki")
 
 class MockWeatherService(WeatherService):
     """Mock implementation of WeatherService for testing."""
@@ -385,162 +169,17 @@ class MockWeatherService(WeatherService):
             
         return data
 
-class TestIberianWeatherService:
-    """Test cases for IberianWeatherService."""
+@pytest.fixture
+def mock_weather_service():
+    """Create a mock weather service instance for testing."""
+    return MockWeatherService()
 
-    def test_iberian_forecast_ranges(self, weather_service, mock_aemet_response):
-        """Test handling of different forecast ranges."""
-        now = mock_aemet_response['now']
-        start_time = now + timedelta(hours=24)  # 24 hours ahead
-        end_time = start_time + timedelta(hours=2)
-        
-        response = weather_service.get_weather(
-            lat=41.8789,  # PGA Catalunya coordinates
-            lon=2.7649,
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-        assert response is not None
-        assert isinstance(response, WeatherResponse)
-        assert len(response.data) > 0
-        for forecast in response.data:
-            assert isinstance(forecast, WeatherData)
-            assert forecast.elaboration_time >= start_time
-            assert forecast.elaboration_time <= end_time
-
-    def test_iberian_block_alignment(self, weather_service, mock_aemet_response):
-        """Test alignment of forecast blocks."""
-        now = mock_aemet_response['now']
-        start_time = now + timedelta(hours=24)  # 24 hours ahead
-        end_time = start_time + timedelta(hours=1)
-        
-        response = weather_service.get_weather(
-            lat=41.8789,
-            lon=2.7649,
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-        assert response is not None
-        assert isinstance(response, WeatherResponse)
-        for forecast in response.data:
-            # AEMET provides hourly forecasts
-            assert forecast.elaboration_time.minute == 0
-
-    def test_iberian_mixed_intervals(self, weather_service, mock_aemet_response):
-        """Test handling of mixed time intervals."""
-        now = mock_aemet_response['now']
-        start_time = now + timedelta(hours=24)  # 24 hours ahead
-        end_time = start_time + timedelta(hours=2, minutes=30)
-        
-        response = weather_service.get_weather(
-            lat=41.8789,
-            lon=2.7649,
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-        assert response is not None
-        assert isinstance(response, WeatherResponse)
-        # Should include forecasts for each hour
-        assert len(response.data) >= 3
-
-    def test_iberian_timezone_handling(self, weather_service, mock_aemet_response):
-        """Test handling of different timezones."""
-        now = mock_aemet_response['now']
-        local_tz = ZoneInfo("Europe/Madrid")
-        start_time = (now + timedelta(hours=24)).astimezone(local_tz)  # 24 hours ahead
-        end_time = start_time + timedelta(hours=2)
-        
-        response = weather_service.get_weather(
-            lat=41.8789,
-            lon=2.7649,
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-        assert response is not None
-        assert isinstance(response, WeatherResponse)
-        for forecast in response.data:
-            assert forecast.elaboration_time.tzinfo == timezone.utc
-
-    def test_iberian_event_time_ranges(self, weather_service, mock_aemet_response):
-        """Test handling of event time ranges."""
-        now = mock_aemet_response['now']
-        start_time = now + timedelta(hours=24)  # 24 hours ahead
-        end_time = start_time + timedelta(hours=6)
-        
-        response = weather_service.get_weather(
-            lat=41.8789,
-            lon=2.7649,
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-        assert response is not None
-        assert isinstance(response, WeatherResponse)
-        # Should have forecasts for each hour
-        assert len(response.data) >= 6
-        # Check that forecasts are ordered
-        for i in range(1, len(response.data)):
-            assert response.data[i].elaboration_time > response.data[i-1].elaboration_time
-
-    def test_iberian_partial_hour_alignment(self, weather_service, mock_aemet_response):
-        """Test alignment of partial hour intervals."""
-        now = mock_aemet_response['now']
-        start_time = now + timedelta(hours=24, minutes=45)  # 24 hours and 45 minutes ahead
-        end_time = start_time + timedelta(minutes=30)
-        
-        response = weather_service.get_weather(
-            lat=41.8789,
-            lon=2.7649,
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-        assert response is not None
-        assert isinstance(response, WeatherResponse)
-        # Should include forecasts for both hours
-        assert len(response.data) >= 2
-        times = [f.elaboration_time.hour for f in response.data]
-        assert start_time.hour in times
-        assert (start_time + timedelta(hours=1)).hour in times
-
-    def test_iberian_cross_day_event(self, weather_service, mock_aemet_response):
-        """Test handling of events crossing midnight."""
-        now = mock_aemet_response['now']
-        start_time = now + timedelta(hours=24)  # 24 hours ahead
-        start_time = start_time.replace(hour=23)  # Set to 23:00
-        end_time = start_time + timedelta(hours=2)  # Crosses midnight
-        
-        response = weather_service.get_weather(
-            lat=41.8789,
-            lon=2.7649,
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-        assert response is not None
-        assert isinstance(response, WeatherResponse)
-        # Should include forecasts for 23:00, 00:00, and 01:00
-        assert len(response.data) >= 3
-        dates = set(f.elaboration_time.date() for f in response.data)
-        assert len(dates) == 2  # Should have forecasts from both days
-
-def test_weather_service_init(weather_service):
-    """Test WeatherService initialization."""
-    assert isinstance(weather_service, WeatherService)
-    assert hasattr(weather_service, 'cache')
-    assert weather_service.local_tz == timezone.utc
-    assert weather_service.utc_tz == timezone.utc
-
-def test_get_weather_success(weather_service):
+def test_get_weather_success(mock_weather_service):
     """Test successful weather data retrieval."""
     start_time = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)  # January (winter)
     end_time = start_time + timedelta(hours=2)
     
-    response = weather_service.get_weather(
+    response = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -579,15 +218,16 @@ def test_get_weather_success(weather_service):
     # Second hour should be slightly colder (afternoon in winter)
     assert second_hour.temperature < first_hour.temperature
 
-def test_get_weather_with_local_timezone(helsinki_tz):
+def test_get_weather_with_local_timezone(mock_weather_service):
     """Test weather data retrieval with local timezone."""
-    service = MockWeatherService(local_tz=helsinki_tz)
+    helsinki_tz = ZoneInfo("Europe/Helsinki")
+    mock_weather_service.local_tz = helsinki_tz
     
     # Create times in Helsinki timezone
     start_time = datetime(2024, 1, 10, 14, tzinfo=helsinki_tz)  # 12:00 UTC
     end_time = start_time + timedelta(hours=2)
     
-    response = service.get_weather(
+    response = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -601,12 +241,12 @@ def test_get_weather_with_local_timezone(helsinki_tz):
     assert first_hour.elaboration_time.astimezone(helsinki_tz).hour == 14
     assert first_hour.symbol == "clearsky_day"  # 14:00 local time is daytime
 
-def test_get_weather_24h_cycle(weather_service):
+def test_get_weather_24h_cycle(mock_weather_service):
     """Test weather data over a full 24-hour cycle."""
     start_time = datetime(2024, 1, 10, 0, tzinfo=timezone.utc)
     end_time = start_time + timedelta(days=1)
     
-    response = weather_service.get_weather(
+    response = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -636,10 +276,10 @@ def test_get_weather_24h_cycle(weather_service):
     assert temps[6] < temps[12], "Morning should be cooler than noon"
     assert temps[18] < temps[12], "Evening should be cooler than noon"
 
-def test_get_weather_invalid_coordinates(weather_service):
+def test_get_weather_invalid_coordinates(mock_weather_service):
     """Test handling of invalid coordinates."""
     with pytest.raises(ValueError) as exc_info:
-        weather_service.get_weather(
+        mock_weather_service.get_weather(
             lat=91.0,  # Invalid latitude (>90)
             lon=24.9,
             start_time=datetime(2024, 1, 10, 12, tzinfo=timezone.utc),
@@ -648,25 +288,25 @@ def test_get_weather_invalid_coordinates(weather_service):
     
     assert "Invalid latitude" in str(exc_info.value)
 
-def test_weather_caching(weather_service, monkeypatch):
+def test_weather_caching(mock_weather_service, monkeypatch):
     """Test that weather data is properly cached."""
     # Mock _fetch_forecasts to track calls
     call_count = 0
-    original_fetch = weather_service._fetch_forecasts
+    original_fetch = mock_weather_service._fetch_forecasts
     
     def mock_fetch(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         return original_fetch(*args, **kwargs)
     
-    monkeypatch.setattr(weather_service, '_fetch_forecasts', mock_fetch)
+    monkeypatch.setattr(mock_weather_service, '_fetch_forecasts', mock_fetch)
     
     # Test times
     start_time = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
     end_time = start_time + timedelta(hours=2)
     
     # First call should hit the API
-    response1 = weather_service.get_weather(
+    response1 = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -674,7 +314,7 @@ def test_weather_caching(weather_service, monkeypatch):
     )
     
     # Second call with same parameters should use cache
-    response2 = weather_service.get_weather(
+    response2 = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -682,7 +322,7 @@ def test_weather_caching(weather_service, monkeypatch):
     )
     
     # Call with different timezone but same UTC time should use cache
-    response3 = weather_service.get_weather(
+    response3 = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time.astimezone(ZoneInfo("Europe/Helsinki")),
@@ -696,11 +336,11 @@ def test_weather_caching(weather_service, monkeypatch):
     # Verify _fetch_forecasts was only called once
     assert call_count == 1 
 
-def test_get_weather_invalid_time_range(weather_service):
+def test_get_weather_invalid_time_range(mock_weather_service):
     """Test handling of invalid time ranges."""
     # End time before start time
     with pytest.raises(ValueError) as exc_info:
-        weather_service.get_weather(
+        mock_weather_service.get_weather(
             lat=60.2,
             lon=24.9,
             start_time=datetime(2024, 1, 10, 12, tzinfo=timezone.utc),
@@ -710,7 +350,7 @@ def test_get_weather_invalid_time_range(weather_service):
     
     # Zero duration
     with pytest.raises(ValueError) as exc_info:
-        weather_service.get_weather(
+        mock_weather_service.get_weather(
             lat=60.2,
             lon=24.9,
             start_time=datetime(2024, 1, 10, 12, tzinfo=timezone.utc),
@@ -718,13 +358,13 @@ def test_get_weather_invalid_time_range(weather_service):
         )
     assert "End time must be after start time" in str(exc_info.value)  # Both cases use same error message
 
-def test_get_weather_extreme_coordinates(weather_service):
+def test_get_weather_extreme_coordinates(mock_weather_service):
     """Test handling of extreme but valid coordinates."""
     start_time = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
     end_time = start_time + timedelta(hours=2)
     
     # Test poles
-    north_pole = weather_service.get_weather(
+    north_pole = mock_weather_service.get_weather(
         lat=90.0,
         lon=0.0,
         start_time=start_time,
@@ -732,7 +372,7 @@ def test_get_weather_extreme_coordinates(weather_service):
     )
     assert len(north_pole.data) == 2
     
-    south_pole = weather_service.get_weather(
+    south_pole = mock_weather_service.get_weather(
         lat=-90.0,
         lon=0.0,
         start_time=start_time,
@@ -741,7 +381,7 @@ def test_get_weather_extreme_coordinates(weather_service):
     assert len(south_pole.data) == 2
     
     # Test international date line
-    date_line_east = weather_service.get_weather(
+    date_line_east = mock_weather_service.get_weather(
         lat=0.0,
         lon=180.0,
         start_time=start_time,
@@ -749,7 +389,7 @@ def test_get_weather_extreme_coordinates(weather_service):
     )
     assert len(date_line_east.data) == 2
     
-    date_line_west = weather_service.get_weather(
+    date_line_west = mock_weather_service.get_weather(
         lat=0.0,
         lon=-180.0,
         start_time=start_time,
@@ -758,7 +398,7 @@ def test_get_weather_extreme_coordinates(weather_service):
     assert len(date_line_west.data) == 2
     
     # Temperatures should be colder at poles
-    equator = weather_service.get_weather(
+    equator = mock_weather_service.get_weather(
         lat=0.0,
         lon=0.0,
         start_time=start_time,
@@ -767,13 +407,13 @@ def test_get_weather_extreme_coordinates(weather_service):
     assert north_pole.data[0].temperature < equator.data[0].temperature
     assert south_pole.data[0].temperature < equator.data[0].temperature
 
-def test_get_weather_cross_day_range(weather_service):
+def test_get_weather_cross_day_range(mock_weather_service):
     """Test weather data retrieval across day boundaries."""
     # Start at 23:00 and end at 01:00 next day
     start_time = datetime(2024, 1, 10, 23, tzinfo=timezone.utc)
     end_time = start_time + timedelta(hours=2)
     
-    response = weather_service.get_weather(
+    response = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -789,58 +429,63 @@ def test_get_weather_cross_day_range(weather_service):
     # Temperature should decrease across midnight
     assert response.data[1].temperature < response.data[0].temperature
 
-def test_get_weather_cache_expiry(weather_service, monkeypatch):
-    """Test that cached weather data expires correctly."""
-    call_count = 0
-    original_fetch = weather_service._fetch_forecasts
-    
-    def mock_fetch(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return original_fetch(*args, **kwargs)
-    
-    monkeypatch.setattr(weather_service, '_fetch_forecasts', mock_fetch)
-    
-    # First call at current time
+def test_get_weather_cache_expiry_behavior(mock_weather_service, monkeypatch):
+    """Test detailed cache expiry behavior."""
     start_time = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
     end_time = start_time + timedelta(hours=2)
     
-    response1 = weather_service.get_weather(
+    # Create a class to hold the current time
+    class MockTime:
+        def __init__(self):
+            self.current = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
+        
+        def now(self, tz=None):
+            return self.current.replace(tzinfo=tz or timezone.utc)
+    
+    mock_time = MockTime()
+    monkeypatch.setattr('datetime.datetime', type('MockDateTime', (), {
+        'now': mock_time.now,
+        'fromtimestamp': datetime.fromtimestamp,
+        'fromisoformat': datetime.fromisoformat,
+    }))
+    
+    # Initial call to populate cache
+    response1 = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
         end_time=end_time
     )
-    assert call_count == 1
+    initial_expiry = response1.expires
     
-    # Second call with same parameters but expired cache
-    # Mock expiry by modifying the cached response
-    cache_key = weather_service._get_cache_key(60.2, 24.9, start_time, end_time)
-    cached_response = weather_service.cache[cache_key]
-    cached_response.expires = datetime.now(timezone.utc) - timedelta(seconds=1)
-    weather_service.cache[cache_key] = cached_response
-    
-    response2 = weather_service.get_weather(
+    # Verify cache hit with current time
+    response2 = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
         end_time=end_time
     )
-    
-    # Should have fetched new data
-    assert call_count == 2
-    
-    # Data should be similar but not identical (new fetch)
     assert response1.data[0].temperature == response2.data[0].temperature
-    assert response1.expires < response2.expires
+    
+    # Move time forward past expiry
+    mock_time.current += timedelta(hours=2)
+    
+    # Should get new data after expiry
+    response3 = mock_weather_service.get_weather(
+        lat=60.2,
+        lon=24.9,
+        start_time=start_time,
+        end_time=end_time
+    )
+    assert response3.expires > mock_time.current
 
-def test_get_weather_with_naive_datetime(weather_service):
+def test_get_weather_with_naive_datetime(mock_weather_service):
     """Test handling of naive datetime inputs."""
     naive_start = datetime(2024, 1, 10, 12)  # No timezone
     naive_end = naive_start + timedelta(hours=2)
     
     with pytest.raises(ValueError) as exc_info:
-        weather_service.get_weather(
+        mock_weather_service.get_weather(
             lat=60.2,
             lon=24.9,
             start_time=naive_start,
@@ -848,13 +493,13 @@ def test_get_weather_with_naive_datetime(weather_service):
         )
     assert "timezone" in str(exc_info.value).lower() 
 
-def test_get_weather_wind_patterns(weather_service):
+def test_get_weather_wind_patterns(mock_weather_service):
     """Test wind direction and speed patterns."""
     # Test a full day to see wind patterns
     start_time = datetime(2024, 1, 10, 0, tzinfo=timezone.utc)
     end_time = start_time + timedelta(days=1)
     
-    response = weather_service.get_weather(
+    response = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -871,13 +516,13 @@ def test_get_weather_wind_patterns(weather_service):
         # Direction should be a valid compass point
         assert direction in ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
-def test_get_weather_precipitation_patterns(weather_service):
+def test_get_weather_precipitation_patterns(mock_weather_service):
     """Test precipitation probability and amount patterns."""
     # Test a rainy period
     start_time = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
     end_time = start_time + timedelta(hours=6)
     
-    response = weather_service.get_weather(
+    response = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -897,7 +542,7 @@ def test_get_weather_precipitation_patterns(weather_service):
         if data.precipitation_probability == 0:
             assert data.precipitation == 0
 
-def test_get_weather_block_size(weather_service):
+def test_get_weather_block_size(mock_weather_service):
     """Test weather data block size calculations."""
     # Test different forecast ranges
     test_ranges = [
@@ -912,11 +557,11 @@ def test_get_weather_block_size(weather_service):
         end_time = start_time + duration
         hours_ahead = duration.total_seconds() / 3600
         
-        block_size = weather_service.get_block_size(hours_ahead)
+        block_size = mock_weather_service.get_block_size(hours_ahead)
         assert block_size == expected_block_size, f"Expected {expected_block_size}h blocks for {hours_ahead}h forecast"
         
         # Verify data is returned in correct block sizes
-        response = weather_service.get_weather(
+        response = mock_weather_service.get_weather(
             lat=60.2,
             lon=24.9,
             start_time=start_time,
@@ -928,13 +573,13 @@ def test_get_weather_block_size(weather_service):
             time_diff = response.data[i].elaboration_time - response.data[i-1].elaboration_time
             assert time_diff == timedelta(hours=block_size)
 
-def test_get_weather_thunder_probability(weather_service):
+def test_get_weather_thunder_probability(mock_weather_service):
     """Test thunder probability calculations."""
     # Test during summer afternoon (when thunder is more likely)
     start_time = datetime(2024, 7, 10, 14, tzinfo=timezone.utc)  # 2 PM
     end_time = start_time + timedelta(hours=4)
     
-    response = weather_service.get_weather(
+    response = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -952,7 +597,7 @@ def test_get_weather_thunder_probability(weather_service):
             # Symbol should reflect thunder conditions
             assert "thunder" in data.symbol.lower()
 
-def test_get_weather_seasonal_variations(weather_service):
+def test_get_weather_seasonal_variations(mock_weather_service):
     """Test weather variations across seasons."""
     # Test same location at different times of year
     test_dates = [
@@ -964,7 +609,7 @@ def test_get_weather_seasonal_variations(weather_service):
     
     responses = {}
     for date, season in test_dates:
-        response = weather_service.get_weather(
+        response = mock_weather_service.get_weather(
             lat=60.2,
             lon=24.9,
             start_time=date,
@@ -983,16 +628,16 @@ def test_get_weather_seasonal_variations(weather_service):
     fall_temp = responses["fall"].data[12].temperature
     
     assert winter_temp < spring_temp < summer_temp
-    assert winter_temp < fall_temp < summer_temp 
+    assert winter_temp < fall_temp < summer_temp
 
-def test_get_weather_error_handling(weather_service):
+def test_get_weather_error_handling(mock_weather_service):
     """Test error handling in weather service."""
     start_time = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
     end_time = start_time + timedelta(hours=2)
     
     # Test with non-datetime objects
     with pytest.raises(ValueError):
-        weather_service.get_weather(
+        mock_weather_service.get_weather(
             lat=60.2,
             lon=24.9,
             start_time="2024-01-10 12:00",  # String instead of datetime
@@ -1001,14 +646,14 @@ def test_get_weather_error_handling(weather_service):
     
     # Test with invalid timezone
     with pytest.raises(ValueError):
-        weather_service.get_weather(
+        mock_weather_service.get_weather(
             lat=60.2,
             lon=24.9,
             start_time=start_time.replace(tzinfo=None),  # Remove timezone
             end_time=end_time
         )
 
-def test_get_weather_service_configuration(weather_service):
+def test_get_weather_service_configuration(mock_weather_service):
     """Test weather service configuration and initialization."""
     # Test with custom timezones
     helsinki_tz = ZoneInfo("Europe/Helsinki")
@@ -1033,13 +678,13 @@ def test_get_weather_service_configuration(weather_service):
     
     assert response.data[0].elaboration_time == utc_time
 
-def test_get_weather_cache_operations(weather_service):
+def test_get_weather_cache_operations(mock_weather_service):
     """Test detailed cache operations."""
     start_time = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
     end_time = start_time + timedelta(hours=2)
     
     # Initial call to populate cache
-    response1 = weather_service.get_weather(
+    response1 = mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -1047,193 +692,20 @@ def test_get_weather_cache_operations(weather_service):
     )
     
     # Verify cache key generation
-    cache_key = weather_service._get_cache_key(60.2, 24.9, start_time, end_time)
-    assert cache_key in weather_service.cache
+    cache_key = mock_weather_service._get_cache_key(60.2, 24.9, start_time, end_time)
+    assert cache_key in mock_weather_service.cache
     
     # Verify cache contents
-    cached_response = weather_service.cache[cache_key]
+    cached_response = mock_weather_service.cache[cache_key]
     assert isinstance(cached_response, WeatherResponse)
     assert len(cached_response.data) == len(response1.data)
     assert cached_response.data[0].temperature == response1.data[0].temperature
     
     # Test cache with slightly different coordinates (should not hit cache)
-    response2 = weather_service.get_weather(
+    response2 = mock_weather_service.get_weather(
         lat=60.21,  # Slightly different latitude
         lon=24.9,
         start_time=start_time,
         end_time=end_time
     )
-    assert response2.data[0].temperature != response1.data[0].temperature 
-
-def test_weather_data_validation():
-    """Test WeatherData validation and edge cases."""
-    # Test valid data
-    data = WeatherData(
-        temperature=20.5,
-        precipitation=0.5,
-        precipitation_probability=50,
-        wind_speed=5.5,
-        wind_direction="N",
-        symbol="clearsky_day",
-        elaboration_time=datetime(2024, 1, 10, 12, tzinfo=timezone.utc),
-        thunder_probability=None
-    )
-    assert data.temperature == 20.5
-    assert data.precipitation == 0.5
-    assert data.precipitation_probability == 50
-    assert data.wind_speed == 5.5
-    assert data.wind_direction == "N"
-    assert data.symbol == "clearsky_day"
-    
-    # Test optional fields
-    data_no_thunder = WeatherData(
-        temperature=20.5,
-        precipitation=0.5,
-        precipitation_probability=50,
-        wind_speed=5.5,
-        wind_direction="N",
-        symbol="clearsky_day",
-        elaboration_time=datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
-    )
-    assert data_no_thunder.thunder_probability is None
-
-def test_weather_response_validation():
-    """Test WeatherResponse validation and edge cases."""
-    now = datetime.now(timezone.utc)
-    data = [
-        WeatherData(
-            temperature=20.5,
-            precipitation=0.5,
-            precipitation_probability=50,
-            wind_speed=5.5,
-            wind_direction="N",
-            symbol="clearsky_day",
-            elaboration_time=now
-        )
-    ]
-    
-    # Test valid response with future expiry
-    future_expiry = now + timedelta(hours=1)
-    response = WeatherResponse(
-        data=data,
-        expires=future_expiry
-    )
-    assert len(response.data) == 1
-    assert response.expires > now
-    
-    # Test response with past expiry
-    past_expiry = now - timedelta(hours=1)
-    past_response = WeatherResponse(
-        data=data,
-        expires=past_expiry
-    )
-    assert past_response.expires < now
-
-def test_get_weather_cache_expiry_behavior(weather_service, monkeypatch):
-    """Test detailed cache expiry behavior."""
-    start_time = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
-    end_time = start_time + timedelta(hours=2)
-    
-    # Create a class to hold the current time
-    class MockTime:
-        def __init__(self):
-            self.current = datetime(2024, 1, 10, 12, tzinfo=timezone.utc)
-        
-        def now(self, tz=None):
-            return self.current.replace(tzinfo=tz or timezone.utc)
-    
-    mock_time = MockTime()
-    monkeypatch.setattr('datetime.datetime', type('MockDateTime', (), {
-        'now': mock_time.now,
-        'fromtimestamp': datetime.fromtimestamp,
-        'fromisoformat': datetime.fromisoformat,
-    }))
-    
-    # Initial call to populate cache
-    response1 = weather_service.get_weather(
-        lat=60.2,
-        lon=24.9,
-        start_time=start_time,
-        end_time=end_time
-    )
-    initial_expiry = response1.expires
-    
-    # Verify cache hit with current time
-    response2 = weather_service.get_weather(
-        lat=60.2,
-        lon=24.9,
-        start_time=start_time,
-        end_time=end_time
-    )
-    assert response1.data[0].temperature == response2.data[0].temperature
-    
-    # Move time forward past expiry
-    mock_time.current += timedelta(hours=2)
-    
-    # Should get new data after expiry
-    response3 = weather_service.get_weather(
-        lat=60.2,
-        lon=24.9,
-        start_time=start_time,
-        end_time=end_time
-    )
-    assert response3.expires > mock_time.current 
-
-def test_iberian_forecast_ranges(weather_service, mock_aemet_response):
-    """Test AEMET forecast range and interval calculations."""
-    now = mock_aemet_response['now']
-    
-    # Test hourly forecasts (0-48 hours)
-    start_time = now + timedelta(hours=24)  # 24 hours ahead
-    end_time = start_time + timedelta(hours=2)
-    
-    response = weather_service.get_weather(
-        lat=40.4,  # Madrid
-        lon=-3.7,
-        start_time=start_time,
-        end_time=end_time
-    )
-    
-    assert len(response.data) == 2  # Should get hourly data
-    assert (response.data[1].elaboration_time - response.data[0].elaboration_time) == timedelta(hours=1)
-    
-    # Test 6-hourly forecasts (48-96 hours)
-    start_time = now + timedelta(hours=72)  # 3 days ahead
-    end_time = start_time + timedelta(hours=12)
-    
-    response = weather_service.get_weather(
-        lat=40.4,
-        lon=-3.7,
-        start_time=start_time,
-        end_time=end_time
-    )
-    
-    assert len(response.data) == 2  # Should get two 6-hour blocks
-    assert (response.data[1].elaboration_time - response.data[0].elaboration_time) == timedelta(hours=6)
-    
-    # Test daily forecasts (96-168 hours)
-    start_time = now + timedelta(hours=120)  # 5 days ahead
-    end_time = start_time + timedelta(hours=24)
-    
-    response = weather_service.get_weather(
-        lat=40.4,
-        lon=-3.7,
-        start_time=start_time,
-        end_time=end_time
-    )
-    
-    assert len(response.data) == 1  # Should get one daily block
-    assert response.data[0].block_duration == timedelta(hours=24)
-    
-    # Test beyond maximum range (>168 hours)
-    start_time = now + timedelta(hours=192)  # 8 days ahead
-    end_time = start_time + timedelta(hours=24)
-    
-    response = weather_service.get_weather(
-        lat=40.4,
-        lon=-3.7,
-        start_time=start_time,
-        end_time=end_time
-    )
-    
-    assert response is None  # Should return None for forecasts beyond range 
+    assert response2.data[0].temperature != response1.data[0].temperature

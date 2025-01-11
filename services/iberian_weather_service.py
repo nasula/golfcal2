@@ -127,7 +127,7 @@ class IberianWeatherService(WeatherService):
                     max_hours=self.DAILY_RANGE
                 )
                 return None
-            
+
             # Convert event times to local time for alignment
             local_start = start_time.astimezone(local_tz)
             local_end = end_time.astimezone(local_tz)
@@ -171,7 +171,7 @@ class IberianWeatherService(WeatherService):
                     )
                 if fetch_end_time <= local_end:
                     fetch_end_time += timedelta(hours=interval)
-            
+
             # Convert aligned times back to UTC
             base_time = base_time.astimezone(self.utc_tz)
             fetch_end_time = fetch_end_time.astimezone(self.utc_tz)
@@ -193,39 +193,71 @@ class IberianWeatherService(WeatherService):
                 cache_times.append(current_time)
                 current_time += timedelta(hours=interval)
             
-            # Fetch forecasts from cache or API
-            forecasts = []
-            for time in cache_times:
-                forecast = self._get_forecast(location, time)
-                if forecast:
-                    forecast.block_duration = timedelta(hours=interval)
-                    forecasts.append(forecast)
+            # Check if all times are in cache
+            data_type = 'hourly' if interval == 1 else 'daily'
+            fields = ['air_temperature', 'precipitation_amount', 'probability_of_precipitation',
+                     'wind_speed', 'wind_from_direction', 'summary_code', 'probability_of_thunder',
+                     'block_duration_hours']
             
+            cached_data = self.db.get_weather_data(location, [t.isoformat() for t in cache_times], data_type, fields)
+            
+            if len(cached_data) == len(cache_times):
+                # All data found in cache, convert and return
+                forecasts = []
+                for time in cache_times:
+                    data = cached_data.get(time.isoformat())
+                    if data:
+                        forecast = WeatherData(
+                            temperature=data['air_temperature'],
+                            precipitation=data['precipitation_amount'],
+                            precipitation_probability=data['probability_of_precipitation'],
+                            wind_speed=data['wind_speed'],
+                            wind_direction=data['wind_from_direction'],
+                            symbol=data['summary_code'],
+                            elaboration_time=time,
+                            thunder_probability=data['probability_of_thunder'],
+                            block_duration=timedelta(hours=data.get('block_duration_hours', interval))
+                        )
+                        forecasts.append(forecast)
+                
+                return WeatherResponse(data=forecasts, expires=expires)
+            
+            # If not all in cache, fetch from API
+            forecasts = self._fetch_forecasts(lat, lon, base_time, fetch_end_time, local_tz, now_utc)
             if not forecasts:
                 self.warning("No forecasts found for requested time range")
                 return None
             
-            # Sort forecasts by time
-            forecasts.sort(key=lambda x: x.elaboration_time)
+            # Store in cache
+            cache_entries = []
+            for forecast in forecasts:
+                cache_entry = {
+                    'location': location,
+                    'time': forecast.elaboration_time.isoformat(),
+                    'data_type': data_type,
+                    'air_temperature': forecast.temperature,
+                    'precipitation_amount': forecast.precipitation,
+                    'probability_of_precipitation': forecast.precipitation_probability,
+                    'wind_speed': forecast.wind_speed,
+                    'wind_from_direction': forecast.wind_direction,
+                    'summary_code': forecast.symbol,
+                    'probability_of_thunder': forecast.thunder_probability,
+                    'block_duration_hours': interval
+                }
+                cache_entries.append(cache_entry)
             
-            # Filter out forecasts outside the requested range
+            self.db.store_weather_data(
+                cache_entries,
+                expires=expires.isoformat(),
+                last_modified=now_utc.isoformat()
+            )
+            
+            # Filter forecasts to requested time range
             filtered_forecasts = []
             for forecast in forecasts:
                 forecast_end = forecast.elaboration_time + forecast.block_duration
                 if forecast_end > start_time.astimezone(self.utc_tz) and forecast.elaboration_time < end_time.astimezone(self.utc_tz):
                     filtered_forecasts.append(forecast)
-            
-            # Ensure we have enough forecasts to cover the entire range
-            if filtered_forecasts:
-                last_forecast = filtered_forecasts[-1]
-                last_forecast_end = last_forecast.elaboration_time + last_forecast.block_duration
-                if last_forecast_end < end_time.astimezone(self.utc_tz):
-                    # Add one more forecast if needed
-                    next_time = last_forecast.elaboration_time + timedelta(hours=interval)
-                    next_forecast = self._get_forecast(location, next_time)
-                    if next_forecast:
-                        next_forecast.block_duration = timedelta(hours=interval)
-                        filtered_forecasts.append(next_forecast)
             
             return WeatherResponse(data=filtered_forecasts, expires=expires)
         except Exception as e:
@@ -302,7 +334,7 @@ class IberianWeatherService(WeatherService):
                     municipality_id=municipality_code,
                     municipality_name=nearest_municipality['name']
                 )
-                
+                                    
                 # Respect rate limits
                 if self._last_api_call:
                     time_since_last = datetime.now() - self._last_api_call
@@ -461,101 +493,75 @@ class IberianWeatherService(WeatherService):
     def _map_aemet_code(self, code: str, hour: int) -> str:
         """Map AEMET weather codes to our internal codes.
         
-        AEMET codes:
-        11 - Clear sky
-        11n - Clear sky (night)
-        12 - Slightly cloudy
-        12n - Slightly cloudy (night)
-        13 - Intervals of clouds
-        13n - Intervals of clouds (night)
-        14 - Cloudy
-        15 - Very cloudy
-        16 - Overcast
-        17 - High clouds
-        23 - Intervals of clouds with rain
-        24 - Cloudy with rain
-        25 - Very cloudy with rain
-        26 - Overcast with rain
-        33 - Intervals of clouds with snow
-        34 - Cloudy with snow
-        35 - Very cloudy with snow
-        36 - Overcast with snow
-        43 - Intervals of clouds with rain and snow
-        44 - Cloudy with rain and snow
-        45 - Very cloudy with rain and snow
-        46 - Overcast with rain and snow
-        51 - Intervals of clouds with storm
-        52 - Cloudy with storm
-        53 - Very cloudy with storm
-        54 - Overcast with storm
-        61 - Intervals of clouds with snow storm
-        62 - Cloudy with snow storm
-        63 - Very cloudy with snow storm
-        64 - Overcast with snow storm
-        71 - Intervals of clouds with rain and storm
-        72 - Cloudy with rain and storm
-        73 - Very cloudy with rain and storm
-        74 - Overcast with rain and storm
+        Args:
+            code: AEMET weather code
+            hour: Hour of the day (0-23) to determine day/night
+        
+        Returns:
+            Internal weather code
         """
-        with handle_errors(
-            WeatherError,
-            "iberian_weather",
-            f"map weather code {code}",
-            lambda: WeatherCode.CLOUDY  # Fallback to cloudy on error
-        ):
-            is_day = 6 <= hour <= 20
-            
-            # Remove 'n' suffix for night codes
-            base_code = code.rstrip('n')
-            
-            code_map = {
-                # Clear conditions
-                '11': 'clearsky_day' if is_day else 'clearsky_night',
-                '12': 'fair_day' if is_day else 'fair_night',
-                '13': 'partlycloudy_day' if is_day else 'partlycloudy_night',
-                '14': 'cloudy',
-                '15': 'cloudy',
-                '16': 'cloudy',
-                '17': 'partlycloudy_day' if is_day else 'partlycloudy_night',
-                
-                # Rain
-                '23': 'lightrainshowers_day' if is_day else 'lightrainshowers_night',
-                '24': 'lightrain',
-                '25': 'rain',
-                '26': 'rain',
-                
-                # Snow
-                '33': 'lightsnowshowers_day' if is_day else 'lightsnowshowers_night',
-                '34': 'lightsnow',
-                '35': 'snow',
-                '36': 'snow',
-                
-                # Mixed precipitation
-                '43': 'sleetshowers_day' if is_day else 'sleetshowers_night',
-                '44': 'lightsleet',
-                '45': 'sleet',
-                '46': 'sleet',
-                
-                # Thunderstorms
-                '51': 'rainandthunder',
-                '52': 'rainandthunder',
-                '53': 'heavyrainandthunder',
-                '54': 'heavyrainandthunder',
-                
-                # Snow with thunder
-                '61': 'snowandthunder',
-                '62': 'snowandthunder',
-                '63': 'heavysnowandthunder',
-                '64': 'heavysnowandthunder',
-                
-                # Rain and thunder
-                '71': 'rainandthunder',
-                '72': 'rainandthunder',
-                '73': 'heavyrainandthunder',
-                '74': 'heavyrainandthunder'
-            }
-            
-            return code_map.get(base_code, 'cloudy')  # Default to cloudy if code not found
+        # Determine if it's day or night
+        is_daytime = 6 <= hour < 20  # Day is between 6:00 and 20:00
+        
+        # Strip 'n' suffix if present (AEMET uses 'n' for night)
+        base_code = code.rstrip('n')
+        
+        # Map AEMET codes to our internal codes
+        code_map = {
+            '11': 'clearsky',      # Clear sky
+            '12': 'fair',          # Few clouds
+            '13': 'partlycloudy',  # Variable clouds
+            '14': 'cloudy',        # Cloudy
+            '15': 'cloudy',        # Very cloudy
+            '16': 'cloudy',        # Overcast
+            '17': 'partlycloudy',  # High clouds
+            '23': 'rain',          # Rain
+            '24': 'snow',          # Snow
+            '25': 'sleet',         # Sleet
+            '26': 'hail',          # Hail
+            '27': 'thunder',       # Thunder
+            '33': 'lightrain',     # Light rain
+            '34': 'lightsnow',     # Light snow
+            '35': 'lightsleet',    # Light sleet
+            '36': 'lighthail',     # Light hail
+            '43': 'heavyrain',     # Heavy rain
+            '44': 'heavysnow',     # Heavy snow
+            '45': 'heavysleet',    # Heavy sleet
+            '46': 'heavyhail',     # Heavy hail
+            '51': 'rainshowers',   # Rain showers
+            '52': 'snowshowers',   # Snow showers
+            '53': 'sleetshowers',  # Sleet showers
+            '54': 'hailshowers',   # Hail showers
+            '61': 'lightrainshowers',      # Light rain showers
+            '62': 'lightsnowshowers',      # Light snow showers
+            '63': 'lightsleetshowers',     # Light sleet showers
+            '64': 'lighthailshowers',      # Light hail showers
+            '71': 'heavyrainshowers',      # Heavy rain showers
+            '72': 'heavysnowshowers',      # Heavy snow showers
+            '73': 'heavysleetshowers',     # Heavy sleet showers
+            '74': 'heavyhailshowers',      # Heavy hail showers
+            '81': 'rainandthunder',        # Rain and thunder
+            '82': 'snowandthunder',        # Snow and thunder
+            '83': 'sleetandthunder',       # Sleet and thunder
+            '84': 'hailandthunder',        # Hail and thunder
+            '91': 'lightrainandthunder',   # Light rain and thunder
+            '92': 'lightsnowandthunder',   # Light snow and thunder
+            '93': 'lightsleetandthunder',  # Light sleet and thunder
+            '94': 'lighthailandthunder'    # Light hail and thunder
+        }
+        
+        # Get base weather type
+        weather_type = code_map.get(base_code)
+        if not weather_type:
+            self.warning(
+                "Unknown AEMET weather code",
+                code=code,
+                base_code=base_code
+            )
+            weather_type = 'clearsky'  # Default to clearsky if unknown code
+        
+        # Add day/night suffix
+        return weather_type + ('_day' if is_daytime else '_night')
     
     def _get_wind_direction(self, direction: Optional[str]) -> Optional[str]:
         """Convert wind direction to cardinal direction."""
@@ -776,8 +782,18 @@ class IberianWeatherService(WeatherService):
                     # Get hourly data
                     hourly_data = day_data.get('prediccion', {}).get('dia', [{}])[0]
                     
+                    # Determine if this is a short-term or medium-term forecast
+                    now_utc = datetime.now(timezone.utc)
+                    hours_ahead = (base_date - now_utc).total_seconds() / 3600
+                    is_short_term = hours_ahead <= 48  # Short term = first 48 hours
+                    
                     # Process each hour
-                    for hour in range(24):
+                    if is_short_term:
+                        step = 1  # Hourly data
+                    else:
+                        step = 6  # 6-hour blocks
+                    
+                    for hour in range(0, 24, step):
                         forecast_time = base_date.replace(hour=hour)
                         
                         # Skip if outside requested time range
@@ -788,7 +804,11 @@ class IberianWeatherService(WeatherService):
                         temperature = None
                         for temp_data in hourly_data.get('temperatura', []):
                             if temp_data.get('periodo') == str(hour):
-                                temperature = float(temp_data.get('valor', 0))
+                                try:
+                                    temperature = float(temp_data.get('value', 0))
+                                except (ValueError, TypeError):
+                                    self.warning("Invalid temperature value", data=temp_data)
+                                    temperature = 0.0
                                 break
                         
                         # Get precipitation for this hour
@@ -796,8 +816,20 @@ class IberianWeatherService(WeatherService):
                         precipitation_prob = 0.0
                         for precip_data in hourly_data.get('precipitacion', []):
                             if precip_data.get('periodo') == str(hour):
-                                precipitation = float(precip_data.get('valor', 0))
-                                precipitation_prob = float(precip_data.get('probabilidad', 0)) / 100
+                                try:
+                                    precipitation = float(precip_data.get('value', 0))
+                                except (ValueError, TypeError):
+                                    self.warning("Invalid precipitation value", data=precip_data)
+                                break
+                        
+                        # Get precipitation probability from probPrecipitacion
+                        for prob_data in hourly_data.get('probPrecipitacion', []):
+                            if prob_data.get('periodo') == str(hour):
+                                try:
+                                    # Value is already a percentage (0-100)
+                                    precipitation_prob = float(prob_data.get('value', 0))
+                                except (ValueError, TypeError):
+                                    self.warning("Invalid precipitation probability", data=prob_data)
                                 break
                         
                         # Get wind data for this hour
@@ -805,23 +837,56 @@ class IberianWeatherService(WeatherService):
                         wind_direction = None
                         for wind_data in hourly_data.get('viento', []):
                             if wind_data.get('periodo') == str(hour):
-                                wind_speed = float(wind_data.get('velocidad', 0))
-                                wind_direction = self._get_wind_direction(wind_data.get('direccion'))
+                                try:
+                                    wind_speed = float(wind_data.get('velocidad', 0)) / 3.6  # Convert km/h to m/s
+                                    wind_direction = self._get_wind_direction(wind_data.get('direccion'))
+                                except (ValueError, TypeError):
+                                    self.warning("Invalid wind value", data=wind_data)
                                 break
                         
                         # Get thunder probability for this hour
                         thunder_prob = 0.0
                         for storm_data in hourly_data.get('tormenta', []):
                             if storm_data.get('periodo') == str(hour):
-                                thunder_prob = float(storm_data.get('probabilidad', 0)) / 100
+                                try:
+                                    thunder_prob = float(storm_data.get('probabilidad', 0)) / 100
+                                except (ValueError, TypeError):
+                                    self.warning("Invalid thunder probability", data=storm_data)
                                 break
                         
                         # Get weather symbol for this hour
                         symbol = 'cloudy'  # Default symbol
-                        for state_data in hourly_data.get('estadoCielo', []):
-                            if state_data.get('periodo') == str(hour):
-                                symbol = self._get_weather_symbol(state_data.get('descripcion', ''))
-                                break
+                        for sky_data in hourly_data.get('estadoCielo', []):
+                            if sky_data.get('periodo') == str(hour):
+                                code = sky_data.get('value', '')
+                                is_night = hour < 6 or hour >= 20
+                                if code == '11' or code == '11n':
+                                    symbol = 'clearsky_night' if is_night else 'clearsky_day'
+                                    break
+                                elif code == '12' or code == '12n':
+                                    symbol = 'partly_cloudy_night' if is_night else 'partly_cloudy_day'
+                                    break
+                                elif code == '13' or code == '13n':
+                                    symbol = 'cloudy'
+                                    break
+                                elif code == '14' or code == '14n':
+                                    symbol = 'fog'
+                                    break
+                                elif code == '15' or code == '15n':
+                                    symbol = 'rain'
+                                    break
+                                elif code == '16' or code == '16n':
+                                    symbol = 'rain_showers'
+                                    break
+                                elif code == '17' or code == '17n':
+                                    symbol = 'thunderstorm'
+                                    break
+                                elif code == '18' or code == '18n':
+                                    symbol = 'snow'
+                                    break
+                        
+                        # Set block duration based on whether it's short-term or not
+                        block_duration = timedelta(hours=step)
                         
                         forecast = WeatherData(
                             temperature=temperature,
@@ -831,7 +896,8 @@ class IberianWeatherService(WeatherService):
                             wind_direction=wind_direction,
                             symbol=symbol,
                             elaboration_time=forecast_time,
-                            thunder_probability=thunder_prob
+                            thunder_probability=thunder_prob,
+                            block_duration=block_duration
                         )
                         
                         forecasts.append(forecast)
@@ -842,7 +908,6 @@ class IberianWeatherService(WeatherService):
             
             self.debug(f"Parsed {len(forecasts)} hourly forecasts")
             return forecasts
-
     def _parse_daily_forecast(self, forecast_data: List[Dict], start_time: datetime, end_time: datetime, local_tz: ZoneInfo) -> List[WeatherData]:
         """Parse daily forecast data from AEMET."""
         forecasts = []
@@ -1009,6 +1074,27 @@ class IberianWeatherService(WeatherService):
                             # For long-term forecasts, use 12h blocks
                             periods = ['00-12', '12-24']
                     
+                    # For short-term forecasts, split longer periods into hourly blocks
+                    if is_short_term:
+                        hourly_periods = set()
+                        for period in periods:
+                            period_parts = period.split('-')
+                            if len(period_parts) == 2:
+                                try:
+                                    start = int(period_parts[0])
+                                    end = int(period_parts[1])
+                                    # Split into hourly blocks
+                                    for hour in range(start, end):
+                                        hourly_periods.add(f"{hour:02d}-{(hour+1):02d}")
+                                except ValueError:
+                                    self.warning(f"Invalid period format: {period}")
+                                    continue
+                        periods = sorted(list(hourly_periods))
+                    # For medium-term forecasts, ensure we have all 6-hour blocks
+                    elif is_medium_term:
+                        # Always include all 6-hour blocks for medium-term forecasts
+                        periods = ['00-06', '06-12', '12-18', '18-24']
+                    
                     # Sort periods for consistent processing
                     periods = sorted(list(periods))
                     
@@ -1042,66 +1128,231 @@ class IberianWeatherService(WeatherService):
                             
                             # Skip if outside requested range (using UTC times)
                             forecast_time_utc = forecast_time.astimezone(timezone.utc)
-                            if forecast_time_utc + block_duration <= start_time_utc or forecast_time_utc >= end_time_utc:
+                            forecast_end_utc = forecast_time_utc + block_duration
+                            # Include block if it overlaps with the requested time range
+                            if not (forecast_end_utc > start_time_utc and forecast_time_utc < end_time_utc):
                                 continue
                             
                             # Get temperature based on data format
+                            temp = None
+                            temp_data = day.get('temperatura')
+                            
                             if isinstance(temp_data, list):
-                                # For hourly data, use exact hour
-                                temp = temp_hours.get(period_start)
-                            else:
-                                # For 6h blocks, interpolate if needed
-                                temp = temp_hours.get(period_start)
+                                # Hourly format
+                                for t in temp_data:
+                                    if isinstance(t, dict):
+                                        try:
+                                            t_period = str(t.get('periodo', ''))
+                                            # Handle both single hour and range formats
+                                            if (t_period == str(period_start) or 
+                                                t_period == f"{period_start:02d}" or 
+                                                t_period == f"{period_start:02d}-{(period_start+1):02d}"):
+                                                temp = float(t.get('value', 0))
+                                                self.debug(
+                                                    "Found matching temperature data",
+                                                    period=period,
+                                                    temp_period=t_period,
+                                                    temp=temp
+                                                )
+                                                break
+                                        except (ValueError, TypeError) as e:
+                                            self.warning(
+                                                "Invalid temperature value",
+                                                error=str(e),
+                                                period=period,
+                                                data=t
+                                            )
+                            elif isinstance(temp_data, dict):
+                                # Daily format
+                                datos = temp_data.get('dato', [])
+                                try:
+                                    min_temp = float(temp_data.get('minima', 0))
+                                    max_temp = float(temp_data.get('maxima', 0))
+                                except (ValueError, TypeError) as e:
+                                    self.warning(
+                                        "Invalid min/max temperature values",
+                                        error=str(e),
+                                        data=temp_data
+                                    )
+                                    min_temp = max_temp = 0
+                                
+                                # First try to find exact hour match
+                                for dato in datos:
+                                    if isinstance(dato, dict):
+                                        try:
+                                            dato_hour = dato.get('hora')
+                                            # Handle both integer and string hour formats
+                                            if ((isinstance(dato_hour, int) and dato_hour == period_start) or
+                                                (isinstance(dato_hour, str) and (
+                                                    dato_hour == str(period_start) or
+                                                    dato_hour == f"{period_start:02d}" or
+                                                    dato_hour == f"{period_start:02d}-{(period_start+1):02d}"))):
+                                                temp = float(dato.get('value', 0))
+                                                self.debug(
+                                                    "Found matching temperature in dato",
+                                                    period=period,
+                                                    dato_hour=dato_hour,
+                                                    temp=temp
+                                                )
+                                                break
+                                        except (ValueError, TypeError) as e:
+                                            self.warning(
+                                                "Invalid temperature value in dato",
+                                                error=str(e),
+                                                data=dato
+                                            )
+                                
+                                # If no exact match, interpolate based on time of day
                                 if temp is None:
-                                    # Simple interpolation based on time of day
-                                    if period_start < 6:
+                                    if period_start < 6:  # Night (00:00-06:00)
                                         temp = min_temp
-                                    elif period_start < 14:
+                                    elif 11 <= period_start <= 15:  # Peak day (11:00-15:00)
                                         temp = max_temp
-                                    else:
-                                        temp = min_temp + (max_temp - min_temp) * 0.5
+                                    elif 6 <= period_start < 11:  # Morning (06:00-11:00)
+                                        progress = (period_start - 6) / 5
+                                        temp = min_temp + (max_temp - min_temp) * progress
+                                    else:  # Evening (15:00-00:00)
+                                        progress = (period_start - 15) / 9
+                                        temp = max_temp - (max_temp - min_temp) * progress
+                                    self.debug(
+                                        "Using interpolated temperature",
+                                        period=period,
+                                        temp=temp,
+                                        min_temp=min_temp,
+                                        max_temp=max_temp
+                                    )
+                            
+                            if temp is None:
+                                self.warning(
+                                    "Could not determine temperature",
+                                    period=period,
+                                    period_start=period_start,
+                                    temp_data=temp_data
+                                )
+                                temp = 0
+                            
+                            # Get precipitation data
+                            precip_amount = 0.0
+                            prob_precip = 0.0
+                            
+                            # Try hourly precipitation amount
+                            precipitacion = day.get('precipitacion', [])
+                            if isinstance(precipitacion, list):
+                                for p in precipitacion:
+                                    if isinstance(p, dict) and p.get('periodo') == str(period_start):
+                                        try:
+                                            precip_amount = float(p.get('value', 0))
+                                            break
+                                        except (ValueError, TypeError):
+                                            self.warning("Invalid precipitation value", data=p)
                             
                             # Get precipitation probability
-                            prob_precip = 0
                             prob_precipitacion = day.get('probPrecipitacion', [])
                             if isinstance(prob_precipitacion, list):
-                                for prob in prob_precipitacion:
-                                    if isinstance(prob, dict) and prob.get('periodo') == period:
-                                        try:
-                                            prob_precip = float(prob.get('value', 0))
-                                        except (ValueError, TypeError):
-                                            pass
-                                        break
+                                for p in prob_precipitacion:
+                                    if isinstance(p, dict):
+                                        p_period = str(p.get('periodo', ''))
+                                        # Handle both formats: "12" and "12-18"
+                                        if p_period == str(period_start) or (
+                                            '-' in p_period and 
+                                            len(p_period.split('-')) == 2 and
+                                            int(p_period.split('-')[0]) <= period_start < int(p_period.split('-')[1])
+                                        ):
+                                            try:
+                                                prob_precip = float(p.get('value', 0))
+                                                break
+                                            except (ValueError, TypeError):
+                                                self.warning("Invalid precipitation probability", data=p)
                             
                             # Get wind data
                             wind_speed = 0
                             wind_dir = 'C'
-                            viento = day.get('viento', [])
+                            
+                            # Try hourly format first (vientoAndRachaMax)
+                            viento = day.get('vientoAndRachaMax', [])
                             if isinstance(viento, list):
                                 for wind in viento:
-                                    if isinstance(wind, dict) and wind.get('periodo') == period:
-                                        try:
-                                            wind_speed = float(wind.get('velocidad', 0))
-                                            wind_dir = wind.get('direccion', 'C')
-                                        except (ValueError, TypeError):
-                                            pass
-                                        break
+                                    if isinstance(wind, dict):
+                                        wind_period = wind.get('periodo')
+                                        if wind_period == str(period_start):
+                                            try:
+                                                # Wind speed is in a list
+                                                velocidades = wind.get('velocidad', [])
+                                                if velocidades and isinstance(velocidades, list):
+                                                    wind_speed = float(velocidades[0])
+                                                # Wind direction is in a list
+                                                direcciones = wind.get('direccion', [])
+                                                if direcciones and isinstance(direcciones, list):
+                                                    wind_dir = direcciones[0]
+                                                self.debug(
+                                                    "Found matching hourly wind data",
+                                                    period=period,
+                                                    wind_period=wind_period,
+                                                    wind_speed=wind_speed,
+                                                    wind_dir=wind_dir
+                                                )
+                                                break
+                                            except (ValueError, TypeError, IndexError) as e:
+                                                self.warning(
+                                                    "Invalid hourly wind data",
+                                                    error=str(e),
+                                                    period=period,
+                                                    wind_period=wind_period,
+                                                    data=wind
+                                                )
+                            
+                            # If no hourly data, try daily format (viento)
+                            if wind_speed == 0:
+                                viento = day.get('viento', [])
+                                if isinstance(viento, list):
+                                    for wind in viento:
+                                        if isinstance(wind, dict):
+                                            wind_period = wind.get('periodo', '')
+                                            # Match period ranges (e.g., "06-12" contains hour 8)
+                                            if wind_period and '-' in wind_period:
+                                                try:
+                                                    start_hour, end_hour = map(int, wind_period.split('-'))
+                                                    if start_hour <= period_start < end_hour:
+                                                        wind_speed = float(wind.get('velocidad', 0))
+                                                        wind_dir = wind.get('direccion', 'C')
+                                                        self.debug(
+                                                            "Found matching daily wind data",
+                                                            period=period,
+                                                            wind_period=wind_period,
+                                                            wind_speed=wind_speed,
+                                                            wind_dir=wind_dir
+                                                        )
+                                                        break
+                                                except (ValueError, TypeError) as e:
+                                                    self.warning(
+                                                        "Invalid daily wind data",
+                                                        error=str(e),
+                                                        period=period,
+                                                        wind_period=wind_period,
+                                                        data=wind
+                                                    )
                             
                             # Get sky condition
                             sky_value = ''
                             if isinstance(estado_cielo, list):
                                 for sky in estado_cielo:
                                     if isinstance(sky, dict) and sky.get('periodo') == period:
-                                        sky_value = sky.get('value', '')
+                                        sky_value = str(sky.get('value', ''))
                                         break
                             
+                            # Map AEMET sky code to our internal code
+                            summary_code = self._map_aemet_code(sky_value, period_start) if sky_value else 'clearsky_day'
+                            
+                            # Set block duration based on whether it's short-term or not
+                            block_duration = timedelta(hours=1 if is_short_term else 6)
+
                             forecast = WeatherData(
                                 temperature=float(temp),
-                                precipitation=0.0,  # Daily forecast doesn't provide precipitation amount
+                                precipitation=precip_amount,  # Use actual precipitation amount
                                 precipitation_probability=prob_precip,
                                 wind_speed=wind_speed / 3.6,  # Convert km/h to m/s
                                 wind_direction=self._get_wind_direction(wind_dir),
-                                symbol=self._map_aemet_code(sky_value, period_start) if sky_value else 'cloudy',
+                                symbol=summary_code,
                                 elaboration_time=forecast_time_utc,
                                 thunder_probability=0.0,
                                 block_duration=block_duration
@@ -1160,7 +1411,7 @@ class IberianWeatherService(WeatherService):
                 symbol=data['summary_code'],
                 elaboration_time=aligned_time,
                 thunder_probability=data['probability_of_thunder'],
-                block_duration=timedelta(hours=interval)
+                block_duration=timedelta(hours=data.get('block_duration_hours', interval))
             )
         
         # If not in cache, fetch from API

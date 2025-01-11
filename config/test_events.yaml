@@ -107,15 +107,15 @@
   address: "Carretera N-II km 701, 17455 Caldes de Malavella, Girona, Spain"
 
 # Tenerife South tomorrow
-- name: "Golf Costa Adeje Tomorrow"
+- name: "Golf Costa Adeje 3 days"
   location: "Golf Costa Adeje"
   coordinates:
     lat: 28.0876
     lon: -16.7408
   users:
     - "Jarkko"
-  start_time: "tomorrow 09:30"
-  end_time: "tomorrow 14:30"
+  start_time: "3 days 09:30"
+  end_time: "3 days 14:30"
   timezone: "Atlantic/Canary"
   address: "Calle Alcojora, s/n, 38670 Adeje, Santa Cruz de Tenerife, Spain"
 
