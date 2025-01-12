@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from golfcal2.utils.logging_utils import log_execution
-from golfcal2.services.weather_database import WeatherDatabase
+from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_schemas import MET_SCHEMA
 from golfcal2.services.weather_types import WeatherService, WeatherData, WeatherCode, WeatherResponse
 from golfcal2.exceptions import (
@@ -70,8 +70,8 @@ class MetWeatherService(WeatherService):
             }
             
             # Initialize database and cache
-            self.db = WeatherDatabase('met_weather', MET_SCHEMA)
-            self.cache = self.db  # Use database as cache
+            self.cache = WeatherResponseCache('weather_cache.db')
+            self.location_cache = WeatherLocationCache('weather_locations.db')
             
             # Rate limiting configuration
             self._last_request_time = datetime.now()  # Initialize with current time

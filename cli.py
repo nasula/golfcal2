@@ -17,6 +17,7 @@ from golfcal2.models.user import User
 from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
 from golfcal2.services.external_event_service import ExternalEventService
 from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_database import WeatherResponseCache
 
 def create_parser() -> argparse.ArgumentParser:
     """Create argument parser."""
@@ -216,154 +217,27 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
         
         if args.list_type == 'weather-cache':
             logger.info("Listing weather cache contents")
-            from golfcal2.services.weather_database import WeatherDatabase
-            from golfcal2.services.weather_schemas import MET_SCHEMA, PORTUGUESE_SCHEMA, IBERIAN_SCHEMA
             import json
             from datetime import datetime, timedelta
             import sqlite3
             
-            # Initialize databases based on service filter
-            dbs = []
-            if not args.service or args.service == 'met':
-                dbs.append(('met', WeatherDatabase('met_weather', MET_SCHEMA)))
-            if not args.service or args.service == 'portuguese':
-                dbs.append(('portuguese', WeatherDatabase('portuguese_weather', PORTUGUESE_SCHEMA)))
-            if not args.service or args.service == 'iberian':
-                dbs.append(('iberian', WeatherDatabase('iberian_weather', IBERIAN_SCHEMA)))
+            # Initialize cache
+            cache = WeatherResponseCache('weather_cache.db')
             
             # Handle clear command
             if args.clear:
-                cleared = False
-                for service_name, db in dbs:
-                    if not args.service or args.service == service_name:
-                        try:
-                            with sqlite3.connect(db.db_file) as conn:
-                                cursor = conn.cursor()
-                                cursor.execute("DELETE FROM weather")
-                                conn.commit()
-                                logger.info(f"Cleared weather cache for {service_name} service")
-                                cleared = True
-                        except Exception as e:
-                            logger.warning(f"Failed to clear {service_name} weather cache: {str(e)}")
-                
-                if not cleared:
-                    if args.service:
-                        logger.error(f"No weather cache found for service: {args.service}")
-                    else:
-                        logger.error("Failed to clear any weather caches")
-                return 0
-            
-            all_data = {}
-            for service_name, db in dbs:
                 try:
-                    # Get all locations from the database
-                    conn = sqlite3.connect(db.db_file)
-                    cursor = conn.cursor()
-                    
-                    # Build the WHERE clause based on filters
-                    where_clauses = ["1=1"]  # Always true condition as base
-                    params = []
-                    
-                    if args.location:
-                        where_clauses.append("location = ?")
-                        params.append(args.location)
-                    
-                    if args.date:
-                        try:
-                            date = datetime.strptime(args.date, '%Y-%m-%d')
-                            where_clauses.append("(time LIKE ? OR time LIKE ?)")
-                            # Match both formats: with and without T and timezone
-                            params.extend([
-                                f"{date.strftime('%Y-%m-%d')}T%",
-                                f"{date.strftime('%Y-%m-%d')} %"
-                            ])
-                        except ValueError:
-                            logger.error(f"Invalid date format: {args.date}. Use YYYY-MM-DD")
-                            return 1
-                    
-                    # Query to get distinct locations and their time ranges
-                    query = f"""
-                        SELECT DISTINCT location, 
-                               MIN(substr(time, 1, 19)) || '+00:00' as start_time,
-                               MAX(substr(time, 1, 19)) || '+00:00' as end_time
-                        FROM weather
-                        WHERE {' AND '.join(where_clauses)}
-                        GROUP BY location
-                    """
-                    
-                    cursor.execute(query, params)
-                    locations = cursor.fetchall()
-                    
-                    service_data = {}
-                    for location, start_time, end_time in locations:
-                        try:
-                            # Parse ISO format times
-                            start = datetime.fromisoformat(start_time)
-                            end = datetime.fromisoformat(end_time)
-                            
-                            # Generate time points
-                            times = []
-                            current = start
-                            while current <= end:
-                                times.append(current.isoformat())  # Store in ISO format
-                                current += timedelta(hours=1)
-                            
-                            # Get weather data for this location and time range
-                            data = db.get_weather_data(
-                                location=location,
-                                times=times,
-                                data_type='daily',
-                                fields=[
-                                    'air_temperature',
-                                    'precipitation_amount',
-                                    'wind_speed',
-                                    'wind_from_direction',
-                                    'probability_of_precipitation',
-                                    'probability_of_thunder',
-                                    'summary_code'
-                                ]
-                            )
-                            
-                            if data:
-                                service_data[location] = data
-                        except ValueError as e:
-                            logger.warning(f"Failed to parse time for location {location}: {e}")
-                            continue
-                    
-                    conn.close()
-                    
-                    if service_data:
-                        all_data[service_name] = service_data
-                        
+                    deleted = cache.cleanup_expired()
+                    logger.info(f"Removed {deleted} expired weather cache entries")
+                    return 0
                 except Exception as e:
-                    logger.warning(f"Failed to get data from {service_name} database: {str(e)}")
-                    continue
+                    logger.error(f"Failed to clear weather cache: {e}")
+                    return 1
             
-            if not all_data:
-                logger.info("No weather cache data found")
-                return 0
-            
-            if args.format == 'json':
-                print(json.dumps(all_data, indent=2))
-            else:
-                for service_name, locations in all_data.items():
-                    print(f"\nWeather Cache - {service_name.upper()} Service")
-                    print("=" * 60)
-                    
-                    for location, data in locations.items():
-                        print(f"\nLocation: {location}")
-                        print("-" * 40)
-                        
-                        for time_str, values in sorted(data.items()):
-                            print(f"\nTime: {time_str}")
-                            print("  " + "-" * 38)
-                            for key, value in values.items():
-                                if value is not None:  # Only print non-None values
-                                    print(f"  {key}: {value}")
-                    print()
-            
+            # TODO: Implement listing of cache contents
+            logger.warning("Listing cache contents not yet implemented")
             return 0
-            
+
         elif args.list_type == 'courses':
             # Get list of users to process
             users = [args.user] if args.user else config.users.keys()
@@ -572,6 +446,17 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppC
     except Exception as e:
         logger.error(f"Failed to check configuration: {e}", exc_info=True)
         return 1
+
+def cleanup_weather_cache(args):
+    """Clean up expired weather cache entries."""
+    try:
+        cache = WeatherResponseCache('weather_cache.db')
+        deleted = cache.cleanup_expired()
+        print(f"Removed {deleted} expired weather cache entries")
+    except Exception as e:
+        print(f"Error cleaning up weather cache: {e}", file=sys.stderr)
+        return 1
+    return 0
 
 def main() -> int:
     """Main entry point."""

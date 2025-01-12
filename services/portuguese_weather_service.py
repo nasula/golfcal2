@@ -16,7 +16,7 @@ from datetime import timezone
 
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse
-from golfcal2.services.weather_database import WeatherDatabase
+from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_schemas import PORTUGUESE_SCHEMA
 from golfcal2.services.weather_cache import WeatherLocationCache
 from golfcal2.utils.logging_utils import log_execution
@@ -73,9 +73,8 @@ class PortugueseWeatherService(WeatherService):
             }
             
             # Initialize database and cache
-            self.db = WeatherDatabase('portuguese_weather', PORTUGUESE_SCHEMA)
-            self.cache = self.db  # Use database as cache
-            self.location_cache = WeatherLocationCache(config)
+            self.cache = WeatherResponseCache('weather_cache.db')
+            self.location_cache = WeatherLocationCache('weather_locations.db')
             
             # Rate limiting configuration
             self._last_api_call = None
