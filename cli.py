@@ -67,6 +67,45 @@ def create_parser() -> argparse.ArgumentParser:
         help='Force processing even if no changes are detected'
     )
     
+    # Get command
+    get_parser = subparsers.add_parser(
+        'get',
+        help='Get various types of data (weather, etc.)'
+    )
+    get_subparsers = get_parser.add_subparsers(
+        dest='get_type',
+        help='Type of data to get'
+    )
+    
+    # Weather subcommand
+    weather_parser = get_subparsers.add_parser(
+        'weather',
+        help='Get weather data for a specific location'
+    )
+    weather_parser.add_argument(
+        '--lat',
+        type=float,
+        required=True,
+        help='Latitude of the location (e.g., 37.0 for Algarve)'
+    )
+    weather_parser.add_argument(
+        '--lon',
+        type=float,
+        required=True,
+        help='Longitude of the location (e.g., -8.0 for Algarve)'
+    )
+    weather_parser.add_argument(
+        '--service',
+        choices=['met', 'portuguese', 'iberian'],
+        help='Weather service to use (met=MET.no for Nordic countries, portuguese=IPMA for Portugal, iberian=AEMET for Spain)'
+    )
+    weather_parser.add_argument(
+        '--format',
+        choices=['text', 'json'],
+        default='text',
+        help='Output format: human-readable text or machine-readable JSON (default: text)'
+    )
+    
     # List command
     list_parser = subparsers.add_parser(
         'list',
@@ -230,13 +269,40 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
                     deleted = cache.cleanup_expired()
                     logger.info(f"Removed {deleted} expired weather cache entries")
                     return 0
+                except sqlite3.Error as e:
+                    logger.error(f"Database error while clearing weather cache: {e}")
+                    return 1
                 except Exception as e:
                     logger.error(f"Failed to clear weather cache: {e}")
                     return 1
             
-            # TODO: Implement listing of cache contents
-            logger.warning("Listing cache contents not yet implemented")
-            return 0
+            # List cache contents
+            try:
+                entries = cache.list_entries()
+                if not entries:
+                    logger.info("Weather cache is empty")
+                    return 0
+                
+                if args.format == 'json':
+                    print(json.dumps(entries, indent=2, default=str))
+                else:
+                    print("\nWeather Cache Contents")
+                    print("=" * 60)
+                    for entry in entries:
+                        print(f"\nService: {entry['service']}")
+                        print(f"Location: {entry['location']}")
+                        print(f"Start Time: {entry['start_time']}")
+                        print(f"End Time: {entry['end_time']}")
+                        print(f"Expires: {entry['expires']}")
+                        print("-" * 60)
+                return 0
+                
+            except sqlite3.Error as e:
+                logger.error(f"Database error while listing weather cache: {e}")
+                return 1
+            except Exception as e:
+                logger.error(f"Failed to list weather cache: {e}")
+                return 1
 
         elif args.list_type == 'courses':
             # Get list of users to process
@@ -458,6 +524,66 @@ def cleanup_weather_cache(args):
         return 1
     return 0
 
+def get_command(args: argparse.Namespace, logger: logging.Logger, config: AppConfig) -> int:
+    """Get various types of data."""
+    try:
+        if not args.get_type:
+            logger.error("Please specify what to get: 'weather'")
+            return 1
+            
+        if args.get_type == 'weather':
+            logger.info(f"Getting weather data for location ({args.lat}, {args.lon})")
+            
+            # Initialize weather manager
+            weather_manager = WeatherManager(ZoneInfo(config.timezone), ZoneInfo('UTC'), config)
+            
+            # Get weather data for the next 24 hours
+            from datetime import datetime, timedelta
+            now = datetime.now(ZoneInfo(config.timezone))
+            end = now + timedelta(hours=24)
+            
+            try:
+                response = weather_manager.get_weather(args.lat, args.lon, now, end)
+                if not response or not response.data:
+                    logger.error("No weather data found")
+                    return 1
+                
+                if args.format == 'json':
+                    import json
+                    print(json.dumps({
+                        'data': [w.to_dict() for w in response.data],
+                        'expires': response.expires.isoformat() if response.expires else None
+                    }, indent=2, default=str))
+                else:
+                    print("\nWeather Forecast")
+                    print("---------------")
+                    for w in response.data:
+                        print(f"\nTime: {w.elaboration_time}")
+                        print(f"Temperature: {w.temperature}°C")
+                        print(f"Precipitation: {w.precipitation} mm")
+                        print(f"Wind: {w.wind_speed} m/s from {w.wind_direction}°")
+                        if w.precipitation_probability is not None:
+                            print(f"Precipitation probability: {w.precipitation_probability}%")
+                        if w.thunder_probability is not None:
+                            print(f"Thunder probability: {w.thunder_probability}%")
+                        if w.symbol:
+                            print(f"Summary: {w.symbol}")
+                    
+                    if response.expires:
+                        print(f"\nExpires: {response.expires}")
+                
+                return 0
+
+            except Exception as e:
+                logger.error(f"Failed to get weather data: {str(e)}")
+                return 1
+        
+        return 0
+        
+    except Exception as e:
+        logger.error(f"Failed to get data: {str(e)}")
+        return 1
+
 def main() -> int:
     """Main entry point."""
     try:
@@ -497,6 +623,8 @@ def main() -> int:
             return list_command(args, logger, config)
         elif args.command == 'check':
             return check_command(args, logger, config)
+        elif args.command == 'get':
+            return get_command(args, logger, config)
         else:
             logger.error(f"Unknown command: {args.command}")
             return 1

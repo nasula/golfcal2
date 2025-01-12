@@ -87,35 +87,41 @@ def mock_aemet_response(requests_mock):
 
     def create_day_forecast(date_str, hour_start=0, hour_end=24, step=1):
         """Create a day forecast with hourly data."""
+        # Parse the date to determine if this is the test day (2024-01-15)
+        forecast_date = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
+        is_test_day = forecast_date.date() == datetime(2024, 1, 15).date()
+        print(f"Creating forecast for {date_str}, is_test_day={is_test_day}")
+        
         return {
             "prediccion": {
                 "dia": [{
                     "fecha": date_str,
-                    "temperatura": {
-                        "maxima": 26,
-                        "minima": 15,
-                        "dato": [
-                            {"value": "15.5" if hour == 12 else "21.5", "hora": hour}
-                            for hour in range(hour_start, hour_end, step)
-                        ]
-                    },
+                    "temperatura": [
+                        {"periodo": str(hour).zfill(2), "value": "15.5" if (is_test_day and hour == 12) else "21.5"}
+                        for hour in range(hour_start, hour_end, step)
+                    ],
                     "precipitacion": [
-                        {"periodo": str(hour), "value": "0.0"}
+                        {"periodo": str(hour).zfill(2), "value": "0.0"}
                         for hour in range(hour_start, hour_end, step)
                     ],
                     "probPrecipitacion": [
-                        {"periodo": "00-24", "value": "30"},
-                        {"periodo": "00-12", "value": "20"},
-                        {"periodo": "12-24", "value": "30"}
+                        {"periodo": "0006" if hour < 6 else "0612" if hour < 12 else "1218" if hour < 18 else "1824", "value": "30"}
+                        for hour in range(hour_start, hour_end, step)
                     ],
                     "viento": [
-                        {"periodo": str(hour), "velocidad": "18.72" if hour == 12 else "19.8", "direccion": "NE"}
+                        {"periodo": str(hour).zfill(2), "velocidad": "18.72" if hour == 12 else "19.8", "direccion": "NE"}
                         for hour in range(hour_start, hour_end, step)
                     ],
                     "estadoCielo": [
-                        {"periodo": str(hour), "value": "11n" if (hour < 6 or hour >= 20) else "11", "descripcion": "Despejado"}
+                        {"periodo": str(hour).zfill(2), "value": "11n" if (hour < 6 or hour >= 20) else "11", "descripcion": "Despejado"}
                         for hour in range(hour_start, hour_end, step)
-                    ]
+                    ],
+                    "tormenta": [
+                        {"periodo": str(hour).zfill(2), "probabilidad": "0"}
+                        for hour in range(hour_start, hour_end, step)
+                    ],
+                    "orto": "07:58",
+                    "ocaso": "18:28"
                 }]
             }
         }
@@ -127,14 +133,15 @@ def mock_aemet_response(requests_mock):
         # 7 days total: day=0,1 => short-term (hourly), day=2..6 => medium/long-term
         prediccion_dias = []
         for i in range(7):
-            day_date_str = (now + timedelta(days=i)).strftime("%Y-%m-%dT00:00:00")
+            day_date = now + timedelta(days=i)
+            print(f"Creating forecast for day {i}: {day_date.isoformat()}")
             # For short-term (first 48h), use hourly data
             if i < 2:
-                day_data = create_day_forecast(date_str=day_date_str, hour_start=0, hour_end=24)
+                day_data = create_day_forecast(day_date.strftime("%Y-%m-%dT%H:%M:%S"), hour_start=0, hour_end=24, step=1)
             else:
                 # For medium/long-term, use 6-hour blocks
-                day_data = create_day_forecast(date_str=day_date_str, hour_start=0, hour_end=24, step=6)
-            prediccion_dias.append(day_data)
+                day_data = create_day_forecast(day_date.strftime("%Y-%m-%dT%H:%M:%S"), hour_start=0, hour_end=24, step=6)
+            prediccion_dias.extend(day_data["prediccion"]["dia"])
 
         return [{
             "elaborado": now.strftime("%Y-%m-%dT%H:00:00"),
@@ -192,10 +199,11 @@ class TestIberianWeatherService:
 
         • The first 2 hours (hours 12..13) should be short-term hourly with the expected
           temperature of 15.5 at hour=12. 
-        • The precipitation probability should be 30% at that hour=12 (matching mock if short-term).
+        • The precipitation probability should be 30% at that hour=12 (matching mock data).
         """
         start_time = datetime(2024, 1, 15, 12, tzinfo=timezone.utc)
         end_time = start_time + timedelta(hours=2)
+        print(f"\nTest requesting data from {start_time.isoformat()} to {end_time.isoformat()}")
         
         response = weather_service.get_weather(
             lat=40.4,  # Madrid
@@ -208,16 +216,17 @@ class TestIberianWeatherService:
         assert len(response.data) == 2, "Expect 2 hourly blocks covering 12:00..13:59"
 
         first_hour = response.data[0]
+        print(f"First hour data: time={first_hour.elaboration_time.isoformat()}, temp={first_hour.temperature}")
         assert isinstance(first_hour, WeatherData)
         # Expect 15.5°C at hour=12 (per short-term fixture data)
-        assert pytest.approx(first_hour.temperature, 0.1) == 15.5
+        assert first_hour.temperature == pytest.approx(15.5, 0.1)
 
-        # Expect probability_of_precipitation=30% at noon if your mock sets that
+        # Expect probability_of_precipitation=30% at noon (from hourly data)
         assert first_hour.precipitation_probability == 30, (
             f"Expected 30% chance at {first_hour.elaboration_time}, got {first_hour.precipitation_probability}"
         )
 
-        # If you map “11” to “clearsky_day,” confirm that here
+        # Verify weather code mapping
         assert first_hour.symbol == "clearsky_day", (
             f"Expected 'clearsky_day', got {first_hour.symbol}"
         )
@@ -273,8 +282,7 @@ class TestIberianWeatherService:
     def test_iberian_timezone_handling(self, weather_service, mock_aemet_response):
         """
         Verify that the local time is used properly. For 14:00–16:00 local Madrid time,
-        we expect 'clearsky_day'. If the fixture is set up to yield raw '11' then your code 
-        should map that to 'clearsky_day'.
+        we expect 'clearsky_day' since it's daytime.
         """
         madrid_tz = ZoneInfo("Europe/Madrid")
         local_start = datetime(2024, 1, 15, 14, tzinfo=madrid_tz)
@@ -346,8 +354,8 @@ class TestIberianWeatherService:
 
     def test_iberian_cross_day_event(self, weather_service, mock_aemet_response):
         """
-        Verify that an event from 23:00–01:00 toggles from 'clearsky_night' at 23:00 
-        to 'clearsky_night' or 'clearsky_day' after midnight if your mock data has '11n' at hour>=20.
+        Verify that an event from 23:00–01:00 uses correct day/night weather codes.
+        At 23:00 and 00:00 in January, both should be night conditions.
         """
         start_time = datetime(2024, 1, 15, 23, tzinfo=timezone.utc)
         end_time = start_time + timedelta(hours=2)
@@ -366,14 +374,10 @@ class TestIberianWeatherService:
         assert response.data[1].elaboration_time.day == 16
         assert response.data[1].elaboration_time.hour == 0
 
-        # According to standard AEMET usage, if the raw code is “11n,” 
-        # your code should map that to "clearsky_night."
+        # Both hours should be night conditions in January
         assert response.data[0].symbol == "clearsky_night", (
             f"At 23:00, expected 'clearsky_night', got {response.data[0].symbol}"
         )
-        # Possibly the second hour is also "clearsky_night" if it’s still dark, 
-        # or “clearsky_day” if your fixture says 00:00 is day. Adjust if needed.
-        # This example expects it’s still night at 00:00 in January.
         assert response.data[1].symbol == "clearsky_night", (
             f"At 00:00, expected 'clearsky_night', got {response.data[1].symbol}"
         ) 

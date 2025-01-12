@@ -13,13 +13,14 @@ from typing import Dict, Any, List, Optional
 from zoneinfo import ZoneInfo
 import math
 from datetime import timezone
+import logging
 
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse
 from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_schemas import PORTUGUESE_SCHEMA
-from golfcal2.services.weather_cache import WeatherLocationCache
-from golfcal2.utils.logging_utils import log_execution
+from golfcal2.services.weather_location_cache import WeatherLocationCache
+from golfcal2.utils.logging_utils import log_execution, EnhancedLoggerMixin
 from golfcal2.exceptions import (
     WeatherError,
     APIError,
@@ -36,6 +37,8 @@ from golfcal2.config.types import AppConfig
 https://api.ipma.pt/
  """
 
+logger = logging.getLogger(__name__)
+
 class PortugueseWeatherService(WeatherService):
     """Service for handling weather data for Portugal using IPMA API.
     
@@ -44,7 +47,7 @@ class PortugueseWeatherService(WeatherService):
     """
 
     BASE_URL = "https://api.ipma.pt/open-data"
-    USER_AGENT = "GolfCal/2.0 github.com/jahonen/golfcal (jarkko.ahonen@iki.fi)"
+    USER_AGENT = "GolfCal/2.0 github.com/jahonen/golfcal2 (jarkko.ahonen@iki.fi)"
     
     def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
         """Initialize service.
@@ -73,8 +76,10 @@ class PortugueseWeatherService(WeatherService):
             }
             
             # Initialize database and cache
-            self.cache = WeatherResponseCache('weather_cache.db')
-            self.location_cache = WeatherLocationCache('weather_locations.db')
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+            os.makedirs(data_dir, exist_ok=True)
+            self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+            self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
             
             # Rate limiting configuration
             self._last_api_call = None
@@ -83,418 +88,183 @@ class PortugueseWeatherService(WeatherService):
             
             self.set_log_context(service="PortugueseWeatherService")
 
-    def _haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculate the great circle distance between two points on the earth.
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get the block size in hours for grouping forecasts.
+        
+        IPMA provides daily forecasts, so we always return 24 hours.
         
         Args:
-            lat1: Latitude of first point in degrees
-            lon1: Longitude of first point in degrees
-            lat2: Latitude of second point in degrees
-            lon2: Longitude of second point in degrees
+            hours_ahead: Number of hours ahead of current time
             
         Returns:
-            Distance between points in kilometers
+            int: Block size in hours (24 for daily forecasts)
         """
-        # Convert decimal degrees to radians
-        lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+        return 24  # IPMA provides daily forecasts
+
+    def get_expiry_time(self) -> datetime:
+        """Get expiry time for IPMA weather data.
         
-        # Haversine formula
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-        c = 2 * math.asin(math.sqrt(a))
-        r = 6371  # Radius of earth in kilometers
-        return c * r
-    
-    @log_execution(level='DEBUG', include_args=True)
-    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        """Fetch forecasts from IPMA API."""
-        with handle_errors(
-            WeatherError,
-            "portuguese_weather",
-            f"fetch forecasts for coordinates ({lat}, {lon})",
-            lambda: []  # Fallback to empty list on error
-        ):
-            # Ensure we have proper timezone objects
-            if not isinstance(self.local_tz, ZoneInfo):
-                self.warning(
-                    "Invalid local timezone type",
-                    expected="ZoneInfo",
-                    actual=type(self.local_tz).__name__
-                )
-                local_tz = ZoneInfo("Europe/Lisbon")  # Fallback to default timezone
-            else:
-                local_tz = self.local_tz
+        IPMA updates their forecasts twice daily at 10:00 and 22:00 UTC.
+        """
+        now = datetime.now(self.utc_tz)
+        
+        # Calculate next update time
+        if now.hour < 10:
+            next_update = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        elif now.hour < 22:
+            next_update = now.replace(hour=22, minute=0, second=0, microsecond=0)
+        else:
+            next_update = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+        
+        return next_update
 
-            # Convert times to UTC for comparison
-            start_time_utc = start_time.astimezone(timezone.utc)
-            end_time_utc = end_time.astimezone(timezone.utc)
+    def _init_location_cache(self):
+        """Initialize location cache with data from IPMA API."""
+        try:
+            # Get locations from API
+            locations_url = f"{self.BASE_URL}/distrits-islands.json"
+            response = requests.get(locations_url, headers=self.headers, timeout=10)
             
-            try:
-                # Use the timezone from start_time
-                self.debug(f"Using timezone {local_tz} for coordinates ({lat}, {lon})")
-                
-                # First, try to get location from cache
-                cached_location = self.location_cache.get_ipma_location(lat, lon)
-                
-                if cached_location:
-                    self.debug(
-                        "Found cached location",
-                        name=cached_location['name'],
-                        code=cached_location['code'],
-                        distance_km=cached_location['distance']
-                    )
-                    location_id = cached_location['code']
-                else:
-                    # If not in cache, fetch from API
-                    locations_url = f"{self.endpoint}/distrits-islands.json"
-                    self.debug(
-                        "Getting locations list",
-                        url=locations_url,
-                        headers=self.headers,
-                        lat=lat,
-                        lon=lon
-                    )
-                    
-                    response = requests.get(
-                        locations_url,
-                        headers=self.headers,
-                        timeout=10
-                    )
-                    
-                    self.debug(
-                        "Got locations response",
-                        status=response.status_code,
-                        content_type=response.headers.get('content-type'),
-                        content_length=len(response.content)
-                    )
-                    
-                    if response.status_code != 200:
-                        error = APIResponseError(
-                            f"IPMA locations request failed with status {response.status_code}",
-                            response=response
-                        )
-                        aggregate_error(str(error), "portuguese_weather", None)
-                        return []
-
-                    locations = response.json()
-                    self.debug(
-                        "Parsed locations response",
-                        type=type(locations).__name__,
-                        count=len(locations.get('data', [])) if isinstance(locations, dict) else 0,
-                        sample=str(locations)[:200] if locations else None
-                    )
-                    
-                    # Get locations array from response
-                    locations_data = locations.get('data', []) if isinstance(locations, dict) else []
-                    if not locations_data:
-                        self.warning("No locations data in response")
-                        return []
-                    
-                    # Find nearest location
-                    nearest_location = None
-                    min_distance = float('inf')
-                    processed = 0
-                    
-                    self.debug(
-                        "Starting location search",
-                        target_lat=lat,
-                        target_lon=lon,
-                        total_locations=len(locations_data)
-                    )
-                    
-                    for location in locations_data:
+            if response.status_code == 200:
+                data = response.json()
+                if data and isinstance(data, list):
+                    locations = []
+                    for loc in data:
                         try:
-                            loc_lat = float(location.get('latitude', 0))
-                            loc_lon = float(location.get('longitude', 0))
-                            
-                            distance = self._haversine_distance(lat, lon, loc_lat, loc_lon)
-                            
-                            self.debug(
-                                "Checking location",
-                                name=location.get('local', 'unknown'),
-                                id=location.get('globalIdLocal', 'unknown'),
-                                lat=loc_lat,
-                                lon=loc_lon,
-                                distance_km=distance
-                            )
-                            
-                            if distance < min_distance:
-                                min_distance = distance
-                                nearest_location = location
-                                self.debug(
-                                    "Found closer location",
-                                    name=location.get('local', 'unknown'),
-                                    id=location.get('globalIdLocal', 'unknown'),
-                                    distance_km=distance,
-                                    location_lat=loc_lat,
-                                    location_lon=loc_lon
-                                )
-                            
-                            processed += 1
-                            if processed % 10 == 0:  # Log progress every 10 locations
-                                self.debug(f"Processed {processed} locations")
-                                
-                        except (ValueError, TypeError) as e:
-                            self.warning(
-                                "Failed to process location",
-                                error=str(e),
-                                location_data=location
-                            )
-                            continue
-
-                    if not nearest_location:
-                        self.warning(
-                            "No location found near coordinates",
-                            latitude=lat,
-                            longitude=lon,
-                            total_processed=processed
-                        )
-                        return []
-
-                    location_id = nearest_location.get('globalIdLocal')
-                    if not location_id:
-                        self.warning(
-                            "Location has no ID",
-                            location=nearest_location
-                        )
-                        return []
-                    
-                    # Cache the location for future use
-                    self.location_cache.cache_ipma_location(
-                        lat=lat,
-                        lon=lon,
-                        location_code=str(location_id),
-                        name=nearest_location.get('local', ''),
-                        loc_lat=float(nearest_location.get('latitude', 0)),
-                        loc_lon=float(nearest_location.get('longitude', 0)),
-                        distance=min_distance
-                    )
-
-                # Get forecast data
-                forecast_url = f"{self.endpoint}/forecast/meteorology/cities/daily/{location_id}.json"
-                self.debug(
-                    "Getting forecast data",
-                    url=forecast_url,
-                    location_id=location_id,
-                    location_name=cached_location['name'] if cached_location else nearest_location.get('local', 'unknown'),
-                    distance_km=cached_location['distance'] if cached_location else min_distance
-                )
-                
-                # Respect rate limits
-                if self._last_api_call:
-                    time_since_last = datetime.now() - self._last_api_call
-                    if time_since_last < self._min_call_interval:
-                        sleep_time = (self._min_call_interval - time_since_last).total_seconds()
-                        self.debug(f"Rate limit: sleeping for {sleep_time} seconds")
-                        time.sleep(sleep_time)
-                
-                forecast_response = requests.get(
-                    forecast_url,
-                    headers=self.headers,
-                    timeout=10
-                )
-                
-                self._last_api_call = datetime.now()
-                
-                self.debug(
-                    "Got forecast response",
-                    status=forecast_response.status_code,
-                    content_type=forecast_response.headers.get('content-type'),
-                    content_length=len(forecast_response.content)
-                )
-                
-                if forecast_response.status_code != 200:
-                    error = APIResponseError(
-                        f"IPMA forecast request failed with status {forecast_response.status_code}",
-                        response=forecast_response
-                    )
-                    aggregate_error(str(error), "portuguese_weather", None)
-                    return []
-
-                forecast_data = forecast_response.json()
-                if not forecast_data or 'data' not in forecast_data:
-                    error = WeatherError(
-                        "Invalid forecast data format from IPMA API",
-                        ErrorCode.INVALID_RESPONSE,
-                        {"response": forecast_data}
-                    )
-                    aggregate_error(str(error), "portuguese_weather", None)
-                    return []
-
-                self.debug(
-                    "Received forecast data",
-                    data=json.dumps(forecast_data, indent=2),
-                    data_type=type(forecast_data).__name__,
-                    has_data=bool(forecast_data.get('data')),
-                    data_length=len(forecast_data.get('data', [])),
-                    first_period=forecast_data.get('data', [{}])[0] if forecast_data.get('data') else None
-                )
-
-                forecasts = []
-                for period in forecast_data.get('data', []):
-                    with handle_errors(
-                        WeatherError,
-                        "portuguese_weather",
-                        "process forecast period",
-                        lambda: None
-                    ):
-                        # Parse forecast date (YYYY-MM-DD format)
-                        try:
-                            # Parse the actual forecast date from API
-                            forecast_date = datetime.strptime(
-                                period.get('forecastDate', ''),
-                                '%Y-%m-%d'
-                            ).replace(tzinfo=local_tz)
-                            
-                            # Skip if not the date we want
-                            if forecast_date.date() != start_time.date():
-                                continue
-                                
-                        except ValueError as e:
-                            self.warning(
-                                "Failed to parse forecast date",
-                                date=period.get('forecastDate'),
-                                error=str(e),
-                                period_data=period
-                            )
-                            continue
-                        
-                        # Skip if outside our time range
-                        if forecast_date < start_time.replace(hour=0, minute=0, second=0, microsecond=0):
-                            continue
-                        
-                        # Extract weather data
-                        try:
-                            tmin = float(period.get('tMin', 0))
-                            tmax = float(period.get('tMax', 0))
-                            
-                            # Calculate hourly temperatures using a simple sine curve
-                            # Minimum at 6 AM, maximum at 2 PM
-                            min_hour = 6
-                            max_hour = 14
-                            
-                            precip_prob = float(period.get('precipitaProb', 0))
-                            # Convert probability to amount (simple estimation)
-                            precip = precip_prob / 100.0 if precip_prob > 0 else 0
-                            
-                            # Wind speed class to m/s conversion
-                            wind_class = int(period.get('classWindSpeed', 0))
-                            wind_speed = self._wind_class_to_speed(wind_class)
-                            
-                            wind_dir = period.get('predWindDir')
-                            weather_type = int(period.get('idWeatherType', 0))
-                            
-                            # Generate hourly forecasts for the time range
-                            for hour in range(24):
-                                forecast_time = forecast_date.replace(hour=hour)
-                                
-                                # Skip if outside our time range
-                                if forecast_time < start_time or forecast_time > end_time:
-                                    continue
-                                
-                                # Calculate temperature for this hour using sine curve
-                                hour_progress = (hour - min_hour) % 24
-                                day_progress = hour_progress / 24.0
-                                temp_range = tmax - tmin
-                                if min_hour <= hour <= max_hour:
-                                    # Rising temperature
-                                    progress = (hour - min_hour) / (max_hour - min_hour)
-                                    temp = tmin + temp_range * math.sin(progress * math.pi / 2)
-                                else:
-                                    # Falling temperature
-                                    if hour > max_hour:
-                                        progress = (hour - max_hour) / (24 + min_hour - max_hour)
-                                    else:  # hour < min_hour
-                                        progress = (hour + 24 - max_hour) / (24 + min_hour - max_hour)
-                                    temp = tmax - temp_range * math.sin(progress * math.pi / 2)
-                                
-                                self.debug(
-                                    "Calculated hourly values",
-                                    hour=hour,
-                                    temp=temp,
-                                    base_temp_min=tmin,
-                                    base_temp_max=tmax,
-                                    precip=precip,
-                                    wind_speed=wind_speed
-                                )
-                                
-                                # Map weather type to symbol
-                                try:
-                                    symbol_code = self._map_ipma_code(weather_type, hour)
-                                except Exception as e:
-                                    self.warning(
-                                        "Failed to map weather code",
-                                        code=weather_type,
-                                        hour=hour,
-                                        error=str(e)
-                                    )
-                                    continue
-
-                                # Calculate thunder probability based on weather type
-                                thunder_prob = 0.0
-                                if weather_type in [6, 7, 9]:  # Thunder types in IPMA codes
-                                    thunder_prob = 50.0
-
-                                forecast = WeatherData(
-                                    temperature=temp,
-                                    precipitation=precip,
-                                    precipitation_probability=precip_prob,
-                                    wind_speed=wind_speed,
-                                    wind_direction=self._get_wind_direction(wind_dir),
-                                    symbol=symbol_code,
-                                    elaboration_time=forecast_time,
-                                    thunder_probability=thunder_prob
-                                )
-                                forecasts.append(forecast)
-                                
-                                self.debug(
-                                    "Added hourly forecast",
-                                    time=forecast_time.isoformat(),
-                                    temp=temp,
-                                    precip=precip,
-                                    wind=wind_speed,
-                                    symbol=symbol_code
-                                )
-                                
-                        except (ValueError, TypeError) as e:
-                            self.warning(
-                                "Failed to parse forecast values",
-                                error=str(e),
-                                data=period,
-                                raw_values={
-                                    'tMin': period.get('tMin'),
-                                    'tMax': period.get('tMax'),
-                                    'precipitaProb': period.get('precipitaProb'),
-                                    'classWindSpeed': period.get('classWindSpeed'),
-                                    'predWindDir': period.get('predWindDir'),
-                                    'idWeatherType': period.get('idWeatherType')
+                            location = {
+                                'id': str(loc['globalIdLocal']),
+                                'name': loc['local'],
+                                'latitude': float(loc['latitude']),
+                                'longitude': float(loc['longitude']),
+                                'metadata': {
+                                    'region': loc.get('idRegiao'),
+                                    'district': loc.get('idDistrito'),
+                                    'municipality': loc.get('idConcelho'),
+                                    'warning_area': loc.get('idAreaAviso')
                                 }
+                            }
+                            locations.append(location)
+                        except (KeyError, ValueError) as e:
+                            self.warning(
+                                "Failed to parse location data",
+                                exc_info=e,
+                                data=loc
                             )
                             continue
-
-                self.debug(
-                    "Completed forecast processing",
-                    total_forecasts=len(forecasts),
-                    time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
+                    
+                    if locations:
+                        self.location_cache.store_location_set(
+                            service_type='ipma',
+                            set_type='municipalities',
+                            data=locations,
+                            expires_in=timedelta(days=30)
+                        )
+                        self.debug(f"Stored {len(locations)} locations in cache")
+                    else:
+                        self.error("Empty municipality list received from IPMA")
+                else:
+                    self.error(
+                        "Failed to get municipality list",
+                        status=response.status_code
+                    )
+            else:
+                self.error(
+                    "Failed to get municipality list",
+                    status=response.status_code
                 )
-                return forecasts
-                
-            except requests.exceptions.Timeout:
-                error = APITimeoutError(
-                    "IPMA API request timed out",
-                    {"url": forecast_url if 'forecast_url' in locals() else locations_url}
+        except requests.RequestException as e:
+            self.error("Failed to fetch locations from IPMA API", exc_info=e)
+        except Exception as e:
+            self.error("Error initializing location cache", exc_info=e)
+
+    @log_execution(level='DEBUG', include_args=True)
+    def _fetch_forecasts(
+        self,
+        lat: float,
+        lon: float,
+        start_time: datetime,
+        end_time: datetime
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch forecast data from IPMA API."""
+        try:
+            # Initialize location cache if needed
+            self._init_location_cache()
+            
+            # Get nearest location from cache
+            location = self.location_cache.get_nearest_location('ipma', lat, lon)
+            if not location:
+                self.warning(
+                    "No location found in cache",
+                    latitude=lat,
+                    longitude=lon
+                )
+                return None
+
+            # Get forecast data
+            forecast_url = f"{self.BASE_URL}/forecast/meteorology/cities/daily/{location['id']}.json"
+            self.debug(
+                "Getting forecast data",
+                url=forecast_url,
+                location_id=location['id'],
+                location_name=location['name'],
+                distance_km=location['distance']
+            )
+            
+            # Respect rate limits
+            if self._last_api_call:
+                time_since_last = datetime.now() - self._last_api_call
+                if time_since_last < self._min_call_interval:
+                    sleep_time = (self._min_call_interval - time_since_last).total_seconds()
+                    self.debug(f"Rate limit: sleeping for {sleep_time} seconds")
+                    time.sleep(sleep_time)
+            
+            forecast_response = requests.get(
+                forecast_url,
+                headers=self.headers,
+                timeout=10
+            )
+            
+            self._last_api_call = datetime.now()
+            
+            self.debug(
+                "Got forecast response",
+                status=forecast_response.status_code,
+                content_type=forecast_response.headers.get('content-type'),
+                content_length=len(forecast_response.content)
+            )
+            
+            if forecast_response.status_code != 200:
+                error = APIResponseError(
+                    f"IPMA forecast request failed with status {forecast_response.status_code}",
+                    response=forecast_response
                 )
                 aggregate_error(str(error), "portuguese_weather", None)
-                return []
-            except requests.exceptions.RequestException as e:
-                error = APIError(
-                    f"IPMA API request failed: {str(e)}",
-                    ErrorCode.REQUEST_FAILED,
-                    {"url": forecast_url if 'forecast_url' in locals() else locations_url}
+                return None
+
+            forecast_data = forecast_response.json()
+            if not forecast_data or 'data' not in forecast_data:
+                error = WeatherError(
+                    "Invalid forecast data format from IPMA API",
+                    ErrorCode.INVALID_RESPONSE,
+                    {"response": forecast_data}
                 )
-                aggregate_error(str(error), "portuguese_weather", e.__traceback__)
-                return []
+                aggregate_error(str(error), "portuguese_weather", None)
+                return None
+
+            self.debug(
+                "Received forecast data",
+                data=json.dumps(forecast_data, indent=2),
+                data_type=type(forecast_data).__name__,
+                has_data=bool(forecast_data.get('data')),
+                data_length=len(forecast_data.get('data', [])),
+                first_period=forecast_data.get('data', [{}])[0] if forecast_data.get('data') else None
+            )
+
+            return forecast_data
+
+        except Exception as e:
+            self.error("Error fetching forecasts", exc_info=e)
+            return None
 
     def _wind_class_to_speed(self, wind_class: int) -> float:
         """Convert IPMA wind speed class to m/s.
@@ -579,7 +349,7 @@ class PortugueseWeatherService(WeatherService):
             }
             
             return code_map.get(code, 'cloudy')  # Default to cloudy if code not found
-    
+
     def _get_wind_direction(self, direction: Optional[str]) -> Optional[str]:
         """Convert wind direction to cardinal direction.
         
@@ -630,175 +400,119 @@ class PortugueseWeatherService(WeatherService):
 
     def _convert_cached_data(self, cached_data: Dict[str, Dict[str, Any]]) -> List[WeatherData]:
         """Convert cached data to WeatherData objects."""
-        self.debug("Converting cached data to WeatherData objects")
-        forecasts = []
-        
-        for time_str, data in cached_data.items():
-            try:
-                # Parse ISO format time
-                time = datetime.fromisoformat(time_str)
-                
-                forecast = WeatherData(
-                    temperature=data['air_temperature'],
-                    precipitation=data['precipitation_amount'],
-                    precipitation_probability=data['probability_of_precipitation'],
-                    wind_speed=data['wind_speed'],
-                    wind_direction=data['wind_from_direction'],
-                    symbol=data['summary_code'],
-                    elaboration_time=time,
-                    thunder_probability=data['probability_of_thunder']
-                )
-                forecasts.append(forecast)
-            except Exception as e:
-                self.warning(
-                    "Failed to convert cached forecast",
-                    error=str(e),
-                    data=data
-                )
-                continue
-        
-        self.debug(f"Converted {len(forecasts)} cached forecasts")
-        return sorted(forecasts, key=lambda x: x.elaboration_time)
-
-    def get_block_size(self, hours_ahead: float) -> int:
-        """Get block size for IPMA forecasts.
-        
-        IPMA provides:
-        - 1-hour blocks for first 24 hours
-        - 3-hour blocks for 24-72 hours
-        - 6-hour blocks beyond 72 hours
-        """
-        if hours_ahead <= 24:
-            return 1
-        elif hours_ahead <= 72:
-            return 3
-        else:
-            return 6
-
-    def get_expiry_time(self) -> datetime:
-        """Get expiry time for IPMA weather data.
-        
-        IPMA updates their forecasts twice daily at 10:00 and 22:00 UTC.
-        """
-        now = datetime.now(self.utc_tz)
-        
-        # Calculate next update time
-        if now.hour < 10:
-            next_update = now.replace(hour=10, minute=0, second=0, microsecond=0)
-        elif now.hour < 22:
-            next_update = now.replace(hour=22, minute=0, second=0, microsecond=0)
-        else:
-            next_update = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
-        
-        return next_update
+        try:
+            self.debug("Converting cached data to WeatherData objects")
+            forecasts = []
+            
+            for time_str, data in cached_data.items():
+                try:
+                    # Parse ISO format time
+                    time = datetime.fromisoformat(time_str)
+                    
+                    forecast = WeatherData(
+                        temperature=data['air_temperature'],
+                        precipitation=data['precipitation_amount'],
+                        precipitation_probability=data['probability_of_precipitation'],
+                        wind_speed=data['wind_speed'],
+                        wind_direction=data['wind_from_direction'],
+                        symbol=data['summary_code'],
+                        elaboration_time=time,
+                        thunder_probability=data['probability_of_thunder'],
+                        block_duration=timedelta(hours=24)  # IPMA provides daily forecasts
+                    )
+                    forecasts.append(forecast)
+                except Exception as e:
+                    self.warning(
+                        "Failed to convert cached forecast",
+                        error=str(e),
+                        data=data
+                    )
+                    continue
+            
+            self.debug(f"Converted {len(forecasts)} cached forecasts")
+            return sorted(forecasts, key=lambda x: x.elaboration_time)
+        except Exception as e:
+            self.error("Failed to convert cached data", error=str(e))
+            return []
 
     @log_execution(level='DEBUG', include_args=True)
-    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime, club: str = None) -> Optional[List[WeatherData]]:
+    def get_weather(
+        self,
+        lat: float,
+        lon: float,
+        start_time: datetime,
+        end_time: datetime,
+        club: str = None
+    ) -> Optional[List[WeatherData]]:
         """Get weather data from IPMA."""
         try:
-            now_utc = datetime.now(ZoneInfo("UTC"))
+            # Calculate time range for fetching data
+            now = datetime.now(self.utc_tz)
+            hours_ahead = (end_time - now).total_seconds() / 3600
+            interval = self.get_block_size(hours_ahead)
             
-            # IPMA only provides forecasts up to 5 days ahead
-            max_forecast_time = now_utc + timedelta(days=5)
-            if start_time > max_forecast_time:
-                self.debug(f"Requested time {start_time} is beyond maximum forecast range of 5 days")
-                return None
-                
-            if end_time > max_forecast_time:
-                self.debug(f"Limiting forecast end time to {max_forecast_time} (5 days ahead)")
-                end_time = max_forecast_time
+            # Align start and end times to block boundaries
+            base_time = start_time.replace(minute=0, second=0, microsecond=0)
+            fetch_end_time = end_time.replace(minute=0, second=0, microsecond=0)
+            if end_time.minute > 0 or end_time.second > 0:
+                fetch_end_time += timedelta(hours=1)
             
-            # Determine if the start time is more than 24 hours in the future
-            is_far_future = (start_time - now_utc).total_seconds() > 24 * 3600
-            interval = 3 if is_far_future else 1
+            self.debug(
+                "Using forecast interval",
+                hours_ahead=hours_ahead,
+                interval=interval,
+                aligned_start=base_time.isoformat(),
+                aligned_end=fetch_end_time.isoformat()
+            )
             
-            # Calculate the base time for fetching weather data
-            base_hour = (start_time.hour // interval) * interval
-            base_time = start_time.replace(hour=base_hour, minute=0, second=0, microsecond=0)
+            # Check cache for response
+            cached_response = self.cache.get_response(
+                service_type='ipma',
+                latitude=lat,
+                longitude=lon,
+                start_time=base_time,
+                end_time=fetch_end_time
+            )
             
-            # Adjust base_time if necessary to ensure we cover the event start
-            if base_time > start_time:
-                base_time -= timedelta(hours=interval)
-            
-            # Calculate end time to ensure we cover the event end
-            end_hour = min(23, ((end_time.hour + interval - 1) // interval) * interval)  # Ensure hour doesn't exceed 23
-            fetch_end_time = end_time.replace(hour=end_hour, minute=0, second=0, microsecond=0)
-            if fetch_end_time < end_time:
-                # If we need to go to the next day, add a day and set hour to 0
-                fetch_end_time = (fetch_end_time + timedelta(days=1)).replace(hour=0)
-            
-            # Check if we have cached data
-            if club and self.cache:
-                location = f"{lat:.4f},{lon:.4f}"
-                # Generate a list of times to check in cache
-                cache_times = []
-                current_time = base_time
-                while current_time <= fetch_end_time:
-                    cache_times.append(current_time.strftime('%Y-%m-%dT%H:%M:%S+00:00'))
-                    current_time += timedelta(hours=interval)
-                
-                fields = ['air_temperature', 'precipitation_amount', 'probability_of_precipitation', 'wind_speed', 'wind_from_direction', 'summary_code', 'probability_of_thunder']
-                cached_data = self.cache.get_weather_data(location, cache_times, 'hourly', fields)
-                
-                # Log cache status
-                self._log_cache_status(location, cached_data, len(cache_times))
-                
-                if cached_data:
-                    # Convert cached data to WeatherData objects
-                    forecasts = []
-                    for time_str, data in cached_data.items():
-                        time = datetime.fromisoformat(time_str)
-                        forecast = WeatherData(
-                            temperature=data['air_temperature'],
-                            precipitation=data['precipitation_amount'],
-                            precipitation_probability=data['probability_of_precipitation'],
-                            wind_speed=data['wind_speed'],
-                            wind_direction=data['wind_from_direction'],
-                            symbol=data['summary_code'],
-                            elaboration_time=time,
-                            thunder_probability=data['probability_of_thunder'],
-                            block_duration=timedelta(hours=interval)
-                        )
-                        forecasts.append(forecast)
-                    return forecasts
-            
-            # Fetch data from API
-            forecasts = self._fetch_forecasts(lat, lon, base_time, fetch_end_time)
-            if not forecasts:
-                return None
-            
-            # Set block duration for each forecast
-            for forecast in forecasts:
-                forecast.block_duration = timedelta(hours=interval)
-            
-            # Cache the results
-            if club and self.cache:
-                # Convert forecasts to database format
-                cache_data = []
-                location = f"{lat:.4f},{lon:.4f}"
-                for forecast in forecasts:
-                    cache_data.append({
-                        'location': location,
-                        'time': forecast.elaboration_time.strftime('%Y-%m-%dT%H:%M:%S+00:00'),
-                        'data_type': 'hourly',
-                        'air_temperature': forecast.temperature,
-                        'precipitation_amount': forecast.precipitation,
-                        'probability_of_precipitation': forecast.precipitation_probability,
-                        'wind_speed': forecast.wind_speed,
-                        'wind_from_direction': forecast.wind_direction,
-                        'summary_code': forecast.symbol,
-                        'probability_of_thunder': forecast.thunder_probability
-                    })
-                self.cache.store_weather_data(
-                    cache_data,
-                    expires=(now_utc + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%S+00:00'),
-                    last_modified=now_utc.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+            if cached_response:
+                self.info(
+                    "Using cached response",
+                    location=cached_response['location'],
+                    time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}",
+                    interval=interval
                 )
+                return self._parse_response(cached_response['response'], base_time, fetch_end_time, interval)
             
-            return forecasts
+            # If not in cache, fetch from API
+            self.info(
+                "Fetching new data from API",
+                coords=(lat, lon),
+                time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}",
+                interval=interval
+            )
+            
+            # Fetch data for the full forecast range
+            response_data = self._fetch_forecasts(lat, lon, base_time, fetch_end_time)
+            if not response_data:
+                self.warning("No forecasts found for requested time range")
+                return None
+            
+            # Store the full response in cache
+            self.cache.store_response(
+                service_type='ipma',
+                latitude=lat,
+                longitude=lon,
+                response_data=response_data,
+                forecast_start=base_time,
+                forecast_end=fetch_end_time,
+                expires=datetime.now(self.utc_tz) + timedelta(hours=1)
+            )
+            
+            # Parse and return just the requested time range
+            return self._parse_response(response_data, base_time, fetch_end_time, interval)
             
         except Exception as e:
-            self.error(f"Failed to get weather data: {e}")
+            self.error("Failed to get weather data", exc_info=e)
             return None
 
     def _log_cache_status(self, location: str, cached_data: Optional[Dict], expected_count: int) -> None:
@@ -818,3 +532,393 @@ class PortugueseWeatherService(WeatherService):
                 cached_count=len(cached_data) if cached_data else 0,
                 expected_count=expected_count
             )
+
+    def _get_forecast(
+        self,
+        latitude: float,
+        longitude: float,
+        start_time: datetime,
+        end_time: datetime,
+        interval: str,
+        data_type: str
+    ) -> Optional[WeatherResponse]:
+        """Get weather forecast for the given location and time range."""
+        try:
+            # Check cache first
+            cached_response = self.cache.get_response(
+                service_type='portuguese',
+                latitude=latitude,
+                longitude=longitude,
+                start_time=start_time,
+                end_time=end_time
+            )
+            
+            if cached_response:
+                self.info(
+                    "Cache hit for Portuguese forecast",
+                    latitude=latitude,
+                    longitude=longitude,
+                    start_time=start_time,
+                    end_time=end_time
+                )
+                forecasts = self._parse_forecast_data(cached_response['response'], start_time, end_time)
+                if forecasts:
+                    return WeatherResponse(
+                        forecasts=forecasts,
+                        expires=datetime.fromisoformat(cached_response['response']['dataUpdate'])
+                    )
+            
+            self.info(
+                "Cache miss for Portuguese forecast",
+                latitude=latitude,
+                longitude=longitude,
+                start_time=start_time,
+                end_time=end_time
+            )
+            
+            # Fetch new data
+            raw_response = self._fetch_forecasts(latitude, longitude, start_time, end_time)
+            if not raw_response:
+                return None
+                
+            # Parse the raw response
+            forecasts = self._parse_forecast_data(raw_response, start_time, end_time)
+            if not forecasts:
+                return None
+                
+            # Store in cache
+            self.cache.store_response(
+                service_type='portuguese',
+                latitude=latitude,
+                longitude=longitude,
+                response_data=raw_response,
+                forecast_start=start_time,
+                forecast_end=end_time,
+                expires=datetime.now(self.utc) + timedelta(hours=6)
+            )
+            
+            return WeatherResponse(
+                forecasts=forecasts,
+                expires=datetime.now(self.utc) + timedelta(hours=6)
+            )
+
+        except Exception as e:
+            self.error("Failed to get Portuguese forecast", error=str(e))
+            return None
+
+    def _parse_forecast_data(
+        self,
+        forecast_data: Dict[str, Any],
+        start_time: datetime,
+        end_time: datetime
+    ) -> List[WeatherData]:
+        """Parse forecast data into WeatherData objects."""
+        forecasts = []
+        for period in forecast_data.get('data', []):
+            with handle_errors(WeatherError, "portuguese_weather", "process forecast period"):
+                try:
+                    # Parse forecast date (YYYY-MM-DD format)
+                    forecast_date = datetime.strptime(
+                        period.get('forecastDate', ''),
+                        '%Y-%m-%d'
+                    ).replace(tzinfo=self.local_tz)
+                    
+                    # Skip if not the date we want
+                    if forecast_date.date() != start_time.date():
+                        continue
+                        
+                except ValueError as e:
+                    self.warning(
+                        "Failed to parse forecast date",
+                        date=period.get('forecastDate'),
+                        error=str(e),
+                        period_data=period
+                    )
+                    continue
+                
+                # Skip if outside our time range
+                if forecast_date < start_time.replace(hour=0, minute=0, second=0, microsecond=0):
+                    continue
+                
+                # Extract weather data
+                try:
+                    tmin = float(period.get('tMin', 0))
+                    tmax = float(period.get('tMax', 0))
+                    
+                    # Calculate hourly temperatures using a simple sine curve
+                    # Minimum at 6 AM, maximum at 2 PM
+                    min_hour = 6
+                    max_hour = 14
+                    
+                    precip_prob = float(period.get('precipitaProb', 0))
+                    # Convert probability to amount (simple estimation)
+                    precip = precip_prob / 100.0 if precip_prob > 0 else 0
+                    
+                    # Wind speed class to m/s conversion
+                    wind_class = int(period.get('classWindSpeed', 0))
+                    wind_speed = self._wind_class_to_speed(wind_class)
+                    
+                    wind_dir = period.get('predWindDir')
+                    weather_type = int(period.get('idWeatherType', 0))
+                    
+                    # Generate hourly forecasts for the time range
+                    for hour in range(24):
+                        forecast_time = forecast_date.replace(hour=hour)
+                        
+                        # Skip if outside our time range
+                        if forecast_time < start_time or forecast_time > end_time:
+                            continue
+                        
+                        # Calculate temperature for this hour using sine curve
+                        hour_progress = (hour - min_hour) % 24
+                        day_progress = hour_progress / 24.0
+                        temp_range = tmax - tmin
+                        if min_hour <= hour <= max_hour:
+                            # Rising temperature
+                            progress = (hour - min_hour) / (max_hour - min_hour)
+                            temp = tmin + temp_range * math.sin(progress * math.pi / 2)
+                        else:
+                            # Falling temperature
+                            if hour > max_hour:
+                                progress = (hour - max_hour) / (24 + min_hour - max_hour)
+                            else:  # hour < min_hour
+                                progress = (hour + 24 - max_hour) / (24 + min_hour - max_hour)
+                            temp = tmax - temp_range * math.sin(progress * math.pi / 2)
+                        
+                        self.debug(
+                            "Calculated hourly values",
+                            hour=hour,
+                            temp=temp,
+                            base_temp_min=tmin,
+                            base_temp_max=tmax,
+                            precip=precip,
+                            wind_speed=wind_speed
+                        )
+                        
+                        # Map weather type to symbol
+                        try:
+                            symbol_code = self._map_ipma_code(weather_type, hour)
+                        except Exception as e:
+                            self.warning(
+                                "Failed to map weather code",
+                                code=weather_type,
+                                hour=hour,
+                                error=str(e)
+                            )
+                            continue
+
+                        # Calculate thunder probability based on weather type
+                        thunder_prob = 0.0
+                        if weather_type in [6, 7, 9]:  # Thunder types in IPMA codes
+                            thunder_prob = 50.0
+
+                        forecast = WeatherData(
+                            temperature=temp,
+                            precipitation=precip,
+                            precipitation_probability=precip_prob,
+                            wind_speed=wind_speed,
+                            wind_direction=self._get_wind_direction(wind_dir),
+                            symbol=symbol_code,
+                            elaboration_time=forecast_time,
+                            thunder_probability=thunder_prob,
+                            block_duration=timedelta(hours=24)  # IPMA provides daily forecasts
+                        )
+                        forecasts.append(forecast)
+                        
+                        self.debug(
+                            "Added hourly forecast",
+                            time=forecast_time.isoformat(),
+                            temp=temp,
+                            precip=precip,
+                            wind=wind_speed,
+                            symbol=symbol_code
+                        )
+                        
+                except (ValueError, TypeError) as e:
+                    self.warning(
+                        "Failed to parse forecast values",
+                        error=str(e),
+                        data=period,
+                        raw_values={
+                            'tMin': period.get('tMin'),
+                            'tMax': period.get('tMax'),
+                            'precipitaProb': period.get('precipitaProb'),
+                            'classWindSpeed': period.get('classWindSpeed'),
+                            'predWindDir': period.get('predWindDir'),
+                            'idWeatherType': period.get('idWeatherType')
+                        }
+                    )
+                    continue
+
+        self.debug(
+            "Completed forecast processing",
+            total_forecasts=len(forecasts),
+            time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
+        )
+        return forecasts
+
+    def _parse_response(
+        self,
+        response_data: Dict[str, Any],
+        start_time: datetime,
+        end_time: datetime,
+        interval: int
+    ) -> Optional[WeatherResponse]:
+        """Parse API response into WeatherResponse object."""
+        try:
+            forecasts = []
+            
+            # Process each forecast period
+            for period in response_data.get('data', []):
+                try:
+                    # Parse forecast date (YYYY-MM-DD format)
+                    forecast_date = datetime.strptime(
+                        period.get('forecastDate', ''),
+                        '%Y-%m-%d'
+                    ).replace(tzinfo=self.local_tz)
+                    
+                    # Skip if not the date we want
+                    if forecast_date.date() != start_time.date():
+                        continue
+                        
+                except ValueError as e:
+                    self.warning(
+                        "Failed to parse forecast date",
+                        date=period.get('forecastDate'),
+                        error=str(e),
+                        period_data=period
+                    )
+                    continue
+                
+                # Skip if outside our time range
+                if forecast_date < start_time.replace(hour=0, minute=0, second=0, microsecond=0):
+                    continue
+                
+                # Extract weather data
+                try:
+                    tmin = float(period.get('tMin', 0))
+                    tmax = float(period.get('tMax', 0))
+                    
+                    # Calculate hourly temperatures using a simple sine curve
+                    # Minimum at 6 AM, maximum at 2 PM
+                    min_hour = 6
+                    max_hour = 14
+                    
+                    precip_prob = float(period.get('precipitaProb', 0))
+                    # Convert probability to amount (simple estimation)
+                    precip = precip_prob / 100.0 if precip_prob > 0 else 0
+                    
+                    # Wind speed class to m/s conversion
+                    wind_class = int(period.get('classWindSpeed', 0))
+                    wind_speed = self._wind_class_to_speed(wind_class)
+                    
+                    wind_dir = period.get('predWindDir')
+                    weather_type = int(period.get('idWeatherType', 0))
+                    
+                    # Generate hourly forecasts for the time range
+                    for hour in range(24):
+                        forecast_time = forecast_date.replace(hour=hour)
+                        
+                        # Skip if outside our time range
+                        if forecast_time < start_time or forecast_time > end_time:
+                            continue
+                        
+                        # Calculate temperature for this hour using sine curve
+                        hour_progress = (hour - min_hour) % 24
+                        day_progress = hour_progress / 24.0
+                        temp_range = tmax - tmin
+                        if min_hour <= hour <= max_hour:
+                            # Rising temperature
+                            progress = (hour - min_hour) / (max_hour - min_hour)
+                            temp = tmin + temp_range * math.sin(progress * math.pi / 2)
+                        else:
+                            # Falling temperature
+                            if hour > max_hour:
+                                progress = (hour - max_hour) / (24 + min_hour - max_hour)
+                            else:  # hour < min_hour
+                                progress = (hour + 24 - max_hour) / (24 + min_hour - max_hour)
+                            temp = tmax - temp_range * math.sin(progress * math.pi / 2)
+                        
+                        self.debug(
+                            "Calculated hourly values",
+                            hour=hour,
+                            temp=temp,
+                            base_temp_min=tmin,
+                            base_temp_max=tmax,
+                            precip=precip,
+                            wind_speed=wind_speed
+                        )
+                        
+                        # Map weather type to symbol
+                        try:
+                            symbol_code = self._map_ipma_code(weather_type, hour)
+                        except Exception as e:
+                            self.warning(
+                                "Failed to map weather code",
+                                code=weather_type,
+                                hour=hour,
+                                error=str(e)
+                            )
+                            continue
+
+                        # Calculate thunder probability based on weather type
+                        thunder_prob = 0.0
+                        if weather_type in [6, 7, 9]:  # Thunder types in IPMA codes
+                            thunder_prob = 50.0
+
+                        forecast = WeatherData(
+                            temperature=temp,
+                            precipitation=precip,
+                            precipitation_probability=precip_prob,
+                            wind_speed=wind_speed,
+                            wind_direction=self._get_wind_direction(wind_dir),
+                            symbol=symbol_code,
+                            elaboration_time=forecast_time,
+                            thunder_probability=thunder_prob,
+                            block_duration=timedelta(hours=interval)
+                        )
+                        forecasts.append(forecast)
+                        
+                        self.debug(
+                            "Added hourly forecast",
+                            time=forecast_time.isoformat(),
+                            temp=temp,
+                            precip=precip,
+                            wind=wind_speed,
+                            symbol=symbol_code
+                        )
+                        
+                except (ValueError, TypeError) as e:
+                    self.warning(
+                        "Failed to parse forecast values",
+                        error=str(e),
+                        data=period,
+                        raw_values={
+                            'tMin': period.get('tMin'),
+                            'tMax': period.get('tMax'),
+                            'precipitaProb': period.get('precipitaProb'),
+                            'classWindSpeed': period.get('classWindSpeed'),
+                            'predWindDir': period.get('predWindDir'),
+                            'idWeatherType': period.get('idWeatherType')
+                        }
+                    )
+                    continue
+
+            self.debug(
+                "Completed forecast processing",
+                total_forecasts=len(forecasts),
+                time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
+            )
+            
+            if not forecasts:
+                self.warning("No forecasts found in response for requested time range")
+                return None
+            
+            # Sort forecasts by time
+            forecasts.sort(key=lambda x: x.elaboration_time)
+            
+            return WeatherResponse(data=forecasts, expires=self.get_expiry_time())
+            
+        except Exception as e:
+            self.error("Error parsing weather response", error=str(e))
+            return None

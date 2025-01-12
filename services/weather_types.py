@@ -1,11 +1,13 @@
-"""Weather service data types."""
+"""Weather service types and base classes."""
 
-from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from enum import Enum
+from typing import Dict, Any, List, Optional
+from zoneinfo import ZoneInfo
+import requests
 
-from golfcal2.utils.logging_utils import EnhancedLoggerMixin, log_execution
+from golfcal2.exceptions import ErrorCode
 
 class WeatherCode(str, Enum):
     """Standard weather codes used across all weather services."""
@@ -154,16 +156,47 @@ def get_weather_symbol(symbol_code: str) -> str:
 @dataclass
 class WeatherData:
     """Weather data container."""
+    elaboration_time: datetime
+    block_duration: timedelta
     temperature: float
     precipitation: float
-    precipitation_probability: Optional[float]
+    precipitation_probability: float
     wind_speed: float
-    wind_direction: Optional[str]
-    symbol: str
-    elaboration_time: datetime
-    thunder_probability: Optional[float] = None
-    block_duration: timedelta = timedelta(hours=1)  # Default to 1 hour
+    wind_direction: float
+    weather_code: str  # Internal weather code (e.g., 'clearsky_day')
+    weather_description: str = ''  # Human-readable description
+    thunder_probability: float = 0.0
+    temperature_min: Optional[float] = None
+    temperature_max: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
     symbol_time_range: Optional[str] = None  # For 6h blocks, shows time range like "18:00 to 24:00"
+
+    def __post_init__(self):
+        """Initialize optional fields after dataclass creation."""
+        self.temperature_min = self.temperature_min or self.temperature
+        self.temperature_max = self.temperature_max or self.temperature
+        self.metadata = self.metadata or {}
+
+    @property
+    def symbol(self) -> str:
+        """Alias for weather_code to maintain backward compatibility."""
+        return self.weather_code
+
+    @symbol.setter
+    def symbol(self, value: str):
+        """Set weather_code through symbol property."""
+        self.weather_code = value
+
+    def __str__(self) -> str:
+        """Return string representation of weather data."""
+        return (
+            f"WeatherData("
+            f"time={self.elaboration_time.isoformat()}, "
+            f"temp={self.temperature}°C, "
+            f"precip={self.precipitation}mm, "
+            f"wind={self.wind_speed}m/s@{self.wind_direction}°"
+            f")"
+        )
 
 @dataclass
 class WeatherResponse:
@@ -171,57 +204,22 @@ class WeatherResponse:
     data: List[WeatherData]
     expires: datetime
 
-class WeatherService(EnhancedLoggerMixin):
-    """Base class for weather services."""
-    
-    def __init__(self, local_tz, utc_tz):
-        """Initialize service."""
-        super().__init__()
-        self.local_tz = local_tz
-        self.utc_tz = utc_tz
-        self.db = None  # Database instance will be set by subclasses
-        self.cache = None  # Cache instance will be set by subclasses
-        
-    def _get_cache_key(self, lat: float, lon: float, club: str, base_time: datetime) -> str:
-        """Get cache key for weather data."""
-        return f"{club}_{lat:.4f}_{lon:.4f}_{base_time.strftime('%Y%m%d%H')}"
-    
-    def get_expiry_time(self) -> datetime:
-        """Get expiry time for current weather data.
-        
-        Each service should implement this based on their update schedule.
-        Default implementation is 1 hour from now.
-        """
-        return datetime.now(self.utc_tz) + timedelta(hours=1)
-    
-    @log_execution(level='DEBUG')
-    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> WeatherResponse:
-        """Get weather data for location and time range.
-        
-        Args:
-            lat: Latitude
-            lon: Longitude
-            start_time: Start time
-            end_time: End time
-            
-        Returns:
-            WeatherResponse with data and expiry time
-        """
-        data = self._fetch_forecasts(lat, lon, start_time, end_time)
-        return WeatherResponse(data=data, expires=self.get_expiry_time())
+class WeatherError(Exception):
+    """Base class for weather service errors."""
+    def __init__(self, message: str, error_code: ErrorCode):
+        super().__init__(message)
+        self.error_code = error_code
 
-    @log_execution(level='DEBUG', include_args=True)
-    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-        """Fetch forecasts from weather service."""
-        raise NotImplementedError("Subclasses must implement _fetch_forecasts")
+class WeatherServiceUnavailable(WeatherError):
+    """Error indicating that a weather service is unavailable."""
+    pass
 
-    def get_block_size(self, hours_ahead: float) -> int:
-        """Get the block size in hours for grouping forecasts based on how far ahead they are.
-        
-        Args:
-            hours_ahead: Number of hours ahead of current time the forecast is for.
-            
-        Returns:
-            int: Block size in hours (e.g., 1 for hourly forecasts, 6 for 6-hour blocks).
-        """
-        raise NotImplementedError("Subclasses must implement get_block_size") 
+class WeatherDataError(WeatherError):
+    """Error indicating invalid or missing weather data."""
+    pass
+
+class APIResponseError(WeatherError):
+    """Error indicating an invalid API response."""
+    def __init__(self, message: str, error_code: ErrorCode, response: requests.Response):
+        super().__init__(message, error_code)
+        self.response = response 

@@ -17,7 +17,6 @@ from golfcal2.services.weather_types import WeatherData, WeatherResponse
 from golfcal2.services.open_weather_service import OpenWeatherService
 from golfcal2.services.met_weather_service import MetWeatherService
 from golfcal2.services.iberian_weather_service import IberianWeatherService
-from golfcal2.services.portuguese_weather_service import PortugueseWeatherService
 
 class WeatherServiceManager(WeatherService):
     """Manager for handling multiple weather services."""
@@ -44,8 +43,7 @@ class WeatherServiceManager(WeatherService):
             OpenWeatherService(local_tz, utc_tz, config, region="mediterranean"),
             # Regional specialized services
             MetWeatherService(local_tz, utc_tz, config),
-            IberianWeatherService(local_tz, utc_tz, config),
-            PortugueseWeatherService(local_tz, utc_tz, config)
+            IberianWeatherService(local_tz, utc_tz, config)
         ]
         
         self.set_log_context(service="WeatherManager")

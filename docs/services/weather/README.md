@@ -10,9 +10,8 @@ The weather service provides weather data for golf reservations and events throu
 graph TD
     WM[Weather Manager] --> WS[Weather Service Base]
     WS --> MET[MET Service]
+    WS --> OM[OpenMeteo Service]
     WS --> OW[OpenWeather Service]
-    WS --> IB[Iberian Service]
-    WS --> PT[Portuguese Service]
     WS --> Cache[Weather Cache]
     WS --> DB[Weather Database]
 ```
@@ -43,40 +42,16 @@ class WeatherService(EnhancedLoggerMixin):
 
 ### Weather Manager
 
-The manager coordinates multiple weather services:
+The manager coordinates multiple weather services based on geographic location:
 
-```python
-class WeatherServiceManager(WeatherService):
-    """Manager for handling multiple weather services."""
-    
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
-        self.services = [
-            OpenWeatherService(local_tz, utc_tz, config, region="global"),
-            MetWeatherService(local_tz, utc_tz, config),
-            IberianWeatherService(local_tz, utc_tz, config),
-            PortugueseWeatherService(local_tz, utc_tz, config)
-        ]
-    
-    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> WeatherResponse:
-        """Get weather data from all available services."""
-        all_data = []
-        latest_expiry = None
-        
-        for service in self.services:
-            try:
-                response = service.get_weather(lat, lon, start_time, end_time)
-                if response and response.data:
-                    all_data.extend(response.data)
-                    if latest_expiry is None or response.expires > latest_expiry:
-                        latest_expiry = response.expires
-            except WeatherError:
-                continue
-        
-        if not all_data:
-            raise WeatherServiceUnavailable("No weather service available")
-        
-        return WeatherResponse(data=all_data, expires=latest_expiry or self.get_expiry_time())
-```
+1. Nordic Region (55°N-72°N, 4°E-32°E)
+   - Uses MET.no service for high-accuracy Nordic forecasts
+   
+2. All Other Regions
+   - Uses OpenMeteo service as primary provider
+   - Falls back to OpenWeather service if OpenMeteo fails
+
+The manager automatically selects the appropriate service based on coordinates and handles failover between services.
 
 ### Weather Cache
 
@@ -125,11 +100,11 @@ class WeatherDatabase:
                 """
                 INSERT OR REPLACE INTO weather (
                     location, time, temperature, precipitation,
-                    wind_speed, wind_direction, symbol, expires
+                    wind_speed, wind_direction, weather_code, expires
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (location, data.time, data.temperature, data.precipitation,
-                 data.wind_speed, data.wind_direction, data.symbol, data.expires)
+                 data.wind_speed, data.wind_direction, data.weather_code, data.expires)
             )
 ```
 
@@ -146,8 +121,9 @@ class WeatherData:
     precipitation_probability: float  # 0-100%
     wind_speed: float  # meters/second
     wind_direction: float  # degrees (0-360)
-    weather_symbol: str
-    cloud_coverage: Optional[float] = None  # 0-100%
+    weather_code: str
+    weather_description: str
+    block_duration: timedelta = timedelta(hours=1)
     thunder_probability: Optional[float] = None  # 0-100%
 ```
 
@@ -166,20 +142,20 @@ class WeatherResponse:
 Each weather service provider implements the base interface:
 
 1. [MET.no Service](providers/met.md)
-   - Nordic region coverage
+   - Nordic region coverage (55°N-72°N, 4°E-32°E)
    - High accuracy for Scandinavian countries
+   - No API key required
 
-2. [OpenWeather Service](providers/openweather.md)
+2. [OpenMeteo Service](providers/openmeteo.md)
    - Global coverage
+   - Primary service for non-Nordic regions
+   - No API key required
+   - High-resolution hourly forecasts
+
+3. [OpenWeather Service](providers/openweather.md)
+   - Global coverage
+   - Fallback service
    - Paid service with API key
-
-3. [Iberian Service](providers/iberian.md)
-   - Spain coverage
-   - Government weather service
-
-4. [Portuguese Service](providers/portuguese.md)
-   - Portugal coverage
-   - Government weather service
 
 ## Error Handling
 
@@ -205,13 +181,9 @@ weather:
     met:
       user_agent: "GolfCal2/0.6.0"
       timeout: 10
+    openmeteo:
+      timeout: 10
     openweather:
       api_key: "your-key"
-      timeout: 10
-    aemet:
-      api_key: "your-key"
-      timeout: 15
-    ipma:
-      enabled: true
       timeout: 10
 ``` 

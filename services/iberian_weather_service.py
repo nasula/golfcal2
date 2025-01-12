@@ -10,9 +10,9 @@ from zoneinfo import ZoneInfo
 import math
 
 from golfcal2.services.weather_service import WeatherService
-from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse
+from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse, Location
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.services.weather_schemas import IBERIAN_SCHEMA
+from golfcal2.services.weather_location_cache import WeatherLocationCache
 from golfcal2.utils.logging_utils import log_execution
 from golfcal2.config.settings import load_config
 from golfcal2.exceptions import (
@@ -58,126 +58,160 @@ class IberianWeatherService(WeatherService):
     SIX_HOURLY_RANGE = 96  # Up to 96 hours (4 days) for 6-hourly forecasts
     DAILY_RANGE = 168  # Up to 168 hours (7 days) for daily forecasts
     
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
-        """Initialize service."""
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+        """Initialize service.
+        
+        Args:
+            local_tz: Local timezone
+            utc_tz: UTC timezone
+            config: Application configuration
+        """
         super().__init__(local_tz, utc_tz)
+        self.config = config
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
+        self.set_log_context(service="IberianWeatherService")
         
-        # Configure logger
-        for handler in self.logger.handlers:
-            handler.set_name('iberian_weather')  # Ensure unique handler names
-        self.logger.propagate = False  # Prevent duplicate logs
+        # Rate limiting
+        self._last_api_call = None
+        self._min_call_interval = timedelta(seconds=1)
         
-        # Test debug call to verify logger name mapping
-        self.debug(">>> TEST DEBUG: IberianWeatherService initialized", logger_name=self.logger.name)
+        # API configuration
+        self.headers = {
+            'Accept': 'application/json',
+            'api_key': config.global_config['api_keys']['weather']['aemet']
+        }
         
-        with handle_errors(WeatherError, "iberian_weather", "initialize service"):
-            self.api_key = config.global_config['api_keys']['weather']['aemet']
+        # Don't initialize municipality cache here - it will be initialized on demand
+        # only when needed for locations within coverage area
+
+    def _init_municipality_cache(self):
+        """Initialize municipality cache with data from AEMET API."""
+        try:
+            # Get municipalities from API
+            municipalities_url = f"{self.BASE_URL}/maestro/municipios"
+            response = requests.get(municipalities_url, headers=self.headers, timeout=10)
             
-            self.endpoint = self.BASE_URL
-            self.headers = {
-                'Accept': 'application/json',
-                'User-Agent': self.USER_AGENT,
-                'api_key': self.api_key  # AEMET requires API key in headers
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict) and 'datos' in data:
+                    # AEMET returns a URL to the actual data
+                    data_url = data['datos']
+                    self.debug("Getting municipality data from URL", url=data_url)
+                    
+                    # Get the actual data
+                    data_response = requests.get(data_url, headers=self.headers, timeout=10)
+                    if data_response.status_code == 200:
+                        municipalities = data_response.json()
+                        if municipalities and isinstance(municipalities, list):
+                            locations = []
+                            for loc in municipalities:
+                                try:
+                                    location = {
+                                        'id': str(loc['id']),
+                                        'name': loc['nombre'],
+                                        'latitude': float(loc['latitud']),
+                                        'longitude': float(loc['longitud']),
+                                        'metadata': {
+                                            'province': loc.get('provincia'),
+                                            'region': loc.get('comunidad'),
+                                            'altitude': loc.get('altitud')
+                                        }
+                                    }
+                                    locations.append(location)
+                                except (KeyError, ValueError) as e:
+                                    self.warning(
+                                        "Failed to parse location data",
+                                        exc_info=e,
+                                        data=loc
+                                    )
+                                    continue
+                            
+                            if locations:
+                                # Store for 90 days instead of 30
+                                self.location_cache.store_location_set(
+                                    service_type='aemet',
+                                    set_type='municipalities',
+                                    data=locations,
+                                    expires_in=timedelta(days=90)
+                                )
+                                self.debug(f"Stored {len(locations)} locations in cache")
+                            else:
+                                self.error("Empty municipality list received from AEMET")
+                        else:
+                            self.error(
+                                "Invalid municipality data format",
+                                status=data_response.status_code,
+                                data=municipalities
+                            )
+                    else:
+                        self.error(
+                            "Failed to get municipality data",
+                            status=data_response.status_code,
+                            url=data_url
+                        )
+                else:
+                    self.error(
+                        "Invalid response format",
+                        status=response.status_code,
+                        data=data
+                    )
+            else:
+                self.error(
+                    "Failed to get municipality list",
+                    status=response.status_code
+                )
+        except requests.RequestException as e:
+            self.error("Failed to fetch locations from AEMET API", exc_info=e)
+        except Exception as e:
+            self.error("Error initializing municipality cache", exc_info=e)
+
+    def _find_nearest_municipality(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
+        """Find nearest municipality to given coordinates."""
+        # First check if we have any municipalities cached
+        has_municipalities = self.location_cache.get_location_set('aemet', 'municipalities')
+        if not has_municipalities:
+            # Only initialize once if cache is empty
+            self._init_municipality_cache()
+
+        nearest = self.location_cache.get_nearest_location('aemet', lat, lon)
+        if nearest:
+            return {
+                'code': nearest['id'],
+                'name': nearest['name'],
+                'province': nearest['metadata'].get('province') if nearest['metadata'] else None,
+                'region': nearest['metadata'].get('region') if nearest['metadata'] else None,
+                'latitude': nearest['latitude'],
+                'longitude': nearest['longitude'],
+                'distance': nearest['distance']
             }
-            
-            # Initialize response cache
-            self.cache = WeatherResponseCache('weather_cache.db')
-            
-            # Rate limiting configuration
-            self._last_api_call = None
-            self._min_call_interval = timedelta(seconds=1)
-            self._last_request_time = 0
-            
-            self.set_log_context(service="IberianWeatherService")
-    
+        
+        return None
+
     @log_execution(level='DEBUG', include_args=True)
     def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime, club: str = None) -> Optional[List[WeatherData]]:
         """Get weather data from AEMET."""
+        # Quick return if location is outside coverage area
+        if not self._is_in_coverage_area(lat, lon):
+            self.debug(
+                "Location outside coverage area",
+                coords=(lat, lon)
+            )
+            return None
+        
         try:
-            now_utc = datetime.now(ZoneInfo("UTC"))
+            # Calculate time range for fetching data
+            now = datetime.now(self.utc_tz)
+            hours_ahead = (end_time - now).total_seconds() / 3600
+            interval = self.get_block_size(hours_ahead)
             
-            # Calculate expiry time based on AEMET's update schedule
-            current_hour = now_utc.hour
-            update_hours = [3, 9, 15, 21]  # AEMET update times (UTC)
-            next_update_hour = next((hour for hour in update_hours if hour > current_hour), update_hours[0])
-            
-            if next_update_hour <= current_hour:
-                # If we're past all update times today, next update is tomorrow
-                expires = (now_utc + timedelta(days=1)).replace(hour=update_hours[0], minute=0, second=0, microsecond=0)
-            else:
-                expires = now_utc.replace(hour=next_update_hour, minute=0, second=0, microsecond=0)
-            
-            # Use the timezone from the start_time parameter
-            local_tz = start_time.tzinfo
-            self.debug(f"Using timezone {local_tz} for coordinates ({lat}, {lon})")
-            
-            # Check forecast range - AEMET provides:
-            # - Hourly data for next 48 hours
-            # - 6-hourly data for 2 days after that
-            # - Daily data up to 7 days
-            hours_ahead = (start_time - now_utc).total_seconds() / 3600
-            if hours_ahead > self.DAILY_RANGE:
-                self.info(
-                    "Requested time beyond AEMET forecast range",
-                    requested_time=start_time.isoformat(),
-                    hours_ahead=hours_ahead,
-                    max_hours=self.DAILY_RANGE
-                )
-                return None
-
-            # Convert event times to local time for alignment
-            local_start = start_time.astimezone(local_tz)
-            local_end = end_time.astimezone(local_tz)
-            
-            # Determine forecast interval based on how far ahead we're looking
-            if hours_ahead <= self.HOURLY_RANGE:
-                interval = 1  # Hourly forecasts for first 48 hours
-                data_type = 'hourly'
-                fetch_range = timedelta(hours=self.HOURLY_RANGE)
-            elif hours_ahead <= self.SIX_HOURLY_RANGE:
-                interval = 6  # 6-hourly forecasts for next 2 days
-                data_type = 'daily'
-                fetch_range = timedelta(hours=self.SIX_HOURLY_RANGE)
-            else:
-                interval = 24  # Daily forecasts beyond that
-                data_type = 'daily'
-                fetch_range = timedelta(hours=self.DAILY_RANGE)
-            
-            # For hourly forecasts, ensure we get forecasts for each hour
-            if interval == 1:
-                # Round down start time to nearest hour
-                base_time = local_start.replace(minute=0, second=0, microsecond=0)
-                if base_time > local_start:
-                    base_time -= timedelta(hours=1)
-                
-                # Round up end time to next hour
-                fetch_end_time = local_end.replace(minute=0, second=0, microsecond=0)
-                if fetch_end_time <= local_end:
-                    fetch_end_time += timedelta(hours=1)
-            else:
-                # For multi-hour blocks, align start and end times to block boundaries
-                block_start = ((local_start.hour) // interval) * interval
-                base_time = local_start.replace(hour=block_start, minute=0, second=0, microsecond=0)
-                if base_time > local_start:
-                    base_time -= timedelta(hours=interval)
-                
-                # Round up end time to next block
-                block_end = math.ceil(local_end.hour / interval) * interval
-                if block_end >= 24:
-                    block_end = interval
-                    fetch_end_time = (local_end + timedelta(days=1)).replace(
-                        hour=block_end, minute=0, second=0, microsecond=0
-                    )
-                else:
-                    fetch_end_time = local_end.replace(
-                        hour=block_end, minute=0, second=0, microsecond=0
-                    )
-                if fetch_end_time <= local_end:
-                    fetch_end_time += timedelta(hours=interval)
-
-            # Convert aligned times back to UTC
-            base_time = base_time.astimezone(self.utc_tz)
-            fetch_end_time = fetch_end_time.astimezone(self.utc_tz)
+            # Align start and end times to block boundaries
+            base_time = start_time.replace(minute=0, second=0, microsecond=0)
+            fetch_end_time = end_time.replace(minute=0, second=0, microsecond=0)
+            if end_time.minute > 0 or end_time.second > 0:
+                fetch_end_time += timedelta(hours=1)
             
             self.debug(
                 "Using forecast interval",
@@ -201,25 +235,20 @@ class IberianWeatherService(WeatherService):
                     "Using cached response",
                     location=cached_response['location'],
                     time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}",
-                    data_type=data_type,
                     interval=interval
                 )
-                return self._parse_response(cached_response['response'], base_time, fetch_end_time, interval, expires)
+                return self._parse_response(cached_response['response'], base_time, fetch_end_time, interval)
             
             # If not in cache, fetch from API
             self.info(
                 "Fetching new data from API",
                 coords=(lat, lon),
                 time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}",
-                data_type=data_type,
                 interval=interval
             )
             
             # Fetch data for the full forecast range
-            fetch_start = now_utc
-            fetch_end = now_utc + fetch_range
-            
-            response_data = self._fetch_forecasts(lat, lon, fetch_start, fetch_end, local_tz)
+            response_data = self._fetch_forecasts(lat, lon, base_time, fetch_end_time)
             if not response_data:
                 self.warning("No forecasts found for requested time range")
                 return None
@@ -230,135 +259,107 @@ class IberianWeatherService(WeatherService):
                 latitude=lat,
                 longitude=lon,
                 response_data=response_data,
-                forecast_start=fetch_start,
-                forecast_end=fetch_end,
-                expires=expires,
-                location_id=response_data.get('municipality_code'),  # AEMET specific
-                location_name=response_data.get('municipality_name'),
-                metadata={
-                    'province': response_data.get('province'),
-                    'region': response_data.get('region')
-                }
+                forecast_start=base_time,
+                forecast_end=fetch_end_time,
+                expires=datetime.now(self.utc_tz) + timedelta(hours=1)
             )
             
             # Parse and return just the requested time range
-            return self._parse_response(response_data, base_time, fetch_end_time, interval, expires)
+            return self._parse_response(response_data, base_time, fetch_end_time, interval)
         except Exception as e:
-            self.error("Error getting weather data", error=str(e))
-            raise
+            self.error("Failed to get weather data", exc_info=e)
+            return None
 
     def _fetch_forecasts(
         self,
         lat: float,
         lon: float,
         start_time: datetime,
-        end_time: datetime,
-        local_tz: ZoneInfo
+        end_time: datetime
     ) -> Optional[Dict[str, Any]]:
-        """Fetch forecasts from AEMET API."""
+        """Fetch forecast data from AEMET API."""
         try:
+            # Check if location is in coverage area
+            if not self._is_in_coverage_area(lat, lon):
+                self.debug(
+                    "Location outside coverage area",
+                    coords=(lat, lon)
+                )
+                return None
+            
             # Find nearest municipality
             municipality = self._find_nearest_municipality(lat, lon)
             if not municipality:
-                self.error("No municipality found for coordinates", coords=(lat, lon))
+                self.warning(
+                    "No municipality found for coordinates",
+                    coords=(lat, lon)
+                )
                 return None
+
+            # Get forecast data
+            forecast_url = f"{self.BASE_URL}/prediccion/especifica/municipio/diaria/{municipality['id']}"
+            self.debug(
+                "Getting forecast data",
+                url=forecast_url,
+                location_id=municipality['id'],
+                location_name=municipality['name'],
+                distance_km=municipality['distance']
+            )
             
-            municipality_code = municipality['code']
-            
-            # Rate limiting
+            # Respect rate limits
             if self._last_api_call:
-                time_since_last_call = datetime.now(ZoneInfo("UTC")) - self._last_api_call
-                if time_since_last_call < self._min_call_interval:
-                    sleep_time = (self._min_call_interval - time_since_last_call).total_seconds()
-                    self.debug(f"Rate limiting - sleeping for {sleep_time:.2f} seconds")
+                time_since_last = datetime.now() - self._last_api_call
+                if time_since_last < self._min_call_interval:
+                    sleep_time = (self._min_call_interval - time_since_last).total_seconds()
+                    self.debug(f"Rate limit: sleeping for {sleep_time} seconds")
                     time.sleep(sleep_time)
+
+            forecast_response = requests.get(
+                forecast_url,
+                headers=self.headers,
+                timeout=10
+            )
             
-            # Fetch hourly forecast
-            hourly_url = f"{self.endpoint}/prediccion/especifica/municipio/horaria/{municipality_code}"
-            hourly_data = self._fetch_data(hourly_url)
+            self._last_api_call = datetime.now()
             
-            # Fetch daily forecast
-            daily_url = f"{self.endpoint}/prediccion/especifica/municipio/diaria/{municipality_code}"
-            daily_data = self._fetch_data(daily_url)
+            self.debug(
+                "Got forecast response",
+                status=forecast_response.status_code,
+                content_type=forecast_response.headers.get('content-type'),
+                content_length=len(forecast_response.content)
+            )
             
-            if not hourly_data and not daily_data:
-                self.error("No forecast data received from API")
+            if forecast_response.status_code != 200:
+                error = APIResponseError(
+                    f"AEMET forecast request failed with status {forecast_response.status_code}",
+                    response=forecast_response
+                )
+                aggregate_error(str(error), "iberian_weather", None)
                 return None
-            
-            # Process hourly forecasts
-            hourly_forecasts = []
-            if hourly_data:
-                for period in hourly_data.get('prediccion', {}).get('dia', []):
-                    date = datetime.strptime(period['fecha'], "%Y-%m-%d").replace(tzinfo=local_tz)
-                    
-                    for hour_data in period.get('temperatura', []):
-                        hour = int(hour_data['periodo'])
-                        time = date.replace(hour=hour, minute=0, second=0, microsecond=0)
-                        
-                        if time < start_time or time > end_time:
-                            continue
-                        
-                        # Find matching data for this hour
-                        precip = next((x for x in period.get('precipitacion', []) if x['periodo'] == hour_data['periodo']), {})
-                        wind = next((x for x in period.get('viento', []) if x['periodo'] == hour_data['periodo']), {})
-                        
-                        forecast = {
-                            'time': time.isoformat(),
-                            'temperature': float(hour_data['value']),
-                            'precipitation': float(precip.get('value', 0)),
-                            'precipitation_probability': int(precip.get('probabilidad', 0)),
-                            'wind_speed': float(wind.get('velocidad', 0)),
-                            'wind_direction': int(wind.get('direccion', 0)),
-                            'symbol': period.get('estadoCielo', {}).get('value', '0'),
-                            'thunder_probability': int(period.get('probTormenta', {}).get('value', 0))
-                        }
-                        hourly_forecasts.append(forecast)
-            
-            # Process daily forecasts
-            daily_forecasts = []
-            if daily_data:
-                for period in daily_data.get('prediccion', {}).get('dia', []):
-                    date = datetime.strptime(period['fecha'], "%Y-%m-%d").replace(tzinfo=local_tz)
-                    
-                    for block in period.get('temperatura', []):
-                        hour = int(block.get('periodo', 0))
-                        time = date.replace(hour=hour, minute=0, second=0, microsecond=0)
-                        
-                        if time < start_time or time > end_time:
-                            continue
-                        
-                        # Find matching data for this period
-                        precip = next((x for x in period.get('precipitacion', []) if x.get('periodo') == block.get('periodo')), {})
-                        wind = next((x for x in period.get('viento', []) if x.get('periodo') == block.get('periodo')), {})
-                        
-                        forecast = {
-                            'time': time.isoformat(),
-                            'temperature': float(block.get('value', 0)),
-                            'precipitation': float(precip.get('value', 0)),
-                            'precipitation_probability': int(precip.get('probabilidad', 0)),
-                            'wind_speed': float(wind.get('velocidad', 0)),
-                            'wind_direction': int(wind.get('direccion', 0)),
-                            'symbol': period.get('estadoCielo', {}).get('value', '0'),
-                            'thunder_probability': int(period.get('probTormenta', {}).get('value', 0))
-                        }
-                        daily_forecasts.append(forecast)
-            
-            # Return combined response with metadata
-            return {
-                'municipality_code': municipality_code,
-                'municipality_name': municipality.get('name'),
-                'province': municipality.get('province'),
-                'region': municipality.get('region'),
-                'latitude': lat,
-                'longitude': lon,
-                'hourly_forecasts': hourly_forecasts,
-                'daily_forecasts': daily_forecasts,
-                'raw_hourly_data': hourly_data,  # Keep raw data for debugging
-                'raw_daily_data': daily_data     # Keep raw data for debugging
-            }
-            
+
+            forecast_data = forecast_response.json()
+            if not forecast_data or 'prediccion' not in forecast_data:
+                error = WeatherError(
+                    "Invalid forecast data format from AEMET API",
+                    ErrorCode.INVALID_RESPONSE,
+                    {"response": forecast_data}
+                )
+                aggregate_error(str(error), "iberian_weather", None)
+                return None
+
+            self.debug(
+                "Received forecast data",
+                data=json.dumps(forecast_data, indent=2),
+                data_type=type(forecast_data).__name__,
+                has_data=bool(forecast_data.get('prediccion')),
+                data_length=len(forecast_data.get('prediccion', [])),
+                first_period=forecast_data.get('prediccion', [{}])[0] if forecast_data.get('prediccion') else None
+            )
+
+            return forecast_data
+
         except Exception as e:
-            self.error("Error fetching forecasts", error=str(e))
+            self.error("Error fetching forecasts", exc_info=e)
             return None
 
     def _haversine_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -1344,18 +1345,18 @@ class IberianWeatherService(WeatherService):
         fetch_start = aligned_time
         fetch_end = aligned_time + timedelta(hours=48 if hours_ahead <= self.HOURLY_RANGE else 168)  # 48h for short-term, 7 days for medium/long
         
-        forecasts = self._fetch_forecasts(lat, lon, fetch_start, fetch_end, aligned_time.tzinfo, now_utc)
+        forecasts = self._fetch_forecasts(lat, lon, fetch_start, fetch_end)
         if forecasts:
             # Calculate expiry time based on AEMET's update schedule
-            current_hour = now_utc.hour
+            current_hour = datetime.now(self.utc_tz).hour
             update_hours = [3, 9, 15, 21]  # AEMET update times (UTC)
             next_update_hour = next((hour for hour in update_hours if hour > current_hour), update_hours[0])
             
             if next_update_hour <= current_hour:
                 # If we're past all update times today, next update is tomorrow
-                expires = (now_utc + timedelta(days=1)).replace(hour=update_hours[0], minute=0, second=0, microsecond=0)
+                expires = (datetime.now(self.utc_tz) + timedelta(days=1)).replace(hour=update_hours[0], minute=0, second=0, microsecond=0)
             else:
-                expires = now_utc.replace(hour=next_update_hour, minute=0, second=0, microsecond=0)
+                expires = datetime.now(self.utc_tz).replace(hour=next_update_hour, minute=0, second=0, microsecond=0)
             
             # Store all forecasts in cache
             cache_entries = []
@@ -1388,7 +1389,7 @@ class IberianWeatherService(WeatherService):
             self.db.store_weather_data(
                 cache_entries,
                 expires=expires.isoformat(),
-                last_modified=now_utc.isoformat()
+                last_modified=datetime.now(self.utc_tz).isoformat()
             )
             
             # Find and return the forecast for the requested time
@@ -1404,8 +1405,7 @@ class IberianWeatherService(WeatherService):
         response_data: Dict[str, Any],
         start_time: datetime,
         end_time: datetime,
-        interval: int,
-        expires: datetime
+        interval: int
     ) -> Optional[WeatherResponse]:
         """Parse raw API response into WeatherData objects."""
         try:
@@ -1463,7 +1463,7 @@ class IberianWeatherService(WeatherService):
             # Sort forecasts by time
             forecasts.sort(key=lambda x: x.elaboration_time)
             
-            return WeatherResponse(data=forecasts, expires=expires)
+            return WeatherResponse(data=forecasts, expires=datetime.now(self.utc_tz) + timedelta(hours=1))
             
         except Exception as e:
             self.error("Error parsing weather response", error=str(e))
@@ -1531,68 +1531,67 @@ class IberianWeatherService(WeatherService):
         except Exception as e:
             self.error("Error fetching data", error=str(e), url=url)
             return None
-    
-    def _find_nearest_municipality(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
-        """Find nearest municipality to given coordinates."""
+
+    def _is_in_coverage_area(self, lat: float, lon: float) -> bool:
+        """Check if coordinates are within Spain's territory.
+        
+        Coverage areas:
+        - Mainland Spain: 35.9N to 43.8N, 9.4W to 3.4E
+        - Canary Islands: 27.6N to 29.5N, 18.2W to 13.3W
+        - Balearic Islands: 38.6N to 40.1N, 1.1E to 4.4E
+        """
+        # Mainland Spain
+        if (35.9 <= lat <= 43.8 and -9.4 <= lon <= 3.4):
+            return True
+        # Canary Islands
+        if (27.6 <= lat <= 29.5 and -18.2 <= lon <= -13.3):
+            return True
+        # Balearic Islands
+        if (38.6 <= lat <= 40.1 and 1.1 <= lon <= 4.4):
+            return True
+        return False
+
+    def _parse_dms_to_decimal(self, dms_str: str) -> float:
+        """Convert DMS (degrees, minutes, seconds) string to decimal degrees."""
         try:
-            # Get list of municipalities
-            url = f"{self.endpoint}/maestro/municipios"
-            response = requests.get(url, headers=self.headers, timeout=10)
+            # Remove the degree symbol and quotes
+            dms_str = dms_str.replace('º', ' ').replace('"', ' ').replace("'", ' ')
+            parts = dms_str.split()
             
-            if response.status_code != 200:
-                self.error(
-                    "Failed to get municipality list",
-                    status=response.status_code
-                )
-                return None
+            degrees = float(parts[0])
+            minutes = float(parts[1])
+            seconds = float(parts[2])
             
-            municipalities = response.json()
-            if not municipalities:
-                self.error("Empty municipality list received")
-                return None
-            
-            # Find nearest municipality
-            nearest = None
-            min_distance = float('inf')
-            
-            for muni in municipalities:
-                try:
-                    muni_lat = float(muni.get('latitud', 0))
-                    muni_lon = float(muni.get('longitud', 0))
-                    
-                    distance = self._haversine_distance(lat, lon, muni_lat, muni_lon)
-                    
-                    if distance < min_distance:
-                        min_distance = distance
-                        nearest = {
-                            'code': muni['id'],  # AEMET municipality code
-                            'name': muni.get('nombre', 'Unknown'),
-                            'province': muni.get('provincia', 'Unknown'),
-                            'region': muni.get('comunidad', 'Unknown'),
-                            'latitude': muni_lat,
-                            'longitude': muni_lon,
-                            'distance': distance
-                        }
-                except (ValueError, KeyError) as e:
-                    self.warning(
-                        "Invalid municipality data",
-                        error=str(e),
-                        municipality=muni
-                    )
-                    continue
-            
-            if nearest:
-                self.debug(
-                    "Found nearest municipality",
-                    municipality=nearest['name'],
-                    code=nearest['code'],
-                    distance_km=nearest['distance']
-                )
-                return nearest
-            
-            self.error("No valid municipalities found")
+            decimal = degrees + minutes/60 + seconds/3600
+            return decimal
+        except (ValueError, IndexError) as e:
+            self.error(f"Failed to parse DMS coordinate: {dms_str}", exc_info=e)
             return None
+
+    def _parse_location_data(self, data: dict) -> Optional[Location]:
+        """Parse location data from AEMET API response."""
+        try:
+            # Use decimal coordinates directly if available
+            lat = float(data.get('latitud_dec', 0))
+            lon = float(data.get('longitud_dec', 0))
             
-        except Exception as e:
-            self.error("Error finding nearest municipality", error=str(e))
+            # If decimal coordinates are 0, try parsing DMS format
+            if lat == 0 and 'latitud' in data:
+                lat = self._parse_dms_to_decimal(data['latitud'])
+            if lon == 0 and 'longitud' in data:
+                lon = self._parse_dms_to_decimal(data['longitud'])
+            
+            if lat is None or lon is None:
+                return None
+            
+            return Location(
+                id=data['id'],
+                name=data['nombre'],
+                latitude=lat,
+                longitude=lon,
+                altitude=float(data['altitud']),
+                region=data.get('zona_comarcal', '')
+            )
+        except (ValueError, KeyError) as e:
+            self.error(f"Failed to parse location data", exc_info=e, data=data)
             return None
