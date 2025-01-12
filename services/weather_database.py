@@ -1,263 +1,275 @@
-"""Weather database manager for caching weather data."""
+"""Database for storing weather data and raw API responses."""
 
-import os
+import json
 import sqlite3
-from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
-from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Union
+from zoneinfo import ZoneInfo
 
-from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.utils.logging_utils import get_logger
 
-class WeatherDatabase(LoggerMixin):
-    """Manages weather data caching in SQLite database."""
+class WeatherResponseCache:
+    """Cache for storing raw weather API responses."""
     
-    def __init__(self, db_name: str, schema: Dict[str, List[str]]):
-        """Initialize database with schema.
-        
-        Args:
-            db_name: Name of the database file (without .db extension)
-            schema: Dictionary of table names to column definitions
-        """
-        LoggerMixin.__init__(self)
-        
-        # Use the data directory in the workspace
-        self.db_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
-        self.db_file = os.path.join(self.db_dir, f'{db_name}.db')
-        self.schema = schema
-        
-        self.debug(
-            "Initializing weather database",
-            db_file=self.db_file,
-            db_dir=self.db_dir
-        )
-        
+    def __init__(self, db_path: str = 'weather_cache.db'):
+        """Initialize the cache."""
+        self.logger = get_logger(__name__)
+        self.db_path = db_path
         self._init_db()
     
     def _init_db(self):
-        """Initialize database with provided schema."""
-        try:
-            os.makedirs(self.db_dir, exist_ok=True)
-            self.debug(f"Ensuring database directory exists: {self.db_dir}")
+        """Initialize the database schema."""
+        with sqlite3.connect(self.db_path) as conn:
+            # Create locations table to handle different location types
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS weather_locations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    service_type TEXT NOT NULL,
+                    location_id TEXT,           -- Service-specific ID (municipality code, grid point, etc.)
+                    location_name TEXT,         -- Human readable name
+                    latitude REAL NOT NULL,
+                    longitude REAL NOT NULL,
+                    metadata TEXT,              -- JSON string for additional location data
+                    last_modified TEXT NOT NULL,
+                    UNIQUE(service_type, latitude, longitude)
+                )
+            """)
             
-            # Only create tables if they don't exist (don't drop existing tables)
-            with sqlite3.connect(self.db_file) as conn:
-                cursor = conn.cursor()
-                for table_name, columns in self.schema.items():
-                    self.debug(f"Creating table if not exists: {table_name}")
-                    cursor.execute(f'''
-                        CREATE TABLE IF NOT EXISTS {table_name} (
-                            {", ".join(columns)}
-                        )
-                    ''')
-                conn.commit()
-                self.debug("Database initialization complete")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize database: {e}")
-            raise
+            # Create responses table with foreign key to locations
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS weather_responses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    location_ref INTEGER NOT NULL,
+                    response_data TEXT NOT NULL,  -- JSON string of raw API response
+                    forecast_start TEXT NOT NULL, -- ISO format UTC
+                    forecast_end TEXT NOT NULL,   -- ISO format UTC
+                    expires TEXT NOT NULL,        -- ISO format UTC
+                    last_modified TEXT NOT NULL,  -- ISO format UTC
+                    FOREIGN KEY(location_ref) REFERENCES weather_locations(id),
+                    UNIQUE(location_ref, forecast_start, forecast_end)
+                )
+            """)
+            
+            # Create indices for efficient lookups
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_location_coords ON weather_locations(latitude, longitude)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_location_service ON weather_locations(service_type, location_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_forecast_time ON weather_responses(forecast_start, forecast_end)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_expiry ON weather_responses(expires)")
     
-    def get_connection(self):
-        """Get a database connection."""
-        return sqlite3.connect(self.db_file)
-    
-    def get_weather_data(
+    def _get_or_create_location(
         self,
-        location: str,
-        times: List[str],
-        data_type: str,
-        fields: List[str]
-    ) -> Dict[str, Dict[str, Any]]:
-        """Get weather data from cache.
+        conn: sqlite3.Connection,
+        service_type: str,
+        latitude: float,
+        longitude: float,
+        location_id: Optional[str] = None,
+        location_name: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> int:
+        """Get or create a location entry and return its ID."""
+        now = datetime.now(ZoneInfo("UTC"))
         
-        Args:
-            location: Location identifier (e.g. "lat,lon")
-            times: List of time strings to fetch
-            data_type: Type of forecast (e.g. "next_1_hours")
-            fields: List of fields to fetch
-            
-        Returns:
-            Dictionary mapping times to weather data
-        """
+        # Try to find existing location
+        cursor = conn.execute("""
+            SELECT id FROM weather_locations
+            WHERE service_type = ? AND latitude = ? AND longitude = ?
+        """, (service_type, latitude, longitude))
+        
+        row = cursor.fetchone()
+        if row:
+            # Update metadata if provided
+            if metadata or location_id or location_name:
+                conn.execute("""
+                    UPDATE weather_locations
+                    SET location_id = COALESCE(?, location_id),
+                        location_name = COALESCE(?, location_name),
+                        metadata = COALESCE(?, metadata),
+                        last_modified = ?
+                    WHERE id = ?
+                """, (
+                    location_id,
+                    location_name,
+                    json.dumps(metadata) if metadata else None,
+                    now.isoformat(),
+                    row[0]
+                ))
+            return row[0]
+        
+        # Create new location
+        cursor = conn.execute("""
+            INSERT INTO weather_locations
+            (service_type, location_id, location_name, latitude, longitude, metadata, last_modified)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            service_type,
+            location_id,
+            location_name,
+            latitude,
+            longitude,
+            json.dumps(metadata) if metadata else None,
+            now.isoformat()
+        ))
+        return cursor.lastrowid
+    
+    def store_response(
+        self,
+        service_type: str,
+        latitude: float,
+        longitude: float,
+        response_data: Dict[str, Any],
+        forecast_start: datetime,
+        forecast_end: datetime,
+        expires: datetime,
+        location_id: Optional[str] = None,
+        location_name: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> None:
+        """Store a raw API response."""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                weather_data = {}
+            with sqlite3.connect(self.db_path) as conn:
+                now = datetime.now(ZoneInfo("UTC"))
                 
-                # Convert ISO format times to database format
-                db_times = []
-                for t in times:
-                    try:
-                        # Try parsing as ISO format with timezone
-                        dt = datetime.fromisoformat(t)
-                        # Convert to UTC if it has timezone
-                        if dt.tzinfo:
-                            dt = dt.astimezone(timezone.utc)
-                        # Store in database format
-                        db_times.append(dt.strftime('%Y-%m-%dT%H:%M:%S+00:00'))
-                    except ValueError as e:
-                        self.error(f"Failed to parse time {t}: {e}")
-                        continue
-                
-                if not db_times:
-                    self.error("No valid times to query")
-                    return {}
-                
-                # Fetch data for all times at once
-                placeholders = ','.join(['?' for _ in db_times])
-                field_list = ', '.join(fields)
-                query = f'''
-                    SELECT time, {field_list}
-                    FROM weather
-                    WHERE location = ? 
-                    AND time IN ({placeholders})
-                    AND data_type = ?
-                    AND (expires IS NULL OR expires > datetime('now', 'utc'))
-                    ORDER BY time ASC
-                '''
-                
-                self.debug(
-                    "Executing query",
-                    location=location,
-                    times=db_times,
-                    data_type=data_type,
-                    fields=fields,
-                    query=query
+                # Get or create location
+                location_ref = self._get_or_create_location(
+                    conn,
+                    service_type,
+                    latitude,
+                    longitude,
+                    location_id,
+                    location_name,
+                    metadata
                 )
                 
-                cursor.execute(query, [location] + db_times + [data_type])
-                results = cursor.fetchall()
+                self.logger.debug(
+                    "Storing weather response",
+                    service=service_type,
+                    location_id=location_id,
+                    location_name=location_name,
+                    coords=(latitude, longitude),
+                    time_range=f"{forecast_start.isoformat()} to {forecast_end.isoformat()}",
+                    expires=expires.isoformat()
+                )
                 
-                # Convert results to dictionary
-                for result in results:
-                    time = result[0]
-                    data = {}
-                    for i, field in enumerate(fields, 1):
-                        data[field] = result[i]
-                    weather_data[time] = data
-                    self.debug(f"Found cached data for {time}: {data}")
-                
-                return weather_data
-                
+                conn.execute("""
+                    INSERT OR REPLACE INTO weather_responses
+                    (location_ref, response_data, forecast_start, forecast_end, expires, last_modified)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    location_ref,
+                    json.dumps(response_data),
+                    forecast_start.isoformat(),
+                    forecast_end.isoformat(),
+                    expires.isoformat(),
+                    now.isoformat()
+                ))
         except Exception as e:
-            self.error(f"Failed to get weather data from cache: {e}")
-            return {}
-    
-    def store_weather_data(
-        self,
-        data: List[Dict[str, Any]],
-        expires: Optional[str] = None,
-        last_modified: Optional[str] = None
-    ):
-        """Store weather data in cache.
-        
-        Args:
-            data: List of weather data entries
-            expires: Optional expiration time
-            last_modified: Optional last modified time
-        """
-        try:
-            self.debug(
-                "Storing weather data",
-                entries=len(data),
-                first_entry=data[0] if data else None,
-                expires=expires,
-                last_modified=last_modified
-            )
-            
-            with sqlite3.connect(self.db_file) as conn:
-                cursor = conn.cursor()
-                
-                # Store each entry
-                for entry in data:
-                    try:
-                        # Ensure time is in ISO format with timezone
-                        try:
-                            dt = datetime.fromisoformat(entry['time'])
-                            if not dt.tzinfo:
-                                dt = dt.replace(tzinfo=timezone.utc)
-                            else:
-                                dt = dt.astimezone(timezone.utc)
-                            entry['time'] = dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                        except ValueError:
-                            # If not ISO format, try parsing as regular datetime
-                            dt = datetime.strptime(entry['time'], '%Y-%m-%d %H:%M:%S')
-                            dt = dt.replace(tzinfo=timezone.utc)
-                            entry['time'] = dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                        
-                        # Convert expiration and last modified times if provided
-                        expires_str = None
-                        if expires:
-                            try:
-                                exp_dt = datetime.fromisoformat(expires)
-                                if not exp_dt.tzinfo:
-                                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-                                else:
-                                    exp_dt = exp_dt.astimezone(timezone.utc)
-                                expires_str = exp_dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                            except ValueError:
-                                exp_dt = datetime.strptime(expires, '%Y-%m-%d %H:%M:%S')
-                                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-                                expires_str = exp_dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                        
-                        last_modified_str = None
-                        if last_modified:
-                            try:
-                                mod_dt = datetime.fromisoformat(last_modified)
-                                if not mod_dt.tzinfo:
-                                    mod_dt = mod_dt.replace(tzinfo=timezone.utc)
-                                else:
-                                    mod_dt = mod_dt.astimezone(timezone.utc)
-                                last_modified_str = mod_dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                            except ValueError:
-                                mod_dt = datetime.strptime(last_modified, '%Y-%m-%d %H:%M:%S')
-                                mod_dt = mod_dt.replace(tzinfo=timezone.utc)
-                                last_modified_str = mod_dt.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                        
-                        # Get all fields except location and time
-                        fields = [k for k in entry.keys() if k not in ['location', 'time']]
-                        field_list = ', '.join(['location', 'time'] + fields)
-                        value_list = ', '.join(['?'] * (len(fields) + 2))
-                        
-                        query = f'''
-                            INSERT OR REPLACE INTO weather 
-                            ({field_list}, expires, last_modified)
-                            VALUES ({value_list}, ?, ?)
-                        '''
-                        
-                        values = [
-                            entry['location'],
-                            entry['time']
-                        ] + [entry.get(field) for field in fields] + [expires_str, last_modified_str]
-                        
-                        self.debug(
-                            "Executing insert query",
-                            location=entry['location'],
-                            time=entry['time'],
-                            field_count=len(fields),
-                            query=query,
-                            values=values,
-                            expires=expires_str
-                        )
-                        
-                        cursor.execute(query, values)
-                        
-                    except Exception as e:
-                        self.error(
-                            "Failed to store entry",
-                            error=str(e),
-                            entry=entry,
-                            exc_info=True
-                        )
-                        continue
-                
-                conn.commit()
-                self.debug("Successfully committed weather data to database")
-                
-        except Exception as e:
-            self.error(
-                "Failed to store weather data",
+            self.logger.error(
+                "Failed to store weather response",
                 error=str(e),
-                entry_count=len(data) if data else 0,
-                first_entry=data[0] if data else None,
-                exc_info=True
+                service=service_type,
+                location_id=location_id,
+                coords=(latitude, longitude)
             )
-            raise 
+            raise
+    
+    def get_response(
+        self,
+        service_type: str,
+        latitude: float,
+        longitude: float,
+        start_time: datetime,
+        end_time: datetime,
+        location_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a cached response that covers the requested time range."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                self.logger.debug(
+                    "Looking up weather response",
+                    service=service_type,
+                    coords=(latitude, longitude),
+                    location_id=location_id,
+                    time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
+                )
+                
+                # Find responses that cover our time range and haven't expired
+                query = """
+                    SELECT r.response_data, r.forecast_start, r.forecast_end, r.expires,
+                           l.location_id, l.location_name, l.metadata
+                    FROM weather_responses r
+                    JOIN weather_locations l ON r.location_ref = l.id
+                    WHERE l.service_type = ?
+                    AND l.latitude = ?
+                    AND l.longitude = ?
+                    AND r.forecast_start <= ?
+                    AND r.forecast_end >= ?
+                    AND (r.expires IS NULL OR r.expires > datetime('now', 'utc'))
+                """
+                params = [service_type, latitude, longitude, start_time.isoformat(), end_time.isoformat()]
+                
+                if location_id:
+                    query += " AND l.location_id = ?"
+                    params.append(location_id)
+                
+                query += " ORDER BY r.last_modified DESC LIMIT 1"
+                
+                cursor = conn.execute(query, params)
+                row = cursor.fetchone()
+                
+                if row:
+                    response_data = json.loads(row[0])
+                    location_metadata = json.loads(row[6]) if row[6] else None
+                    
+                    self.logger.info(
+                        "Cache hit",
+                        service=service_type,
+                        coords=(latitude, longitude),
+                        location_id=row[4],
+                        location_name=row[5],
+                        forecast_range=f"{row[1]} to {row[2]}",
+                        expires=row[3]
+                    )
+                    
+                    # Return response with location metadata
+                    return {
+                        'response': response_data,
+                        'location': {
+                            'id': row[4],
+                            'name': row[5],
+                            'metadata': location_metadata
+                        }
+                    }
+                
+                self.logger.info(
+                    "Cache miss",
+                    service=service_type,
+                    coords=(latitude, longitude),
+                    location_id=location_id,
+                    time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
+                )
+                return None
+                
+        except Exception as e:
+            self.logger.error(
+                "Failed to get weather response",
+                error=str(e),
+                service=service_type,
+                coords=(latitude, longitude),
+                location_id=location_id
+            )
+            return None
+    
+    def cleanup_expired(self) -> int:
+        """Remove expired responses. Returns number of entries removed."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    DELETE FROM weather_responses
+                    WHERE expires < datetime('now', 'utc')
+                """)
+                deleted = cursor.rowcount
+                self.logger.info(f"Removed {deleted} expired weather responses")
+                return deleted
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup expired responses: {e}")
+            return 0 
