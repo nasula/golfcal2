@@ -11,33 +11,44 @@ sequenceDiagram
     participant User
     participant CLI
     participant RS as ReservationService
+    participant GCF as GolfClubFactory
     participant GC as GolfClub
+    participant AS as AuthService
     participant WM as WeatherManager
     participant CS as CalendarService
     participant DB as Database
 
-    User->>CLI: Create Reservation
-    CLI->>RS: process_request()
+    User->>CLI: Request Reservations
+    CLI->>RS: Process Request
     
-    RS->>GC: check_availability()
-    GC-->>RS: available_times
+    loop For Each Membership
+        RS->>GCF: Create Club Instance
+        GCF-->>RS: Club Instance
+        RS->>AS: Get Auth Headers
+        AS-->>RS: Auth Token/Cookie
+        RS->>GC: Fetch Reservations
+        GC->>GC: Make API Request
+        GC-->>RS: Raw Reservations
+        
+        loop For Each Reservation
+            alt Future Reservation
+                RS->>GC: Fetch Players
+                GC-->>RS: Player Data
+            end
+            RS->>WM: Get Weather
+            WM-->>RS: Weather Data
+            RS->>CS: Create Calendar Event
+            CS->>DB: Store Event
+            DB-->>CS: Success
+            CS-->>RS: Event Created
+        end
+    end
     
-    RS->>GC: create_reservation()
-    GC-->>RS: reservation_confirmation
-    
-    RS->>WM: get_weather()
-    WM-->>RS: weather_data
-    
-    RS->>CS: create_event()
-    CS->>DB: store_event()
-    DB-->>CS: confirmation
-    
-    CS-->>RS: event_created
-    RS-->>CLI: success
-    CLI-->>User: confirmation
+    RS-->>CLI: Processed Reservations
+    CLI-->>User: Display Results
 ```
 
-## Weather Integration Flow
+## Weather Flow
 
 ```mermaid
 sequenceDiagram
@@ -48,246 +59,25 @@ sequenceDiagram
     participant Backup as BackupProvider
     participant DB as Database
 
-    CS->>WM: get_weather()
-    
-    WM->>Cache: check_cache()
+    CS->>WM: Request Weather
+    WM->>Cache: Check Cache
     alt Cache Hit
-        Cache-->>WM: cached_data
+        Cache-->>WM: Cached Data
     else Cache Miss
-        WM->>Primary: request_weather()
+        WM->>Primary: Request Data
         alt Primary Success
-            Primary-->>WM: weather_data
+            Primary-->>WM: Weather Data
         else Primary Failure
-            WM->>Backup: request_weather()
-            Backup-->>WM: weather_data
+            WM->>Backup: Request Data
+            Backup-->>WM: Weather Data
         end
-        WM->>Cache: update_cache()
-        WM->>DB: store_weather()
+        WM->>Cache: Update Cache
+        WM->>DB: Store Data
     end
-    
-    WM-->>CS: weather_data
+    WM-->>CS: Weather Data
 ```
 
-## Calendar Event Flow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant CLI
-    participant CS as CalendarService
-    participant EES as ExternalEventService
-    participant WM as WeatherManager
-    participant DB as Database
-
-    User->>CLI: list_events()
-    CLI->>CS: get_events()
-    
-    par Golf Events
-        CS->>DB: get_reservations()
-        DB-->>CS: reservations
-    and External Events
-        CS->>EES: get_external_events()
-        EES-->>CS: external_events
-    end
-    
-    loop For Each Event
-        CS->>WM: get_weather()
-        WM-->>CS: weather_data
-    end
-    
-    CS-->>CLI: events_with_weather
-    CLI-->>User: formatted_output
-```
-
-## Data Models
-
-### Reservation Data
-
-```mermaid
-classDiagram
-    class Reservation {
-        +str id
-        +str club_name
-        +datetime start_time
-        +datetime end_time
-        +List[str] players
-        +Dict coordinates
-        +Dict weather_data
-        +str status
-        +create()
-        +cancel()
-        +update()
-    }
-    
-    class Club {
-        +str name
-        +str api_type
-        +Dict coordinates
-        +str address
-        +check_availability()
-        +create_reservation()
-        +cancel_reservation()
-    }
-    
-    class WeatherData {
-        +float temperature
-        +float precipitation
-        +float wind_speed
-        +str condition
-        +datetime timestamp
-        +update()
-        +is_valid()
-    }
-    
-    Reservation --> Club
-    Reservation --> WeatherData
-```
-
-### Event Data
-
-```mermaid
-classDiagram
-    class CalendarEvent {
-        +str id
-        +str title
-        +datetime start_time
-        +datetime end_time
-        +str location
-        +Dict weather_data
-        +str event_type
-        +create()
-        +update()
-        +delete()
-    }
-    
-    class ExternalEvent {
-        +str id
-        +str source
-        +str title
-        +datetime start_time
-        +datetime end_time
-        +str location
-        +Dict weather_data
-        +sync()
-        +update()
-    }
-    
-    class EventBuilder {
-        +build_from_reservation()
-        +build_from_external()
-        +add_weather()
-        +validate()
-    }
-    
-    CalendarEvent <|-- ExternalEvent
-    EventBuilder --> CalendarEvent
-```
-
-## Data Storage
-
-### Database Schema
-
-```sql
--- Reservations
-CREATE TABLE reservations (
-    id TEXT PRIMARY KEY,
-    club_name TEXT NOT NULL,
-    start_time TIMESTAMP NOT NULL,
-    end_time TIMESTAMP NOT NULL,
-    players TEXT NOT NULL,
-    coordinates TEXT NOT NULL,
-    weather_data TEXT,
-    status TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Weather Data
-CREATE TABLE weather (
-    id INTEGER PRIMARY KEY,
-    latitude REAL NOT NULL,
-    longitude REAL NOT NULL,
-    temperature REAL,
-    precipitation REAL,
-    wind_speed REAL,
-    condition TEXT,
-    timestamp TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(latitude, longitude, timestamp)
-);
-
--- Calendar Events
-CREATE TABLE events (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    start_time TIMESTAMP NOT NULL,
-    end_time TIMESTAMP NOT NULL,
-    location TEXT,
-    weather_data TEXT,
-    event_type TEXT NOT NULL,
-    source TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-## Data Transformations
-
-### Reservation Processing
-
-```mermaid
-graph TD
-    A[Raw Reservation] --> B[Validate Data]
-    B --> C[Format Times]
-    C --> D[Get Weather]
-    D --> E[Create Event]
-    E --> F[Store Data]
-    
-    subgraph Validation
-        B
-    end
-    
-    subgraph Processing
-        C
-        D
-    end
-    
-    subgraph Storage
-        E
-        F
-    end
-```
-
-### Weather Processing
-
-```mermaid
-graph TD
-    A[Weather Request] --> B[Check Cache]
-    B --> C{Cache Hit?}
-    C -->|Yes| D[Return Cached]
-    C -->|No| E[Fetch New]
-    E --> F[Transform Data]
-    F --> G[Cache Data]
-    G --> H[Return Data]
-    
-    subgraph Cache
-        B
-        C
-        D
-    end
-    
-    subgraph API
-        E
-        F
-    end
-    
-    subgraph Storage
-        G
-        H
-    end
-```
-
-## Error Handling
-
-### Error Flow
+## Error Flow
 
 ```mermaid
 sequenceDiagram
@@ -317,9 +107,72 @@ sequenceDiagram
     end
 ```
 
+## Golf Club System Flows
+
+### WiseGolf Flow
+
+```mermaid
+sequenceDiagram
+    participant RS as ReservationService
+    participant GC as WiseGolfClub
+    participant API as WiseGolfAPI
+    participant REST as WiseGolfREST
+
+    RS->>GC: Fetch Reservations
+    GC->>API: Get Reservations
+    API-->>GC: Raw Reservations
+    
+    loop For Each Future Reservation
+        GC->>REST: Fetch Players
+        Note right of REST: Uses REST API endpoint<br/>for player data
+        REST-->>GC: Player Data
+        GC->>GC: Parse Player Data
+    end
+    
+    GC-->>RS: Processed Reservations
+```
+
+### NexGolf Flow
+
+```mermaid
+sequenceDiagram
+    participant RS as ReservationService
+    participant GC as NexGolfClub
+    participant API as NexGolfAPI
+    
+    RS->>GC: Fetch Reservations
+    GC->>API: Get Reservations
+    Note right of API: Uses single API endpoint<br/>with date range parameter
+    API-->>GC: Raw Reservations with Players
+    GC->>GC: Parse Reservation Data
+    GC-->>RS: Processed Reservations
+```
+
+### Key Differences
+
+1. **Authentication**
+   - WiseGolf: Token-based authentication with REST API
+   - NexGolf: Cookie-based session authentication
+
+2. **Player Data**
+   - WiseGolf: Separate REST API call required for player data
+   - NexGolf: Player data included in main reservation response
+
+3. **Data Format**
+   - WiseGolf: Two different API formats (AJAX and REST)
+   - NexGolf: Single unified API format
+
+4. **Date Handling**
+   - WiseGolf: Server returns local times
+   - NexGolf: Server returns UTC times with timezone info
+
+5. **API Structure**
+   - WiseGolf: Split between AJAX API (reservations) and REST API (players)
+   - NexGolf: Single API endpoint with query parameters
+
 ## Related Documentation
 
 - [Architecture Overview](overview.md)
 - [Service Architecture](services.md)
 - [Database Schema](../deployment/database.md)
-``` 
+```

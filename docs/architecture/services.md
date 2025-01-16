@@ -139,21 +139,31 @@ sequenceDiagram
     participant RS as ReservationService
     participant CS as CalendarService
     participant WM as WeatherManager
+    participant GCF as GolfClubFactory
     participant GC as GolfClub
     participant DB as Database
 
-    User->>RS: Create Reservation
-    RS->>GC: Check Availability
-    GC-->>RS: Available
-    RS->>GC: Book Time
-    GC-->>RS: Confirmation
-    RS->>WM: Get Weather
-    WM-->>RS: Weather Data
-    RS->>CS: Create Event
-    CS->>DB: Store Event
-    DB-->>CS: Success
-    CS-->>RS: Event Created
-    RS-->>User: Reservation Complete
+    User->>RS: Request Reservations
+    RS->>GCF: Create Club Instance
+    GCF-->>RS: Club Instance
+    RS->>GC: Fetch Reservations
+    GC->>GC: Make API Request
+    GC-->>RS: Raw Reservations
+    
+    loop For Each Reservation
+        alt Future Reservation
+            RS->>GC: Fetch Players
+            GC-->>RS: Player Data
+        end
+        RS->>WM: Get Weather
+        WM-->>RS: Weather Data
+        RS->>CS: Create Calendar Event
+        CS->>DB: Store Event
+        DB-->>CS: Success
+        CS-->>RS: Event Created
+    end
+    
+    RS-->>User: Processed Reservations
 ```
 
 ### Error Handling

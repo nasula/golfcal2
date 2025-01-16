@@ -8,28 +8,28 @@ The Authentication Service manages authentication for various golf club booking 
 
 ```mermaid
 graph TD
-    AS[Auth Service] --> TS[Token Strategy]
-    AS --> CS[Cookie Strategy]
-    AS --> QS[Query Strategy]
-    AS --> BS[Basic Strategy]
+    AS[Auth Service] --> TAA[Token App Auth]
+    AS --> CA[Cookie Auth]
+    AS --> QA[Query Auth]
+    AS --> UA[Unsupported Auth]
     
-    TS --> WG[WiseGolf API]
-    CS --> WG0[WiseGolf0 API]
-    QS --> NG[NexGolf API]
-    BS --> TT[TeeTime API]
+    TAA --> WG[WiseGolf API]
+    CA --> WG0[WiseGolf0 API]
+    CA --> NG[NexGolf API]
+    QA --> Legacy[Legacy APIs]
     
     subgraph Strategies
-        TS
-        CS
-        QS
-        BS
+        TAA
+        CA
+        QA
+        UA
     end
     
     subgraph APIs
         WG
         WG0
         NG
-        TT
+        Legacy
     end
 ```
 
@@ -42,37 +42,55 @@ The main service class that coordinates authentication:
 ```python
 class AuthService:
     def __init__(self):
-        self.strategies = {
-            'token': TokenAuthStrategy(),
+        self._strategies = {
+            'token_appauth': TokenAppAuthStrategy(),
             'cookie': CookieAuthStrategy(),
-            'query': QueryAuthStrategy(),
-            'basic': BasicAuthStrategy()
+            'query': QueryAuthStrategy()
         }
 ```
 
 ### Authentication Strategies
 
-1. **Token Authentication**
+1. **Token App Authentication (token_appauth)**
    - Modern API authentication
-   - Bearer token support
-   - Token refresh handling
    - Used by WiseGolf
+   - Headers:
+     ```http
+     Authorization: <token>
+     x-session-type: wisegolf
+     Accept: application/json, text/plain, */*
+     ```
+   - URL format includes appauth parameter
+   - Token validation and management
 
-2. **Cookie Authentication**
+2. **Cookie Authentication (cookie)**
    - Session-based authentication
-   - Cookie management
-   - Session refresh
-   - Used by WiseGolf0
+   - Used by WiseGolf0 and NexGolf
+   - WiseGolf0 format:
+     ```http
+     Cookie: wisenetwork_session=<session_token>
+     ```
+   - NexGolf format:
+     ```http
+     Cookie: NGLOCALE=fi; JSESSIONID=<session_token>
+     ```
+   - Session management and renewal
 
-3. **Query Authentication**
+3. **Query Authentication (query)**
    - URL parameter-based auth
-   - Simple key-value pairs
-   - Used by NexGolf
+   - Used by legacy systems
+   - Headers:
+     ```http
+     Accept: application/json, text/plain, */*
+     Content-Type: application/json
+     ```
+   - URL format: `<base_url>?token=<token>`
+   - Optional cookie-based caching
 
-4. **Basic Authentication**
-   - Username/password auth
-   - Base64 encoding
-   - Used by TeeTime
+4. **Unsupported Authentication**
+   - Fallback strategy for unknown types
+   - Returns empty headers
+   - Logs unsupported auth type warnings
 
 ## Data Flow
 
@@ -85,36 +103,13 @@ sequenceDiagram
     participant Strategy
     participant API
     
-    Client->>AS: get_auth_headers()
-    AS->>AS: select_strategy()
-    AS->>Strategy: create_headers()
-    Strategy->>API: authenticate()
-    API-->>Strategy: auth_response
+    Client->>AS: get_strategy(auth_type)
+    AS->>AS: Select strategy
+    AS->>Strategy: create_headers(cookie_name, auth_details)
     Strategy-->>AS: headers
-    AS-->>Client: headers
-```
-
-### Token Refresh Flow
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant AS as AuthService
-    participant TS as TokenStrategy
-    participant API
-    
-    Client->>AS: get_auth_headers()
-    AS->>TS: create_headers()
-    TS->>TS: check_token()
-    
-    alt Token Expired
-        TS->>API: refresh_token()
-        API-->>TS: new_token
-        TS->>TS: update_token()
-    end
-    
-    TS-->>AS: headers
-    AS-->>Client: headers
+    AS->>Strategy: build_full_url(club_details, membership)
+    Strategy-->>AS: full_url
+    AS-->>Client: headers, url
 ```
 
 ## Configuration
@@ -122,133 +117,128 @@ sequenceDiagram
 The service requires configuration for each authentication type:
 
 ```yaml
-auth:
-  wisegolf:
-    type: "token"
-    client_id: "your-client-id"
-    client_secret: "your-client-secret"
+# Club configuration
+clubs:
+  wisegolf_club:
+    type: "wisegolf"
+    url: "https://api.wisegolf.club"
+    auth_type: "token_appauth"
     
-  wisegolf0:
-    type: "cookie"
-    session_timeout: 3600
+  wisegolf0_club:
+    type: "wisegolf0"
+    url: "https://legacy.wisegolf.club"
+    shopURL: "https://shop.wisegolf.club"
+    auth_type: "cookie"
+    cookie_name: "wisenetwork_session"
     
-  nexgolf:
-    type: "query"
-    api_key: "your-api-key"
-    
-  teetime:
-    type: "basic"
-    username: "your-username"
-    password: "your-password"
+  nexgolf_club:
+    type: "nexgolf"
+    url: "https://api.nexgolf.fi"
+    auth_type: "cookie"
+    cookie_name: "NGLOCALE=fi; JSESSIONID"
+
+# User configuration
+users:
+  username:
+    memberships:
+      - club: "wisegolf_club"
+        auth_details:
+          token: "your-token"
+          appauth: "your-appauth"
+      - club: "nexgolf_club"
+        auth_details:
+          cookie_value: "your-session-id"
 ```
 
 ## Usage Examples
 
-### Token Authentication
+### Token App Authentication
 
 ```python
-# Initialize service
 auth_service = AuthService()
 
-# Get headers for token auth
-try:
-    headers = auth_service.get_auth_headers(
-        auth_type="token",
-        config={
-            "client_id": "your-client-id",
-            "client_secret": "your-client-secret"
-        }
-    )
-    response = requests.get(api_url, headers=headers)
-except AuthError as e:
-    handle_error(e)
+# Get headers for token app auth
+headers = auth_service.create_headers(
+    auth_type="token_appauth",
+    cookie_name="",
+    auth_details={
+        "token": "your-token"
+    }
+)
+
+# Build full URL
+url = auth_service.build_full_url(
+    auth_type="token_appauth",
+    club_details={"url": "https://api.example.com"},
+    membership={"auth_details": {"appauth": "your-appauth"}}
+)
 ```
 
 ### Cookie Authentication
 
 ```python
-# Get headers for cookie auth
-try:
-    headers = auth_service.get_auth_headers(
-        auth_type="cookie",
-        config={
-            "session_id": "your-session-id",
-            "session_timeout": 3600
-        }
-    )
-    response = requests.get(api_url, headers=headers)
-except AuthError as e:
-    handle_error(e)
+# Get headers for NexGolf cookie auth
+headers = auth_service.create_headers(
+    auth_type="cookie",
+    cookie_name="NGLOCALE=fi; JSESSIONID",
+    auth_details={
+        "cookie_value": "your-session-id"
+    }
+)
+
+# Build full URL for WiseGolf0
+url = auth_service.build_full_url(
+    auth_type="cookie",
+    club_details={
+        "type": "wisegolf0",
+        "shopURL": "https://shop.example.com"
+    },
+    membership={}
+)
 ```
-
-## Best Practices
-
-1. **Security**
-   - Use HTTPS for all requests
-   - Implement proper token storage
-   - Handle sensitive data securely
-   - Follow OAuth 2.0 best practices
-
-2. **Token Management**
-   - Implement token refresh
-   - Handle token expiration
-   - Secure token storage
-   - Monitor token usage
-
-3. **Error Handling**
-   - Handle auth failures gracefully
-   - Implement retry mechanisms
-   - Log security events
-   - Provide clear error messages
-
-4. **Performance**
-   - Cache auth tokens
-   - Minimize auth requests
-   - Handle rate limits
-   - Monitor API usage
 
 ## Error Handling
 
-The service implements comprehensive error handling:
+The service implements error handling for:
 
 1. **Authentication Errors**
-   - `AuthError`: Base exception
-   - `TokenError`: Token-related errors
-   - `SessionError`: Session-related errors
-   - `CredentialsError`: Invalid credentials
+   - Missing required auth details
+   - Invalid token format
+   - Session expiration
+   - Cookie validation errors
 
-2. **API Errors**
-   - `APIError`: Base API exception
-   - `APITimeoutError`: Connection timeouts
-   - `APIRateLimitError`: Rate limit exceeded
+2. **URL Building Errors**
+   - Missing required URLs
+   - Invalid club configuration
+   - Unsupported auth types
 
-3. **Error Recovery**
-   - Automatic token refresh
-   - Session recovery
-   - Retry mechanisms
-   - Error aggregation
+3. **Recovery Strategies**
+   - Fallback to unsupported strategy
+   - Detailed error logging
+   - Clear error messages
 
-## Testing
+## Integration with Base API
 
-The service includes comprehensive tests:
+The authentication service integrates with the BaseAPI class:
 
-1. **Unit Tests**
-   - Strategy implementation tests
-   - Token management tests
-   - Error handling tests
-
-2. **Integration Tests**
-   - End-to-end auth flow
-   - Token refresh flow
-   - API integration tests
-
-3. **Security Tests**
-   - Token validation
-   - Session management
-   - Error scenarios
-
-## Related Documentation
-
-- [Service Architecture](../../architecture/services.md)
-- [Reservation Service](../reservation/README.md)
-- [Security Guidelines](../../development/security.md) 
+```python
+class BaseAPI:
+    def __init__(self, base_url, auth_service, club_details, membership):
+        # Initialize session
+        self.session = self._create_session()
+        
+        # Get authentication headers
+        auth_type = club_details.get('auth_type', 'token_appauth')
+        cookie_name = club_details.get('cookie_name', '')
+        self.headers = auth_service.create_headers(
+            auth_type, cookie_name, membership['auth_details']
+        )
+        
+        # Update session headers
+        self.session.headers.update(self.headers)
+        
+        # Build authenticated URL
+        self.full_url = auth_service.build_full_url(
+            auth_type, club_details, membership
+        )
+``` 

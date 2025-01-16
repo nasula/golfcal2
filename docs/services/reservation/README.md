@@ -11,6 +11,8 @@ graph TD
     RS[Reservation Service] --> AS[Auth Service]
     RS --> WM[Weather Manager]
     RS --> GCF[Golf Club Factory]
+    RS --> CS[Calendar Service]
+    RS --> DB[(SQLite DB)]
     
     GCF --> WG[WiseGolf Club]
     GCF --> WG0[WiseGolf0 Club]
@@ -27,6 +29,7 @@ graph TD
     subgraph Services
         AS
         WM
+        CS
     end
 ```
 
@@ -37,40 +40,52 @@ graph TD
 The main service class that coordinates reservation operations:
 
 ```python
-class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin):
+class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
     def __init__(self, user_name: str, config: AppConfig):
+        self.user_name = user_name
+        self.config = config
         self.auth_service = AuthService()
-        self.weather_service = WeatherManager(...)
+        self.weather_service = WeatherManager()
+        self.local_tz = ZoneInfo(config.timezone)
 ```
 
 Key responsibilities:
-- Managing user reservations
-- Processing different booking systems
+- Fetching user reservations from multiple golf clubs
+- Processing different booking system formats
 - Integrating weather information
+- Creating calendar events
 - Handling timezone conversions
 - Error handling and logging
 
 ### Golf Club Types
 
 1. **WiseGolf**
-   - Modern booking system
-   - Real-time availability
+   - Modern REST API
    - Token-based authentication
+   - Separate API calls for reservations and players
+   - AJAX API for reservations, REST API for players
+   - Local time handling
 
 2. **WiseGolf0**
    - Legacy booking system
    - Cookie-based authentication
-   - Basic availability checks
+   - Similar to WiseGolf but with different endpoints
+   - Separate player data fetching
+   - Local time handling
 
 3. **NexGolf**
    - Nordic booking system
    - Query parameter authentication
-   - Advanced tee time management
+   - Single API endpoint with date range
+   - Players included in reservation data
+   - UTC time with timezone info
 
 4. **TeeTime**
    - Generic booking system
    - Multiple authentication methods
+   - Single API endpoint
    - Basic reservation features
+   - Local time handling
 
 ## Data Flow
 
@@ -79,17 +94,34 @@ Key responsibilities:
 ```mermaid
 sequenceDiagram
     participant RS as ReservationService
+    participant GCF as GolfClubFactory
     participant GC as GolfClub
     participant AS as AuthService
     participant WM as WeatherManager
+    participant CS as CalendarService
+    participant DB as Database
     
-    RS->>AS: get_auth_headers()
-    AS-->>RS: headers
-    RS->>GC: fetch_reservations()
-    GC-->>RS: raw_reservations
-    RS->>WM: get_weather()
-    WM-->>RS: weather_data
-    RS->>RS: process_reservations()
+    RS->>GCF: Create Club Instance
+    GCF-->>RS: Club Instance
+    RS->>AS: Get Auth Headers
+    AS-->>RS: Auth Token/Cookie
+    
+    loop For Each Membership
+        RS->>GC: Fetch Reservations
+        GC->>GC: Make API Request
+        GC-->>RS: Raw Reservations
+        
+        loop For Each Reservation
+            alt Future Reservation
+                GC->>GC: Fetch Players
+                Note right of GC: Only for WiseGolf/WiseGolf0
+            end
+            RS->>WM: Get Weather
+            WM-->>RS: Weather Data
+            RS->>CS: Create Calendar Event
+            CS->>DB: Store Event
+        end
+    end
 ```
 
 ## Configuration
@@ -97,120 +129,86 @@ sequenceDiagram
 The service requires configuration for:
 
 ```yaml
-users:
-  example_user:
+# Club configuration
+clubs:
+  wisegolf_club:
+    type: "wisegolf"
+    url: "https://api.wisegolf.club"
     timezone: "Europe/Helsinki"
+    coordinates:
+      lat: 60.1234
+      lon: 24.5678
+
+  wisegolf0_club:
+    type: "wisegolf0"
+    url: "https://legacy.wisegolf.club"
+    restUrl: "https://api.wisegolf.club"
+    timezone: "Europe/Helsinki"
+
+  nexgolf_club:
+    type: "nexgolf"
+    url: "https://api.nexgolf.fi"
+    timezone: "Europe/Helsinki"
+
+  teetime_club:
+    type: "teetime"
+    url: "https://api.teetime.com"
+    timezone: "Europe/Helsinki"
+
+# User configuration
+users:
+  username:
     memberships:
-      - club: "ExampleGolf"
-        type: "wisegolf"
+      - club: "wisegolf_club"
         auth:
-          username: "user"
-          password: "pass"
+          type: "token"
+          token: "your-token"
+      - club: "nexgolf_club"
+        auth:
+          type: "cookie"
+          member_id: "12345"
+          pin: "1234"
 ```
-
-## Usage Examples
-
-### Listing Reservations
-
-```python
-# Initialize service
-reservation_service = ReservationService("example_user", config)
-
-# List reservations
-try:
-    reservations = reservation_service.list_reservations(
-        past_days=7,
-        future_days=30
-    )
-    for reservation in reservations:
-        print(f"Reservation: {reservation.club} at {reservation.start_time}")
-except APIError as e:
-    handle_error(e)
-```
-
-### Processing Weather Data
-
-```python
-# Process weather for reservation
-try:
-    weather = reservation_service.weather_service.get_weather(
-        coordinates=club_config['coordinates'],
-        start_time=reservation.start_time,
-        end_time=reservation.end_time
-    )
-    print(f"Weather: {weather.temperature}°C, {weather.description}")
-except WeatherError as e:
-    handle_error(e)
-```
-
-## Best Practices
-
-1. **Reservation Management**
-   - Validate reservation data
-   - Handle timezone conversions properly
-   - Implement proper error handling
-   - Use appropriate club implementations
-
-2. **Authentication**
-   - Use secure authentication methods
-   - Handle token expiration
-   - Implement proper error recovery
-   - Follow security best practices
-
-3. **Weather Integration**
-   - Cache weather data appropriately
-   - Handle service failures gracefully
-   - Validate coordinate data
-   - Format weather information consistently
-
-4. **Performance**
-   - Batch process reservations
-   - Implement proper caching
-   - Handle rate limits
-   - Optimize API calls
 
 ## Error Handling
 
 The service implements comprehensive error handling:
 
-1. **API Errors**
-   - `APIError`: Base exception for API operations
-   - `APITimeoutError`: Connection timeouts
-   - `APIRateLimitError`: Rate limit exceeded
-   - `APIResponseError`: Invalid responses
-
-2. **Integration Errors**
-   - `WeatherError`: Weather service failures
-   - `AuthError`: Authentication failures
-   - `ConfigError`: Configuration issues
-
-3. **Error Recovery**
-   - Automatic retries for transient errors
-   - Graceful degradation on service failures
-   - Detailed error logging
-   - User-friendly error messages
-
-## Testing
-
-The service includes comprehensive tests:
-
-1. **Unit Tests**
-   - Club implementation tests
-   - Reservation processing tests
-   - Weather integration tests
-
-2. **Integration Tests**
-   - End-to-end reservation flow
-   - Authentication flow
-   - Weather service integration
-
-3. **Performance Tests**
+1. API Errors
+   - Timeout handling
    - Rate limit handling
-   - Concurrent processing
-   - API optimization
+   - Authentication failures
+   - Invalid responses
 
-## Related Documentation
+2. Data Processing Errors
+   - Invalid date formats
+   - Missing required fields
+   - Player data parsing errors
+   - Timezone conversion errors
 
-- [Service Architecture](../../architecture/services.md)
-- [Weather Services](../weather/README.md)
-- [Authentication](../auth/README.md) 
+3. Recovery Strategies
+   - Automatic retries
+   - Graceful degradation
+   - Error aggregation
+   - Detailed logging
+
+## Usage Examples
+
+### List Available Courses
+
+```python
+service = ReservationService("username", config)
+courses = service.list_courses()  # User's courses
+all_courses = service.list_courses(include_all=True)  # All configured courses
+```
+
+### Process User Reservations
+
+```python
+service = ReservationService("username", config)
+calendar, reservations = service.process_user(
+    user_name="username",
+    user_config=config.users["username"],
+    past_days=1  # Include reservations from yesterday
+)
+``` 
