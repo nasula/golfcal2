@@ -108,25 +108,35 @@ sequenceDiagram
     participant User
     participant CLI
     participant RS as ReservationService
-    participant AS as AuthService
+    participant GCF as GolfClubFactory
     participant GC as GolfClub
+    participant AS as AuthService
     participant WM as WeatherManager
     participant DB as Database
 
-    User->>CLI: Create Reservation
+    User->>CLI: Request Reservations
     CLI->>RS: Process Request
-    RS->>AS: Authenticate
-    AS-->>RS: Auth Token
-    RS->>GC: Check Availability
-    GC-->>RS: Available Times
-    RS->>GC: Book Time
-    GC-->>RS: Confirmation
-    RS->>WM: Get Weather
-    WM-->>RS: Weather Data
-    RS->>DB: Store Reservation
-    DB-->>RS: Confirmation
-    RS-->>CLI: Success
-    CLI-->>User: Confirmation
+    RS->>GCF: Create Club Instance
+    GCF-->>RS: Club Instance
+    RS->>AS: Get Auth Headers
+    AS-->>RS: Auth Token/Cookie
+    RS->>GC: Fetch Reservations
+    GC->>GC: Make API Request
+    GC-->>RS: Raw Reservations
+    
+    loop For Each Reservation
+        alt Future Reservation
+            RS->>GC: Fetch Players
+            GC-->>RS: Player Data
+        end
+        RS->>WM: Get Weather
+        WM-->>RS: Weather Data
+        RS->>DB: Store Processed Data
+        DB-->>RS: Confirmation
+    end
+    
+    RS-->>CLI: Processed Reservations
+    CLI-->>User: Display Results
 ```
 
 ### Weather Integration
