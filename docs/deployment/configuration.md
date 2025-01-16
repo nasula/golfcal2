@@ -2,284 +2,211 @@
 
 ## Overview
 
-GolfCal2 uses YAML configuration files to manage application settings, user preferences, and service configurations. This guide explains the configuration structure and options.
+GolfCal2 uses a modular YAML-based configuration system with separate files for different aspects of the application. The main configuration files are located in the `config` directory.
 
-## Configuration Files
+## Core Configuration Files
 
-### Application Configuration
+### Main Configuration (`config.yaml`)
 
-The main application configuration file (`config.yaml`) contains global settings and service configurations.
-
-```yaml
-global:
-  timezone: "Europe/Helsinki"
-  log_level: "INFO"
-  cache_dir: "~/.golfcal2/cache"
-  dev_mode: false
-
-database:
-  path: "~/.golfcal2/data.db"
-  backup_dir: "~/.golfcal2/backups"
-  backup_count: 5
-
-logging:
-  level: "INFO"
-  file: "~/.golfcal2/logs/golfcal2.log"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  max_size: 10485760  # 10MB
-  backup_count: 5
-
-weather:
-  primary: "met"
-  backup: "openweather"
-  cache_duration: 3600
-  update_interval: 900
-  providers:
-    met:
-      user_agent: "GolfCal2/0.6.0"
-      timeout: 10
-      retries: 3
-    openweather:
-      api_key: "your-key"
-      timeout: 10
-      retries: 3
-    aemet:
-      api_key: "your-key"
-      timeout: 15
-      retries: 3
-    ipma:
-      enabled: true
-      timeout: 10
-      retries: 3
-
-calendar:
-  ics_dir: "~/.golfcal2/calendars"
-  sync_interval: 900
-  max_events: 1000
-  default_duration: 240
-
-external_events:
-  enabled: true
-  sources: ["ical", "caldav"]
-  sync_interval: 900
-  max_events: 500
-```
-
-### User Configuration
-
-User-specific settings are stored in `~/.golfcal2/users/{username}.yaml`.
+The main configuration file contains global settings and basic service configurations:
 
 ```yaml
-user:
-  name: "John Doe"
-  email: "john@example.com"
-  timezone: "Europe/Helsinki"
-  language: "en"
-  default_club: "Helsinki Golf"
+# Global configuration
+timezone: "Europe/Helsinki"
 
-display:
-  date_format: "%Y-%m-%d"
-  time_format: "%H:%M"
-  temperature_unit: "C"
-  wind_speed_unit: "m/s"
-  show_weather: true
-  show_coordinates: false
+# Directory paths
+directories:
+  ics: "ics"
+  config: "config"
+  logs: "logs"
 
-memberships:
-  - club: "Helsinki Golf"
-    type: "wisegolf"
-    auth:
-      username: "john.doe"
-      password: "secure-password"
-  
-  - club: "Espoo Golf"
-    type: "nexgolf"
-    auth:
-      member_id: "12345"
-      pin: "1234"
-  
-  - club: "Vantaa Golf"
-    type: "teetime"
-    auth:
-      api_key: "your-key"
+# API Keys for weather services
+api_keys:
+  weather:
+    aemet: ""      # Spanish Meteorological Agency
+    openweather: "" # Mediterranean region
 
-notifications:
-  enabled: true
-  email: true
-  desktop: true
-  advance_notice: 24  # hours
-  weather_updates: true
+# Default durations for golf rounds
+default_durations:
+  regular: { "hours": 4, "minutes": 30 }
+  short: { "hours": 2, "minutes": 0 }
+
+# Default reminder settings
+default_reminder_minutes: -60
+
+# Default application timezone
+default_timezone: "Europe/Helsinki"
 ```
 
-## Configuration Options
+### Logging Configuration (`logging_config.yaml`)
 
-### Global Settings
+Comprehensive logging configuration with service-specific settings:
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| timezone | string | "UTC" | Default timezone for dates/times |
-| log_level | string | "INFO" | Logging level (DEBUG, INFO, WARNING, ERROR) |
-| cache_dir | string | "~/.golfcal2/cache" | Directory for cached data |
-| dev_mode | boolean | false | Enable development mode |
+```yaml
+# Global logging settings
+default_level: WARNING
+dev_level: INFO
+verbose_level: DEBUG
 
-### Database Settings
+# Error aggregation settings
+error_aggregation:
+  enabled: true
+  report_interval: 3600  # Report every hour
+  error_threshold: 5     # Report after 5 occurrences
+  time_threshold: 300    # Or after 5 minutes
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| path | string | "~/.golfcal2/data.db" | SQLite database path |
-| backup_dir | string | "~/.golfcal2/backups" | Backup directory |
-| backup_count | integer | 5 | Number of backups to keep |
+# File logging settings
+file:
+  enabled: true
+  path: logs/golfcal.log
+  max_size_mb: 50
+  backup_count: 7
+  format: json
+  include_timestamp: true
 
-### Weather Settings
+# Service-specific logging
+services:
+  weather_service:
+    level: DEBUG
+    file:
+      path: logs/weather.log
+      max_size_mb: 20
+  calendar_service:
+    level: DEBUG
+    file:
+      path: logs/calendar.log
+      max_size_mb: 30
+  auth:
+    level: WARNING
+    file:
+      path: logs/auth.log
+      max_size_mb: 10
+```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| primary | string | "met" | Primary weather provider |
-| backup | string | "openweather" | Backup weather provider |
-| cache_duration | integer | 3600 | Cache duration in seconds |
-| update_interval | integer | 900 | Update interval in seconds |
+### Club Configuration (`clubs.json`)
 
-### Calendar Settings
+Defines golf club specific settings and integration details:
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| ics_dir | string | "~/.golfcal2/calendars" | ICS file directory |
-| sync_interval | integer | 900 | Sync interval in seconds |
-| max_events | integer | 1000 | Maximum events to store |
-| default_duration | integer | 240 | Default event duration (minutes) |
+```json
+{
+  "Example Golf Club": {
+    "name": "Example Golf Club",
+    "type": "wisegolf",
+    "url": "https://example.com/golf",
+    "timezone": "Europe/Helsinki",
+    "variant": "Main Course",
+    "address": "123 Golf Street, Example City"
+  }
+}
+```
+
+### User Configuration (`users.json`)
+
+Contains user-specific settings and club memberships:
+
+```json
+{
+  "John Doe": {
+    "timezone": "Europe/Helsinki",
+    "duration": {
+      "hours": 4,
+      "minutes": 0
+    },
+    "memberships": [
+      {
+        "club": "Example Golf Club",
+        "auth_details": {
+          "type": "wisegolf",
+          "auth_type": "token",
+          "token": "your-token-here"
+        }
+      }
+    ]
+  }
+}
+```
 
 ## Environment Variables
 
-Environment variables can override configuration values:
+Key settings can be overridden using environment variables:
 
 ```bash
 # Global settings
-GOLFCAL_TIMEZONE="Europe/London"
-GOLFCAL_LOG_LEVEL="DEBUG"
-GOLFCAL_DEV_MODE="true"
+GOLFCAL_TIMEZONE="Europe/Helsinki"
+GOLFCAL_LOG_LEVEL="INFO"
 
 # Weather API keys
-GOLFCAL_OPENWEATHER_API_KEY="your-key"
 GOLFCAL_AEMET_API_KEY="your-key"
+GOLFCAL_OPENWEATHER_API_KEY="your-key"
 
-# Database settings
-GOLFCAL_DB_PATH="/custom/path/data.db"
+# Directory paths
+GOLFCAL_CONFIG_DIR="/path/to/config"
+GOLFCAL_LOGS_DIR="/path/to/logs"
+GOLFCAL_ICS_DIR="/path/to/ics"
 ```
+
+## Sensitive Data Handling
+
+The application includes comprehensive sensitive data masking in logs:
+
+```yaml
+sensitive_data:
+  enabled: true
+  global_fields:
+    - password
+    - token
+    - api_key
+    - secret
+    - auth
+    - cookie
+    - session_id
+    - wisegolf_token
+    - nexgolf_token
+  mask_pattern: "***MASKED***"
+```
+
+## Development Configuration
+
+For development environments, use the example configuration files:
+- `config.yaml.example`
+- `logging_config.yaml.example`
+- `clubs.json.example`
+- `users.json.example`
+
+Copy these files without the `.example` extension and modify them according to your needs.
 
 ## Configuration Validation
 
-The application validates configuration files on startup:
+The application validates configurations through:
+1. Schema validation in `config/validation.py`
+2. Environment variable processing in `config/env.py`
+3. Configuration utilities in `config/utils.py`
 
-1. **Schema Validation**
-   - Required fields
-   - Data types
-   - Value ranges
+## Service-Specific Settings
 
-2. **Path Validation**
-   - Directory existence
-   - Write permissions
-   - File access
+### Weather Services
+- Supports multiple providers (MET, AEMET, OpenWeather, IPMA)
+- Provider-specific API keys and configurations
+- Automatic fallback between providers
 
-3. **Service Validation**
-   - API key validation
-   - Service availability
-   - Authentication
+### Calendar Integration
+- ICS file generation and management
+- External calendar synchronization
+- Configurable update intervals
 
-## Example Configurations
+### Logging System
+- Service-specific log files
+- Performance monitoring
+- Error aggregation
+- Sensitive data masking
+- Correlation ID tracking
 
-### Development Configuration
+## Production Deployment
 
-```yaml
-global:
-  timezone: "UTC"
-  log_level: "DEBUG"
-  dev_mode: true
-
-database:
-  path: ":memory:"
-
-weather:
-  primary: "mock"
-  cache_duration: 60
-  providers:
-    mock:
-      enabled: true
-```
-
-### Production Configuration
-
-```yaml
-global:
-  timezone: "Europe/Helsinki"
-  log_level: "INFO"
-  dev_mode: false
-
-database:
-  path: "/var/lib/golfcal2/data.db"
-  backup_dir: "/var/backups/golfcal2"
-  backup_count: 7
-
-logging:
-  level: "INFO"
-  file: "/var/log/golfcal2/app.log"
-  max_size: 52428800  # 50MB
-  backup_count: 10
-
-weather:
-  primary: "met"
-  backup: "openweather"
-  cache_duration: 3600
-  update_interval: 900
-```
-
-### Testing Configuration
-
-```yaml
-global:
-  timezone: "UTC"
-  log_level: "DEBUG"
-  dev_mode: true
-
-database:
-  path: ":memory:"
-
-weather:
-  primary: "mock"
-  providers:
-    mock:
-      enabled: true
-      responses:
-        default:
-          temperature: 20.0
-          precipitation: 0.0
-          wind_speed: 5.0
-```
-
-## Best Practices
-
-1. **Security**
-   - Use environment variables for sensitive data
-   - Set appropriate file permissions
-   - Validate user input
-
-2. **Performance**
-   - Optimize cache settings
-   - Configure appropriate intervals
-   - Monitor resource usage
-
-3. **Maintenance**
-   - Regular backup configuration
-   - Log rotation settings
-   - Update schedules
-
-4. **Development**
-   - Use development configuration
-   - Enable debug logging
-   - Mock external services
-
-## Related Documentation
-
-- [Deployment Guide](deployment.md)
-- [Monitoring Guide](monitoring.md)
-- [Architecture Overview](../architecture/overview.md)
+For production environments:
+1. Use environment variables for sensitive data
+2. Configure appropriate log levels and rotation
+3. Set up proper file permissions for config files
+4. Enable error aggregation
+5. Configure backup settings for logs and data
 ``` 

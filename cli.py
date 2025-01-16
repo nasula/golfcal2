@@ -7,6 +7,8 @@ import logging
 import argparse
 from typing import Optional
 from zoneinfo import ZoneInfo
+import os
+from pathlib import Path
 
 from golfcal2.config.settings import load_config, AppConfig
 from golfcal2.utils.logging_utils import get_logger
@@ -475,7 +477,7 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
         return 1
 
 def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppConfig) -> int:
-    """Check configuration."""
+    """Check configuration and system health."""
     try:
         # Get list of users to check
         users = [args.user] if args.user else config.users.keys()
@@ -484,29 +486,144 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppC
             return 1
             
         success = True
+        
+        # Basic configuration checks
+        logger.info("Checking basic configuration")
+        
+        # Check directory permissions
+        dirs_to_check = [
+            ('ICS', config.get('ics_dir', 'ics')),
+            ('Logs', config.get('logs_dir', 'logs')),
+            ('Config', config.get('config_dir', 'config'))
+        ]
+        
+        for dir_name, dir_path in dirs_to_check:
+            try:
+                if os.path.isabs(dir_path):
+                    path = Path(dir_path)
+                else:
+                    workspace_dir = Path(__file__).parent.parent
+                    path = workspace_dir / dir_path
+                    
+                if not path.exists():
+                    try:
+                        path.mkdir(parents=True, exist_ok=True)
+                        logger.info(f"Created {dir_name} directory: {path}")
+                    except Exception as e:
+                        logger.error(f"Failed to create {dir_name} directory {path}: {str(e)}")
+                        success = False
+                        continue
+                
+                # Check if directory is writable
+                if not os.access(path, os.W_OK):
+                    logger.error(f"{dir_name} directory {path} is not writable")
+                    success = False
+            except Exception as e:
+                logger.error(f"Error checking {dir_name} directory: {str(e)}")
+                success = False
+        
+        # Check weather cache
+        try:
+            cache = WeatherResponseCache(os.path.join(config.get('data_dir', 'data'), 'weather_cache.db'))
+            if not cache.check_health():
+                logger.error("Weather cache health check failed")
+                success = False
+        except Exception as e:
+            logger.error(f"Failed to check weather cache: {str(e)}")
+            success = False
+        
+        # Check user configurations
         for username in users:
             try:
                 logger.info(f"Checking configuration for user {username}")
+                user_config = config.users.get(username)
                 
-                if args.full:
-                    logger.info("Performing full configuration check")
-                    # TODO: Implement full check
+                if not user_config:
+                    logger.error(f"No configuration found for user {username}")
+                    success = False
+                    continue
                 
-                # Basic check
+                # Check required user fields
+                required_fields = ['memberships']
+                for field in required_fields:
+                    if field not in user_config:
+                        logger.error(f"Missing required field '{field}' in user config for {username}")
+                        success = False
+                
+                # Check club memberships
+                for membership in user_config.get('memberships', []):
+                    if 'club' not in membership:
+                        logger.error(f"Missing 'club' in membership config for user {username}")
+                        success = False
+                        continue
+                        
+                    if 'auth_details' not in membership:
+                        logger.error(f"Missing 'auth_details' in membership config for club {membership['club']} for user {username}")
+                        success = False
+                
+                # Initialize services for basic checks
                 reservation_service = ReservationService(username, config)
                 calendar_service = CalendarService(config)
                 
-                if reservation_service.check_config() and calendar_service.check_config():
-                    logger.info(f"Configuration check passed for user {username}")
-                else:
-                    logger.error(f"Configuration check failed for user {username}")
+                if not reservation_service.check_config():
+                    logger.error(f"Reservation service configuration check failed for user {username}")
                     success = False
+                
+                if not calendar_service.check_config():
+                    logger.error(f"Calendar service configuration check failed for user {username}")
+                    success = False
+                
+                # Perform comprehensive API checks if requested
+                if args.full:
+                    logger.info(f"Performing full configuration check for user {username}")
                     
+                    # Check weather services
+                    weather_manager = WeatherManager(ZoneInfo(config.timezone), ZoneInfo('UTC'), config)
+                    for service_name, service in weather_manager.services.items():
+                        try:
+                            service.check_availability()
+                            logger.info(f"Weather service {service_name} is available")
+                        except Exception as e:
+                            logger.error(f"Weather service {service_name} check failed: {str(e)}")
+                            success = False
+                    
+                    # Check club APIs
+                    for membership in user_config.get('memberships', []):
+                        club_name = membership.get('club')
+                        if not club_name:
+                            continue
+                            
+                        try:
+                            club = reservation_service.get_club(club_name)
+                            if club:
+                                club.check_availability()
+                                logger.info(f"Club API for {club_name} is available")
+                            else:
+                                logger.error(f"Club {club_name} not found in configuration")
+                                success = False
+                        except Exception as e:
+                            logger.error(f"Club API check failed for {club_name}: {str(e)}")
+                            success = False
+                    
+                    # Check external calendar services if configured
+                    if calendar_service.external_event_service:
+                        try:
+                            calendar_service.external_event_service.check_availability()
+                            logger.info("External calendar services are available")
+                        except Exception as e:
+                            logger.error(f"External calendar services check failed: {str(e)}")
+                            success = False
+                
             except Exception as e:
                 logger.error(f"Failed to check configuration for user {username}: {e}", exc_info=True)
                 success = False
                 continue
-                
+        
+        if success:
+            logger.info("All configuration checks passed successfully")
+        else:
+            logger.error("One or more configuration checks failed")
+            
         return 0 if success else 1
         
     except Exception as e:
