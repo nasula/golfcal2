@@ -2,7 +2,7 @@
 
 ## Introduction
 
-GolfCal2 is a command-line calendar application designed to manage golf reservations and events. It integrates with various golf club systems and weather services to provide comprehensive information about golf activities.
+GolfCal2 is a command-line application designed to manage golf reservations and events. It integrates with multiple golf club booking systems, weather services, and calendar systems to provide comprehensive golf activity management.
 
 ## System Architecture
 
@@ -10,52 +10,94 @@ GolfCal2 is a command-line calendar application designed to manage golf reservat
 graph TD
     CLI[CLI Interface] --> CS[Calendar Service]
     CLI --> RS[Reservation Service]
-    CS --> WM[Weather Manager]
-    CS --> EES[External Event Service]
+    CLI --> WM[Weather Manager]
+    CLI --> EES[External Event Service]
+    
+    CS --> WM
+    CS --> EES
+    CS --> DB[(SQLite DB)]
+    
     RS --> WM
     RS --> GCF[Golf Club Factory]
+    RS --> AS[Auth Service]
+    RS --> DB
+    
     GCF --> WG[WiseGolf API]
-    GCF --> NX[Nexgolf API]
-    GCF --> TG[Teetime API]
+    GCF --> WG0[WiseGolf0 API]
+    GCF --> NG[NexGolf API]
+    GCF --> TT[TeeTime API]
+    
     WM --> MET[MET.no]
     WM --> OW[OpenWeather]
     WM --> AE[AEMET]
     WM --> IP[IPMA]
-    CS --> DB[(SQLite DB)]
-    RS --> DB
+    WM --> OM[OpenMeteo]
+    WM --> Cache[Weather Cache]
+    
+    AS --> TS[Token Strategy]
+    AS --> CS2[Cookie Strategy]
+    AS --> QS[Query Strategy]
+    AS --> BS[Basic Strategy]
 ```
 
-## Core Components
+## Core Services
 
-### 1. Command Line Interface (CLI)
-- Entry point for user interactions
-- Handles command parsing and execution
-- Manages user configuration
-- Provides formatted output
-
-### 2. Calendar Service
+### 1. Calendar Service
 - Manages calendar events and reservations
 - Integrates weather information
-- Handles event conflicts
-- Provides calendar views
+- Handles event conflicts and overlaps
+- Generates ICS calendar files
+- Processes external events
+- Components:
+  - Calendar Builder
+  - Reservation Builder
+  - External Event Builder
+  - Weather Integration
 
-### 3. Reservation Service
+### 2. Reservation Service
 - Processes golf reservations
-- Integrates with club systems
+- Integrates with multiple club systems
 - Manages user memberships
 - Handles booking confirmations
+- Components:
+  - Golf Club Factory
+  - Authentication Service
+  - Weather Integration
+  - Reservation Handler
 
-### 4. Weather Manager
-- Coordinates weather services
+### 3. Weather Manager
+- Coordinates multiple weather services
+- Regional service selection
 - Caches weather data
 - Handles provider fallback
 - Normalizes weather formats
+- Providers:
+  - MET.no (Nordic countries)
+  - AEMET (Spain)
+  - IPMA (Portugal)
+  - OpenWeather (Mediterranean)
+  - OpenMeteo (Global)
+
+### 4. Authentication Service
+- Manages authentication strategies
+- Handles API credentials
+- Secure token storage
+- Session management
+- Strategies:
+  - Token Authentication
+  - Cookie Authentication
+  - Query Parameter
+  - Basic Auth
 
 ### 5. External Event Service
 - Manages non-golf events
-- Integrates with calendars
-- Handles recurring events
-- Provides event notifications
+- Calendar integration
+- Event synchronization
+- Notification handling
+- Components:
+  - Event Processor
+  - Calendar Sync
+  - Weather Integration
 
 ## Data Flow
 
@@ -65,13 +107,16 @@ graph TD
 sequenceDiagram
     participant User
     participant CLI
-    participant RS as Reservation Service
-    participant GC as Golf Club
-    participant WM as Weather Manager
+    participant RS as ReservationService
+    participant AS as AuthService
+    participant GC as GolfClub
+    participant WM as WeatherManager
     participant DB as Database
 
     User->>CLI: Create Reservation
     CLI->>RS: Process Request
+    RS->>AS: Authenticate
+    AS-->>RS: Auth Token
     RS->>GC: Check Availability
     GC-->>RS: Available Times
     RS->>GC: Book Time
@@ -84,15 +129,15 @@ sequenceDiagram
     CLI-->>User: Confirmation
 ```
 
-### Weather Integration Flow
+### Weather Integration
 
 ```mermaid
 sequenceDiagram
-    participant CS as Calendar Service
-    participant WM as Weather Manager
-    participant Cache as Weather Cache
-    participant Primary as Primary Provider
-    participant Backup as Backup Provider
+    participant CS as CalendarService
+    participant WM as WeatherManager
+    participant Cache as WeatherCache
+    participant Primary as PrimaryProvider
+    participant Backup as BackupProvider
     participant DB as Database
 
     CS->>WM: Request Weather
@@ -113,95 +158,64 @@ sequenceDiagram
     WM-->>CS: Weather Data
 ```
 
-## Configuration
+## Configuration Structure
 
-### Application Config
 ```yaml
+# Global settings
 global:
   timezone: "Europe/Helsinki"
   log_level: "INFO"
   cache_dir: "~/.golfcal2/cache"
 
+# Database configuration
 database:
   path: "~/.golfcal2/data.db"
   backup_dir: "~/.golfcal2/backups"
+  backup_count: 7
 
+# Weather service configuration
 weather:
   primary: "met"
   backup: "openweather"
   cache_duration: 3600
   providers:
     met:
-      user_agent: "GolfCal2/0.6.0"
+      user_agent: "GolfCal2/1.0.0"
     openweather:
       api_key: "your-key"
-```
-
-### User Config
-```yaml
-user:
-  name: "John Doe"
-  email: "john@example.com"
-  timezone: "Europe/Helsinki"
-  
-memberships:
-  - club: "Helsinki Golf"
-    type: "wisegolf"
-    auth:
-      username: "john.doe"
-      password: "secure-password"
-  
-  - club: "Espoo Golf"
-    type: "nexgolf"
-    auth:
-      member_id: "12345"
-      pin: "1234"
+    aemet:
+      api_key: "your-key"
+    ipma:
+      enabled: true
 ```
 
 ## Error Handling
 
-### Error Types
-1. **User Errors**
-   - Invalid input
-   - Missing configuration
-   - Authentication failures
-
-2. **System Errors**
-   - Database errors
-   - Network failures
-   - Service unavailability
-
-3. **Integration Errors**
-   - API failures
-   - Data format mismatches
-   - Timeout errors
-
-### Error Flow
-
 ```mermaid
 sequenceDiagram
     participant User
-    participant CLI
     participant Service
     participant External
+    participant Logger
+    participant Monitor
 
-    User->>CLI: Command
-    CLI->>Service: Request
+    User->>Service: Request
+    
     alt Success
         Service->>External: API Call
         External-->>Service: Response
-        Service-->>CLI: Result
-        CLI-->>User: Success
+        Service-->>User: Result
     else User Error
-        Service-->>CLI: ValidationError
-        CLI-->>User: Error Message
+        Service-->>User: Error Message
+        Service->>Logger: Log Warning
     else System Error
-        Service-->>CLI: SystemError
-        CLI-->>User: Error + Instructions
+        Service->>Logger: Log Error
+        Service->>Monitor: Alert
+        Service-->>User: Error + Instructions
     else Integration Error
         External-->>Service: API Error
-        Service-->>CLI: IntegrationError
-        CLI-->>User: Error + Fallback
+        Service->>Logger: Log Error
+        Service-->>User: Error + Fallback
     end
 ```
 
@@ -210,14 +224,16 @@ sequenceDiagram
 ### Authentication
 - Secure credential storage
 - API key management
+- Token-based authentication
 - Session handling
-- Token refresh
+- Token refresh mechanisms
 
 ### Data Protection
 - Encrypted storage
 - Secure communication
-- Data validation
+- Input validation
 - Access control
+- Sensitive data masking
 
 ## Performance
 
@@ -226,15 +242,18 @@ sequenceDiagram
 - Club data caching
 - Configuration caching
 - Cache invalidation
+- Cache cleanup
 
 ### Optimization
 - Parallel requests
 - Connection pooling
 - Query optimization
 - Resource cleanup
+- Memory management
 
 ## Related Documentation
 
 - [Service Architecture](services.md)
 - [Data Flow](data-flow.md)
-- [Configuration Guide](../deployment/configuration.md) 
+- [Configuration Guide](../deployment/configuration.md)
+- [CLI Documentation](../services/cli.md) 
