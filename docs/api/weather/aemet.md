@@ -2,125 +2,23 @@
 
 ## Overview
 
-AEMET (Agencia Estatal de Meteorología) provides weather forecasts for Spain and its territories. In GolfCal2, it serves as the primary weather service for the Iberian region, with OpenMeteo as a fallback.
+The AEMET (Agencia Estatal de Meteorología) service provides weather data for Spain and its territories through their OpenData API. It is implemented as the `IberianWeatherService` class and handles both mainland Spain and the Canary Islands.
 
-## API Details
+## Features
 
-- **Base URL**: `https://opendata.aemet.es/opendata/api`
-- **Authentication**: API key required
-- **Rate Limit**: 30 requests/minute
-- **Update Frequency**: 4 times daily
-- **Forecast Range**:
-  - 0-48 hours: Hourly forecasts
-  - 2-4 days: 6-hour blocks
-  - 5-7 days: Daily forecasts
-
-## Authentication
-
-The service requires an API key in the request headers:
-```python
-headers = {
-    'Accept': 'application/json',
-    'api_key': 'your-api-key'
-}
-```
-
-## Coverage Area
-
-The service covers:
-- Spanish mainland
-- Balearic Islands
-- Canary Islands
-- Ceuta and Melilla
-
-## Endpoints
-
-### Get Municipality Forecast
-
-```
-GET /prediccion/especifica/municipio/{municipio}
-```
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| municipio | string | Yes | Municipality code (5 digits) |
-
-#### Example Request
-
-```
-GET /prediccion/especifica/municipio/28079
-```
-
-#### Response Format
-
-The API uses a two-step process:
-1. Initial request returns a data URL
-2. Second request fetches actual forecast data
-
-```json
-// Step 1 Response
-{
-    "descripcion": "exito",
-    "estado": 200,
-    "datos": "https://opendata.aemet.es/opendata/sh/...",
-    "metadatos": "https://opendata.aemet.es/opendata/sh/..."
-}
-
-// Step 2 Response (Forecast Data)
-{
-    "elaborado": "2024-01-23T10:00:00",
-    "nombre": "Madrid",
-    "provincia": "Madrid",
-    "prediccion": {
-        "dia": [
-            {
-                "fecha": "2024-01-23",
-                "temperatura": {
-                    "maxima": 25,
-                    "minima": 15,
-                    "dato": [
-                        {
-                            "hora": 6,
-                            "value": 16
-                        }
-                    ]
-                },
-                "precipitacion": {
-                    "probability": [
-                        {
-                            "period": "00-24",
-                            "value": 0
-                        }
-                    ],
-                    "value": 0
-                },
-                "viento": [
-                    {
-                        "direccion": "N",
-                        "velocidad": 15
-                    }
-                ],
-                "estadoCielo": [
-                    {
-                        "periodo": "00-24",
-                        "descripcion": "Despejado",
-                        "value": "11"
-                    }
-                ]
-            }
-        ]
-    }
-}
-```
+- High-resolution forecasts for Spain and its territories
+- Municipality-based weather data
+- Multiple forecast ranges (hourly, 6-hourly, and daily)
+- Automatic municipality lookup based on coordinates
+- Day/night weather condition support
+- Built-in caching for both weather data and municipality information
 
 ## Implementation
 
-The service is implemented in `services/iberian_weather_service.py`:
-
 ```python
 class IberianWeatherService(WeatherService):
+    """Service for handling weather data for Iberian region."""
+
     BASE_URL = "https://opendata.aemet.es/opendata/api"
     USER_AGENT = "GolfCal/2.0 github.com/jahonen/golfcal"
     
@@ -131,102 +29,137 @@ class IberianWeatherService(WeatherService):
     
     def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
         super().__init__(local_tz, utc_tz)
+        self.config = config
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
+        
+        # Rate limiting
+        self._min_call_interval = timedelta(seconds=1)
+        
+        # API configuration
         self.headers = {
             'Accept': 'application/json',
             'api_key': config.global_config['api_keys']['weather']['aemet']
         }
 ```
 
+## API Details
+
+- **Base URL**: `https://opendata.aemet.es/opendata/api`
+- **Authentication**: API key required in headers
+- **Rate Limit**: Enforced with retry-after headers, minimum 1-second interval
+- **Update Schedule**: Four times daily (03:00, 09:00, 15:00, 21:00 UTC)
+- **Geographic Coverage**: Spain and its territories
+- **Forecast Ranges**:
+  - Hourly data: Next 48 hours
+  - 6-hourly data: Up to 96 hours (4 days)
+  - Daily data: Up to 168 hours (7 days)
+
+## Municipality Lookup
+
+The service automatically finds the nearest municipality to given coordinates:
+
+1. Initialization:
+   - Fetches complete municipality list from AEMET
+   - Caches municipality data for 90 days
+   - Includes metadata like province, region, and altitude
+
+2. Lookup Process:
+   - Uses cached municipality data
+   - Calculates distances using Haversine formula
+   - Returns nearest municipality with its metadata
+
 ## Weather Codes
 
-AEMET uses a proprietary weather code system that is mapped to standardized WMO codes:
+AEMET uses a proprietary weather code system that is mapped to internal codes:
 
-| AEMET Code | Description | WMO Code |
-|------------|-------------|----------|
-| 11 | Despejado (Clear) | 0 |
-| 12-14 | Poco nuboso (Slightly cloudy) | 1 |
-| 15-17 | Nuboso (Cloudy) | 2 |
-| 18 | Cubierto (Overcast) | 3 |
-| 71 | Niebla (Fog) | 45 |
-| 24 | Lluvia débil (Light rain) | 61 |
-| 25 | Lluvia (Rain) | 63 |
-| 26 | Lluvia fuerte (Heavy rain) | 65 |
-| 33 | Nieve débil (Light snow) | 71 |
-| 34 | Nieve (Snow) | 73 |
-| 35 | Nieve fuerte (Heavy snow) | 75 |
-| 51-53 | Tormenta (Thunderstorm) | 95 |
-| 57 | Tormenta con granizo (Thunderstorm with hail) | 96 |
+| AEMET Code | Description | Internal Code |
+|------------|-------------|---------------|
+| 11/11n | Clear sky | clearsky_day/night |
+| 12/12n | Few clouds | fair_day/night |
+| 13/13n | Variable clouds | partlycloudy_day/night |
+| 14/14n | Cloudy | cloudy |
+| 15/15n | Very cloudy | cloudy |
+| 16/16n | Overcast | cloudy |
+| 23/23n | Rain | rain |
+| 24/24n | Snow | snow |
+| 25/25n | Sleet | sleet |
+| 33/33n | Light rain | lightrain |
+| 34/34n | Light snow | lightsnow |
+| 43/43n | Heavy rain | heavyrain |
+| 44/44n | Heavy snow | heavysnow |
+| 51/51n | Rain showers | rainshowers |
+| 52/52n | Snow showers | snowshowers |
+| 81/81n | Thunder | thunder |
+
+Note: Suffix 'n' indicates night conditions (20:00-06:00).
 
 ## Error Handling
 
 The service implements comprehensive error handling:
 
 1. Service Errors
-   - Network connectivity issues
-   - Invalid API key
-   - Rate limiting
-   - Municipality not found
-   - Parse errors
+   - Network connectivity issues (`requests.RequestException`)
+   - Authentication errors (invalid API key)
+   - Rate limiting (429 responses with retry-after)
+   - Invalid coordinates or municipality codes
+   - Parse errors (JSON format)
+   - Missing data fields
 
 2. Recovery Strategies
-   - Automatic fallback to OpenMeteo
-   - Cache utilization for recent requests
-   - Rate limit tracking
-   - Municipality list caching
+   - Automatic retries with minimum interval
+   - Cache utilization for both weather and location data
+   - Graceful degradation for partial data
+   - Detailed error logging with context
 
 ## Caching
 
-Weather data is cached with the following rules:
+The service implements two types of caching:
 
-1. Cache Duration:
-   - Short-term forecasts (0-48h): 1 hour
-   - Medium-term forecasts (2-4d): 3 hours
-   - Long-term forecasts (5-7d): 6 hours
+1. Weather Cache:
+   - Location: `data/weather_cache.db`
+   - Implementation: `WeatherResponseCache`
+   - Cache duration: Based on AEMET update schedule
+   - Cache key format: `f"aemet_{municipality_code}_{start_time.isoformat()}_{end_time.isoformat()}"`
 
-2. Cache Keys:
-   ```python
-   f"aemet_{municipality_code}_{start_time.isoformat()}_{end_time.isoformat()}"
-   ```
+2. Municipality Cache:
+   - Location: `data/weather_locations.db`
+   - Implementation: `WeatherLocationCache`
+   - Cache duration: 90 days
+   - Includes full municipality metadata
 
 ## Data Mapping
 
 ### Units
 
-All data is converted to standard units:
+All data is automatically converted to standard units:
 - Temperature: Celsius
 - Wind Speed: m/s (converted from km/h)
 - Precipitation: mm/h
-- Direction: Compass points (N, NE, E, etc.)
+- Direction: Degrees (0-360)
+- Probabilities: 0-100%
 
 ## Usage Example
 
 ```python
 service = IberianWeatherService(local_tz, utc_tz, config)
 weather = service.get_weather(
-    lat=40.4168,
+    lat=40.4168,  # Madrid
     lon=-3.7038,
     start_time=datetime(...),
     end_time=datetime(...)
 )
 ```
 
-## Rate Limiting
-
-Rate limiting is implemented using a simple counter:
-```python
-rate_limiter = RateLimiter(
-    max_calls=30,
-    time_window=60  # 60 seconds
-)
-```
-
 ## Logging
 
-The service implements detailed logging:
+The service implements detailed logging with context:
 ```python
-self.debug("Cache hit for AEMET forecast", coords=(lat, lon))
-self.info("Fetching new forecast", coords=(lat, lon))
-self.error("Failed to fetch AEMET forecast", exc_info=e)
+self.debug("Looking up in cache", location=location, time=time.isoformat())
+self.info("Cache hit", location=location, time=aligned_time.isoformat())
+self.error("Failed to fetch forecast", exc_info=e, coords=(lat, lon))
 ```
 
 ## Configuration
@@ -236,18 +169,10 @@ Example configuration in `config.yaml`:
 weather:
   providers:
     aemet:
-      api_key: "your-key"
+      api_key: "your-api-key"
       timeout: 10
-      cache_duration: 3600
+      cache_duration: 3600  # 1 hour for short-term forecasts
 ```
-
-## Future Improvements
-
-1. Cache municipality list for faster lookups
-2. Implement forecast caching
-3. Add IPMA support for Portugal
-4. Better thunder probability calculation
-5. More granular error recovery
 
 ## Related Documentation
 

@@ -2,69 +2,36 @@
 
 ## Overview
 
-GolfCal2 integrates with multiple external APIs and provides internal service APIs. This documentation covers both external API integrations and internal service APIs.
+This directory contains detailed documentation for all external and internal APIs used in GolfCal2.
 
-## External APIs
+## CRM APIs
 
-### CRM Systems
-- [CRM APIs Overview](crm_apis.md) - Golf club booking system integrations
-  - WiseGolf API
-  - NexGolf API
-  - TeeTime API
+Golf club management system integrations:
 
-### Weather Services
-- [Weather APIs Overview](weather/README.md) - Weather data providers
-  - [MET.no API](weather/met.md) - Nordic region weather service
-  - [OpenMeteo API](weather/openmeteo.md) - Global primary weather service
-  - [OpenWeather API](weather/openweather.md) - Global fallback weather service
-  - [AEMET API](weather/aemet.md) - Iberian region weather service
+- [WiseGolf API](crm/wisegolf.md) - Modern and legacy WiseGolf implementations
+- [NexGolf API](crm/nexgolf.md) - Nordic golf club management system
+- [TeeTime API](crm/teetime.md) - Generic golf club management system
 
-## Internal Service APIs
+## Weather APIs
 
-### Core Services
-- [Weather Service API](../services/weather/README.md) - Weather data management
-  - Service selection
-  - Data caching
-  - Error handling
+Weather service integrations:
 
-- [Calendar Service API](../services/calendar/README.md) - Calendar event management
-  - Event creation
-  - ICS file generation
-  - Event updates
+- [MET.no API](weather/met.md) - Nordic weather service
+- [OpenMeteo API](weather/openmeteo.md) - Global weather service
+- [OpenWeather API](weather/openweather.md) - Global weather service with fallback
+- [AEMET API](weather/aemet.md) - Spanish weather service
 
-- [External Events API](../services/external-events/README.md) - External event integration
-  - Event matching
-  - Pattern recognition
-  - Event processing
+## Service APIs
 
-### Authentication
-- [Authentication Service API](../services/auth/README.md) - Authentication management
-  - Authentication strategies
-  - Token management
-  - Session handling
+Internal service documentation:
 
-## API Guidelines
+- [Weather Service API](services/weather.md) - Weather data management
+- [Calendar Service API](services/calendar.md) - Calendar event management
+- [External Events API](services/events.md) - External event integration
 
-### Error Handling
-- Standard error responses
-- Rate limiting
-- Retry strategies
-- Error recovery
+## Guidelines
 
-### Authentication
-- API key management
-- Token refresh
-- Session management
-- Security best practices
-
-### Data Formats
-- JSON structures
-- Date/time formats
-- Coordinate systems
-- Weather codes
-
-### Performance
-- Caching strategies
-- Rate limit handling
-- Connection pooling
-- Request optimization 
+- [Error Handling](guidelines/errors.md) - Common error patterns and handling
+- [Authentication](guidelines/auth.md) - Authentication strategies
+- [Data Formats](guidelines/formats.md) - Common data formats and structures
+- [Performance](guidelines/performance.md) - Rate limiting and caching 

@@ -4,26 +4,38 @@
 
 GolfCal2 supports multiple golf club booking systems through a unified interface. Each system has its own API implementation while maintaining consistent data structures internally.
 
+## Architecture
+
+```mermaid
+graph TD
+    CRM[CRM Interface] --> Base[BaseCRMImplementation]
+    Base --> WG[WiseGolf]
+    Base --> WG0[WiseGolf0]
+    Base --> NG[NexGolf]
+    Base --> TT[TeeTime]
+    
+    subgraph Data Models
+        Res[Reservation]
+        Player[Player]
+        Course[CourseInfo]
+    end
+```
+
 ## Authentication Strategies
 
 The system supports three main authentication strategies:
 
-### 1. Token App Authentication (token_appauth)
+### 1. Token Authentication
 Used by modern WiseGolf implementations.
 
 Headers:
 ```http
-Authorization: <token>
+Authorization: Bearer <jwt-token>
 x-session-type: wisegolf
 Accept: application/json, text/plain, */*
 ```
 
-URL format:
-```
-<base_url>&appauth=<appauth_token>
-```
-
-### 2. Cookie Authentication (cookie)
+### 2. Cookie Authentication
 Used by WiseGolf0 (legacy) and NexGolf systems.
 
 WiseGolf0 format:
@@ -39,31 +51,24 @@ Cookie: NGLOCALE=fi; JSESSIONID=<session_token>
 Accept: application/json, text/plain, */*
 ```
 
-### 3. Query Authentication (query)
-Used by some legacy systems.
+### 3. API Key Authentication
+Used by TeeTime system.
 
 Headers:
 ```http
+X-API-Key: <api_key>
+X-Club-ID: <club_id>
 Accept: application/json, text/plain, */*
-Content-Type: application/json
 ```
 
-URL format:
-```
-<base_url>?token=<token>
-```
+## API Implementations
 
-## WiseGolf APIs
-
-WiseGolf has two versions of their API, referred to as `wisegolf` and `wisegolf0`.
-
-### WiseGolf (Modern)
+### 1. WiseGolf (Modern)
 
 #### Authentication
 ```http
 POST /auth/login
 Content-Type: application/json
-Accept: application/json, text/plain, */*
 
 {
     "username": "your-username",
@@ -79,57 +84,11 @@ Response:
 }
 ```
 
-After authentication, all subsequent requests should include:
-```http
-Authorization: Bearer <token>
-x-session-type: wisegolf
-Accept: application/json, text/plain, */*
-```
-
-#### Reservations
+#### Get Reservations
 ```http
 GET /reservations/my
 Authorization: Bearer <token>
 x-session-type: wisegolf
-Accept: application/json, text/plain, */*
-```
-
-Response:
-```json
-{
-    "reservations": [
-        {
-            "teeTime": "2024-01-01T10:00:00.000Z",
-            "players": [
-                {
-                    "firstName": "John",
-                    "lastName": "Doe",
-                    "handicap": 15.4,
-                    "homeClub": {
-                        "name": "Golf Club",
-                        "abbreviation": "GC"
-                    }
-                }
-            ],
-            "course": {
-                "name": "Main Course",
-                "holes": 18,
-                "par": 72
-            }
-        }
-    ]
-}
-```
-
-### WiseGolf0 (Legacy)
-
-#### Authentication
-Uses cookie-based authentication with session tokens.
-
-#### User Reservations
-```http
-GET /pd/simulaattorit/18/simulaattorit/?controller=ajax&reservations=getusergolfreservations
-Cookie: wisenetwork_session=<session-token>
 ```
 
 Response:
@@ -139,65 +98,51 @@ Response:
     "rows": [
         {
             "reservationTimeId": 91588,
-            "dateTimeStart": "2025-01-05 11:00:00",
-            "dateTimeEnd": "2025-01-05 13:00:00",
+            "dateTimeStart": "2025-01-05T11:00:00Z",
+            "dateTimeEnd": "2025-01-05T13:00:00Z",
             "resourceId": 1,
             "firstName": "John",
             "familyName": "Doe",
             "clubAbbreviation": "GC",
             "handicapActive": "15.40",
             "productName": "Simulators",
-            "variantName": "Simulator 1: Sunday 05.01.2025 11:00 - John Doe"
-        }
-    ],
-    "reservationsAdditionalResources": []
-}
-```
-
-#### Flight Players
-```http
-GET /api/1.0/reservations/?productid=18&date=2025-01-03&golf=1
-Cookie: wisenetwork_session=<session-token>
-```
-
-Response:
-```json
-{
-    "success": true,
-    "errors": [],
-    "reservationsGolfPlayers": [
-        {
-            "firstName": "John",
-            "familyName": "Doe",
-            "handicapActive": 15.4,
-            "clubName": "Golf Club",
-            "clubAbbreviation": "GC",
-            "status": "active",
-            "namePublic": 1
+            "variantName": "Simulator 1"
         }
     ]
 }
 ```
 
-## NexGolf API
+### 2. WiseGolf0 (Legacy)
 
-### Authentication
+#### Get User Reservations
+```http
+GET /pd/simulaattorit/{product_id}/simulaattorit/?controller=ajax&reservations=getusergolfreservations
+Cookie: wisenetwork_session=<session_token>
+```
+
+#### Get Flight Players
+```http
+GET /api/1.0/reservations/?productid={product_id}&date={date}&golf=1
+Cookie: wisenetwork_session=<session_token>
+```
+
+### 3. NexGolf
+
+#### Authentication
 ```http
 POST /api/login
 Content-Type: application/x-www-form-urlencoded
 
-memberNumber=12345&pin=1234
+memberNumber=<member_id>&pin=<pin>
 ```
 
-Response: Session cookie in headers
-
-### Reservations
+#### Get Reservations
 ```http
 GET /api/reservations
-Cookie: session=<cookie>
-Query Parameters:
-  - startDate: YYYY-MM-DD
-  - endDate: YYYY-MM-DD
+Cookie: JSESSIONID=<session_token>
+params:
+  startDate: YYYY-MM-DD
+  endDate: YYYY-MM-DD
 ```
 
 Response:
@@ -206,8 +151,6 @@ Response:
     "bookings": [
         {
             "startDateTime": "2024-01-01 10:00",
-            "bookingReference": "ABC123",
-            "status": "confirmed",
             "players": [
                 {
                     "firstName": "John",
@@ -218,26 +161,31 @@ Response:
                         "code": "GC"
                     }
                 }
-            ]
+            ],
+            "bookingReference": "ABC123",
+            "status": "confirmed"
         }
     ]
 }
 ```
 
-## TeeTime API
+### 4. TeeTime
 
-### Authentication
-Headers required for all requests:
+#### Authentication
+Verify credentials:
 ```http
+GET /api/verify
 X-API-Key: <api_key>
 X-Club-ID: <club_id>
 ```
 
-### Reservations
+#### Get Reservations
 ```http
 GET /api/bookings
-Query Parameters:
-  - member_id: string
+X-API-Key: <api_key>
+X-Club-ID: <club_id>
+params:
+  member_id: <member_id>
 ```
 
 Response:
@@ -245,17 +193,15 @@ Response:
 {
     "data": [
         {
-            "startTime": "2024-01-01 10:00:00",
-            "playerList": [
+            "teeTime": "2024-01-01 10:00:00",
+            "players": [
                 {
-                    "name": {
-                        "first": "John",
-                        "last": "Doe"
-                    },
-                    "handicapIndex": 15.4,
-                    "memberClub": {
+                    "firstName": "John",
+                    "lastName": "Doe",
+                    "handicap": 15.4,
+                    "club": {
                         "name": "Golf Club",
-                        "shortCode": "GC"
+                        "code": "GC"
                     }
                 }
             ],
@@ -267,6 +213,38 @@ Response:
         }
     ]
 }
+```
+
+## Data Models
+
+### Reservation
+```python
+@dataclass
+class Reservation:
+    datetime_start: datetime
+    players: List[Player]
+    course_info: Optional[CourseInfo] = None
+    booking_reference: Optional[str] = None
+    status: Optional[str] = None
+```
+
+### Player
+```python
+@dataclass
+class Player:
+    first_name: str
+    family_name: str
+    handicap: Optional[float] = None
+    club_abbreviation: Optional[str] = None
+```
+
+### CourseInfo
+```python
+@dataclass
+class CourseInfo:
+    name: str
+    holes: int = 18
+    par: Optional[int] = None
 ```
 
 ## Error Handling

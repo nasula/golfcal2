@@ -2,116 +2,27 @@
 
 ## Overview
 
-OpenWeather provides global weather forecasts and serves as a fallback weather service in GolfCal2 when primary services (MET.no for Nordic regions, OpenMeteo for other regions) are unavailable.
+The OpenWeather service provides global weather coverage and serves as both a primary service for regions not covered by specialized providers and a fallback service when regional services are unavailable.
 
-## API Details
+## Features
 
-- **Base URL**: `https://api.openweathermap.org/data/2.5/`
-- **Authentication**: API key required
-- **Rate Limit**: 60 calls/minute (free tier)
-- **Update Frequency**: 3 hours
-- **Forecast Range**: 5 days (3-hour blocks)
-
-## Authentication
-
-The service requires an API key in the request parameters:
-```python
-params = {
-    'appid': 'your-api-key',
-    'lat': latitude,
-    'lon': longitude,
-    'units': 'metric'
-}
-```
-
-## Endpoints
-
-### Get Weather Forecast
-
-```
-GET /forecast
-```
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| lat | float | Yes | Latitude (-90 to 90) |
-| lon | float | Yes | Longitude (-180 to 180) |
-| appid | string | Yes | API key |
-| units | string | No | Units format (metric/imperial) |
-| lang | string | No | Language code |
-
-#### Example Request
-
-```
-GET /forecast?lat=60.1699&lon=24.9384&appid=your-api-key&units=metric
-```
-
-#### Response Format
-
-```json
-{
-    "cod": "200",
-    "message": 0,
-    "cnt": 40,
-    "list": [
-        {
-            "dt": 1674486000,
-            "main": {
-                "temp": 20.5,
-                "feels_like": 19.8,
-                "temp_min": 19.2,
-                "temp_max": 21.3,
-                "pressure": 1015,
-                "humidity": 82
-            },
-            "weather": [
-                {
-                    "id": 800,
-                    "main": "Clear",
-                    "description": "clear sky",
-                    "icon": "01d"
-                }
-            ],
-            "clouds": {
-                "all": 0
-            },
-            "wind": {
-                "speed": 5.2,
-                "deg": 180
-            },
-            "rain": {
-                "3h": 0
-            },
-            "sys": {
-                "pod": "d"
-            },
-            "dt_txt": "2024-01-23 12:00:00"
-        }
-    ],
-    "city": {
-        "id": 658225,
-        "name": "Helsinki",
-        "coord": {
-            "lat": 60.1699,
-            "lon": 24.9384
-        },
-        "country": "FI",
-        "population": 558457,
-        "timezone": 7200,
-        "sunrise": 1674459600,
-        "sunset": 1674486000
-    }
-}
-```
+- Global coverage with high-resolution forecasts
+- API key authentication
+- 5-day forecast with 3-hour resolution
+- Comprehensive weather data including temperature, precipitation, wind, and conditions
+- Configurable by region
+- Built-in caching and rate limiting
 
 ## Implementation
 
-The service is implemented in `services/open_weather_service.py`:
-
 ```python
-class OpenWeatherService(WeatherService):
+class OpenWeatherService(WeatherService, EnhancedLoggerMixin):
+    """OpenWeather API implementation.
+    
+    This service uses OpenWeather's API to provide weather forecasts globally.
+    It can be configured for specific regions with different settings.
+    """
+
     def __init__(
         self,
         local_tz: ZoneInfo,
@@ -120,83 +31,130 @@ class OpenWeatherService(WeatherService):
         region: str = "global"
     ):
         super().__init__(local_tz, utc_tz)
+        
         self.base_url = "https://api.openweathermap.org/data/2.5/"
         self.region = region
-        self.api_key = config.global_config['api_keys']['weather']['openweather']
-        self.db = WeatherDatabase(f'openweather_{region}')
+        
+        # Get API key from config
+        if isinstance(config, dict):
+            self.api_key = config.get('api_keys', {}).get('weather', {}).get('openweather')
+        else:
+            self.api_key = config.global_config['api_keys']['weather']['openweather']
+        
+        if not self.api_key:
+            raise WeatherServiceUnavailable(
+                "OpenWeather API key not configured",
+                aggregate_error("API key not configured", "open_weather", None)
+            )
+        
+        # Initialize database for caching with region-specific schema
+        self.db = WeatherDatabase(f'openweather_{region}', OPEN_WEATHER_SCHEMA)
+        
+        # Initialize rate limiter (60 calls per minute)
         self.rate_limiter = RateLimiter(max_calls=60, time_window=60)
+        
+        # Set logging context
+        self.set_log_context(service=f"OpenWeather-{region}")
 ```
 
-## Weather Codes
+## API Details
 
-OpenWeather uses a proprietary ID system that is mapped to standardized weather codes:
+- **Base URL**: `https://api.openweathermap.org/data/2.5/`
+- **Authentication**: API key required
+- **Rate Limit**: 60 calls/minute (free tier)
+- **Update Frequency**: Every 3 hours
+- **Geographic Coverage**: Global
+- **Forecast Range**: 5 days with 3-hour resolution
 
-| ID | Description | WMO Code |
-|----|-------------|----------|
-| 800 | Clear sky | 0 |
-| 801-803 | Partly cloudy | 2 |
-| 804 | Overcast | 3 |
-| 701 | Mist | 45 |
-| 741 | Fog | 45 |
-| 300-302 | Light drizzle | 51 |
-| 500 | Light rain | 61 |
-| 501 | Moderate rain | 63 |
-| 502-504 | Heavy rain | 65 |
-| 600 | Light snow | 71 |
-| 601 | Snow | 73 |
-| 602 | Heavy snow | 75 |
-| 200-202 | Thunderstorm | 95 |
-| 221 | Thunderstorm with hail | 96 |
+## Request Format
+
+### Headers
+
+```python
+headers = {
+    'Accept': 'application/json'
+}
+```
+
+### Parameters
+
+```python
+params = {
+    "lat": lat,
+    "lon": lon,
+    "appid": self.api_key,
+    "units": "metric",  # For Celsius and m/s
+    "lang": "en"
+}
+```
 
 ## Error Handling
 
 The service implements comprehensive error handling:
 
 1. Service Errors
-   - Network connectivity issues
-   - Invalid API key
+   - Network connectivity issues (`requests.RequestException`)
+   - Authentication errors (invalid API key)
    - Rate limiting (429 responses)
    - Invalid coordinates
-   - Parse errors
+   - Parse errors (JSON format)
+   - Missing data fields
 
 2. Recovery Strategies
+   - Automatic retries with exponential backoff
    - Cache utilization for recent requests
-   - Exponential backoff for rate limits
-   - Graceful degradation
+   - Region-specific error handling
+   - Rate limit tracking with rolling window
 
 ## Caching
 
-Weather data is cached with the following rules:
+Weather data is cached using a SQLite database:
 
-1. Cache Duration:
-   - Short-term forecasts (0-24h): 1 hour
-   - Medium-term forecasts (1-5d): 3 hours
-
-2. Cache Keys:
-   ```python
-   f"openweather_{region}_{lat:.4f}_{lon:.4f}_{start_time.isoformat()}_{end_time.isoformat()}"
-   ```
+1. Database Cache:
+   - Location: Based on region (`openweather_{region}`)
+   - Schema: Defined in `OPEN_WEATHER_SCHEMA`
+   - Implementation: `WeatherDatabase`
+   - Cache key format: `f"openweather_{region}_{lat:.4f}_{lon:.4f}_{start_time.isoformat()}_{end_time.isoformat()}"`
 
 ## Data Mapping
 
 ### Units
 
-All data is converted to standard units:
+All data is automatically converted to standard units:
 - Temperature: Celsius (using units=metric)
 - Wind Speed: m/s
-- Precipitation: mm/3h (converted to mm/h)
-- Direction: Compass points (converted from degrees)
+- Precipitation: mm/h (converted from mm/3h)
+- Direction: Degrees (0-360)
 
 ## Usage Example
 
 ```python
-service = OpenWeatherService(local_tz, utc_tz, config, region="global")
-weather = service.get_weather(
-    lat=60.1699,
-    lon=24.9384,
-    start_time=datetime(...),
-    end_time=datetime(...)
+service = OpenWeatherService(
+    local_tz=ZoneInfo("Europe/Madrid"),
+    utc_tz=ZoneInfo("UTC"),
+    config=config,
+    region="global"
 )
+
+try:
+    weather = service.get_weather(
+        lat=60.1699,
+        lon=24.9384,
+        start_time=datetime(...),
+        end_time=datetime(...)
+    )
+    print(f"Temperature: {weather.data[0].temperature}°C")
+except WeatherError as e:
+    print(f"Weather data unavailable: {e}")
+```
+
+## Logging
+
+The service implements detailed logging with enhanced context:
+```python
+self.debug("Fetching forecast", coords=(lat, lon), region=self.region)
+self.info("Cache hit for forecast", coords=(lat, lon))
+self.error("Failed to fetch forecast", exc_info=e, region=self.region)
 ```
 
 ## Rate Limiting
@@ -209,15 +167,6 @@ rate_limiter = RateLimiter(
 )
 ```
 
-## Logging
-
-The service implements detailed logging:
-```python
-self.debug("Cache hit for OpenWeather forecast", coords=(lat, lon))
-self.info("Fetching new forecast", coords=(lat, lon))
-self.error("Failed to fetch OpenWeather forecast", exc_info=e)
-```
-
 ## Configuration
 
 Example configuration in `config.yaml`:
@@ -225,14 +174,18 @@ Example configuration in `config.yaml`:
 weather:
   providers:
     openweather:
-      api_key: "your-key"
+      api_key: "your-api-key"
       timeout: 10
-      cache_duration: 3600
+      regions:
+        global:
+          cache_duration: 3600
+        nordic:
+          cache_duration: 7200
 ```
 
 ## Related Documentation
 
-- [OpenWeather API Documentation](https://openweathermap.org/api/hourly-forecast)
+- [OpenWeather API Documentation](https://openweathermap.org/api/one-call-3)
 - [Weather Service Implementation](../../services/weather/README.md)
 - [Weather Data Models](../../services/weather/data-models.md)
 ``` 

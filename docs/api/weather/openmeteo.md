@@ -2,149 +2,117 @@
 
 ## Overview
 
-OpenMeteo provides global weather forecasts with high resolution and accuracy. It serves as the primary weather service for all non-Nordic regions in GolfCal2 and as a fallback for Nordic regions when MET.no is unavailable.
-
-## API Details
-
-- **Base URL**: `https://api.open-meteo.com/v1/forecast`
-- **Authentication**: None required (free tier)
-- **Rate Limit**: 10,000 requests/day
-- **Update Frequency**: Hourly
-- **Forecast Range**: 7 days (hourly resolution)
+The OpenMeteo service provides global weather forecasts using the Open-Meteo API. It serves as the primary weather service for all non-Nordic regions in GolfCal2.
 
 ## Features
 
 - Global coverage with high-resolution forecasts
 - No API key required
+- Hourly data for temperature, precipitation, wind, and weather conditions
 - WMO weather codes for standardized condition reporting
-- Automatic unit conversion
+- Automatic unit conversion (km/h to m/s for wind speed)
 - Built-in caching and error handling
-
-## Endpoints
-
-### Get Weather Forecast
-
-```
-GET /v1/forecast
-```
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| latitude | float | Yes | Latitude (-90 to 90) |
-| longitude | float | Yes | Longitude (-180 to 180) |
-| hourly | string | Yes | Comma-separated list of variables |
-| timezone | string | Yes | Timezone name (e.g., "Europe/Oslo") |
-| forecast_days | integer | No | Number of days (default: 7) |
-
-#### Example Request
-
-```
-GET /v1/forecast?latitude=60.1699&longitude=24.9384&hourly=temperature_2m,precipitation,windspeed_10m,winddirection_10m,weathercode&timezone=Europe/Oslo
-```
-
-#### Response Format
-
-```json
-{
-    "latitude": 60.17,
-    "longitude": 24.94,
-    "generationtime_ms": 0.3,
-    "utc_offset_seconds": 7200,
-    "timezone": "Europe/Oslo",
-    "timezone_abbreviation": "CEST",
-    "elevation": 15.0,
-    "hourly_units": {
-        "time": "iso8601",
-        "temperature_2m": "°C",
-        "precipitation": "mm",
-        "windspeed_10m": "m/s",
-        "winddirection_10m": "°",
-        "weathercode": "wmo code"
-    },
-    "hourly": {
-        "time": ["2024-01-23T00:00", ...],
-        "temperature_2m": [20.5, ...],
-        "precipitation": [0.0, ...],
-        "windspeed_10m": [5.2, ...],
-        "winddirection_10m": [180, ...],
-        "weathercode": [1, ...]
-    }
-}
-```
 
 ## Implementation
 
-The service is implemented in `services/open_meteo_service.py`:
-
 ```python
 class OpenMeteoService(WeatherService):
-    def get_weather(
-        self,
-        lat: float,
-        lon: float,
-        start_time: datetime,
-        end_time: datetime
-    ) -> Optional[WeatherResponse]:
-        # Check cache first
-        cached_response = self.cache.get_response(...)
-        if cached_response:
-            return self._parse_response(...)
-            
-        # Fetch new data
-        response = self._fetch_forecast(lat, lon, start_time, end_time)
-        if response:
-            # Store in cache
-            self.cache.store_response(...)
-            return self._parse_response(...)
+    """Service for handling weather data using Open-Meteo API.
+    
+    Open-Meteo provides free weather forecast APIs without key requirements.
+    Data is updated hourly.
+    """
+    
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
+        super().__init__(local_tz, utc_tz)
+        
+        # Setup cache and retry mechanism
+        cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
+        retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
+        self.client = openmeteo_requests.Client(session=retry_session)
+        
+        # Initialize database and cache
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
+        
+        # Rate limiting configuration
+        self._min_call_interval = timedelta(seconds=1)
+        self.service_type = 'open_meteo'
+```
+
+## API Details
+
+- **Base URL**: `https://api.open-meteo.com/v1/forecast`
+- **Authentication**: None required
+- **Rate Limit**: 10,000 requests/day with minimum 1-second interval
+- **Update Frequency**: Hourly
+- **Geographic Coverage**: Global
+
+## Request Format
+
+### Parameters
+
+```python
+params = {
+    "latitude": lat,
+    "longitude": lon,
+    "hourly": [
+        "temperature_2m",
+        "precipitation",
+        "precipitation_probability",
+        "weathercode",
+        "windspeed_10m",
+        "winddirection_10m"
+    ],
+    "timezone": "UTC"
+}
 ```
 
 ## Weather Codes
 
-OpenMeteo uses WMO (World Meteorological Organization) weather codes:
+OpenMeteo uses WMO weather codes that are mapped to internal codes:
 
-| Code | Description |
-|------|-------------|
-| 0 | Clear sky |
-| 1, 2, 3 | Mainly clear, partly cloudy, and overcast |
-| 45, 48 | Foggy |
-| 51, 53, 55 | Drizzle: Light, moderate, and dense intensity |
-| 61, 63, 65 | Rain: Slight, moderate and heavy intensity |
-| 71, 73, 75 | Snow fall: Slight, moderate, and heavy intensity |
-| 77 | Snow grains |
-| 80, 81, 82 | Rain showers: Slight, moderate, and violent |
-| 85, 86 | Snow showers slight and heavy |
-| 95 | Thunderstorm: Slight or moderate |
-| 96, 99 | Thunderstorm with slight and heavy hail |
+| WMO Code | Description | Internal Code |
+|----------|-------------|---------------|
+| 0 | Clear sky | clearsky_day/clearsky_night |
+| 1, 2, 3 | Mainly clear, partly cloudy, overcast | fair_day/fair_night |
+| 45, 48 | Foggy | fog |
+| 51, 53, 55 | Drizzle: Light, moderate, dense | lightrain |
+| 61, 63, 65 | Rain: Slight, moderate, heavy | rain |
+| 71, 73, 75 | Snow: Slight, moderate, heavy | snow |
+| 95, 96, 99 | Thunderstorm | thunder |
 
 ## Error Handling
 
 The service implements comprehensive error handling:
 
 1. Service Errors
-   - Network connectivity issues
+   - Network connectivity issues (`requests.RequestException`)
    - Invalid coordinates
-   - Parse errors
+   - Parse errors (JSON format)
+   - Missing data fields
    - Rate limit exceeded
 
 2. Recovery Strategies
-   - Automatic fallback to OpenWeather
+   - Automatic retries (5 attempts with exponential backoff)
    - Cache utilization for recent requests
-   - Rate limit tracking
+   - Fallback to OpenWeather service
+   - Rate limit tracking with minimum 1-second interval
 
 ## Caching
 
-Weather data is cached with the following rules:
+Weather data is cached using both memory and database caching:
 
-1. Cache Duration:
-   - Short-term forecasts (0-48h): 1 hour
-   - Medium-term forecasts (2-7d): 3 hours
+1. Memory Cache:
+   - Duration: 1 hour (3600 seconds)
+   - Implementation: `requests_cache.CachedSession`
 
-2. Cache Keys:
-   ```python
-   f"openmeteo_{lat:.4f}_{lon:.4f}_{start_time.isoformat()}_{end_time.isoformat()}"
-   ```
+2. Database Cache:
+   - Location: `data/weather_cache.db`
+   - Implementation: `WeatherResponseCache`
+   - Cache key format: `f"open_meteo_{lat:.4f}_{lon:.4f}_{start_time.isoformat()}_{end_time.isoformat()}"`
 
 ## Data Mapping
 
@@ -154,7 +122,7 @@ All data is automatically converted to standard units:
 - Temperature: Celsius
 - Wind Speed: m/s (converted from km/h)
 - Precipitation: mm/h
-- Direction: Compass points (converted from degrees)
+- Direction: Degrees (0-360)
 
 ## Usage Example
 
@@ -172,19 +140,20 @@ weather = service.get_weather(
 
 The service implements detailed logging:
 ```python
-self.debug("Cache hit for OpenMeteo forecast", coords=(lat, lon))
-self.info("Fetching new forecast", coords=(lat, lon))
-self.error("Failed to fetch OpenMeteo forecast", exc_info=e)
+self.debug("Making API request with params", params=params)
+self.debug("Got API response", response_type=type(response).__name__)
+self.debug("Processed hourly entry", index=i, entry=entry)
+self.error("Error fetching forecasts", exc_info=e)
 ```
 
-## Rate Limiting
+## Configuration
 
-Rate limiting is implemented using a simple counter:
-```python
-rate_limiter = RateLimiter(
-    max_calls=10000,
-    time_window=86400  # 24 hours in seconds
-)
+Example configuration in `config.yaml`:
+```yaml
+weather:
+  providers:
+    openmeteo:
+      timeout: 10  # seconds
 ```
 
 ## Related Documentation
