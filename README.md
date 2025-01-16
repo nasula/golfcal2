@@ -248,6 +248,39 @@ golfcal/
 └── config/         # Configuration management
 ```
 
+### Documentation
+
+### API Documentation
+- [API Overview](docs/api/README.md) - Complete API documentation
+  - [CRM APIs](docs/api/crm_apis.md) - Golf club booking systems
+  - [Weather APIs](docs/api/weather/README.md) - Weather service providers
+  - [Service APIs](docs/services/README.md) - Internal service APIs
+
+### Development Documentation
+- [Service Documentation](docs/services/README.md) - Core service implementations
+- [Configuration Guide](docs/deployment/configuration.md) - Configuration file formats
+- [Development Setup](docs/development/setup.md) - Setting up development environment
+
+## Development
+
+The codebase follows a modular architecture:
+
+```
+golfcal/
+├── api/            # API clients for different golf systems
+├── models/         # Data models and business logic
+├── services/       # Core services (calendar, reservations, weather)
+├── utils/          # Utility functions and helpers
+└── config/         # Configuration management
+```
+
+### Documentation
+
+- [API Documentation](docs/api/crm_apis.md) - Details on CRM system integrations
+- [Service Documentation](docs/services/README.md) - Core service implementations
+- [Configuration Guide](docs/deployment/configuration.md) - Configuration file formats
+- [Development Setup](docs/development/setup.md) - Setting up development environment
+
 ### Development Mode
 
 Use the `--dev` flag for development features:
