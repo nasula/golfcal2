@@ -44,6 +44,9 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         self.utc_tz = UTC
         self.local_tz = config.timezone
         
+        # Initialize seen UIDs set
+        self.seen_uids = set()
+        
         with handle_errors(CalendarError, "calendar", "initialize services"):
             # Initialize services
             self.weather_service = WeatherManager(self.local_tz, self.utc_tz, self.config)

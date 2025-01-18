@@ -1,0 +1,29 @@
+[Unit]
+Description=GolfCal2 Hourly Service
+After=network.target
+
+[Service]
+Type=simple
+User=golfcal2
+Group=golfcal2
+Environment=PYTHONUNBUFFERED=1
+Environment=GOLFCAL2_CONFIG=/etc/golfcal2/config.yaml
+
+# Create log directory with proper permissions
+ExecStartPre=/bin/mkdir -p /var/log/golfcal2
+ExecStartPre=/bin/chown golfcal2:golfcal2 /var/log/golfcal2
+ExecStartPre=/bin/chmod 750 /var/log/golfcal2
+
+WorkingDirectory=/opt/golfcal2
+ExecStart=/opt/golfcal2/venv/bin/python3 golfcal2_service.py
+
+# Restart configuration
+Restart=always
+RestartSec=5
+
+# Resource limits
+LimitNOFILE=65535
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target 
