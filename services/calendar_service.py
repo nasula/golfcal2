@@ -34,28 +34,40 @@ from golfcal2.config.error_aggregator import aggregate_error
 class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
     """Service for handling calendar operations."""
     
-    def __init__(self, config: AppConfig, dev_mode: bool = False):
-        """Initialize calendar service."""
+    def __init__(self, config: AppConfig, weather_service: Optional[WeatherManager] = None, dev_mode: bool = False):
+        """Initialize calendar service.
+        
+        Args:
+            config: Application configuration
+            weather_service: Optional pre-initialized weather service
+            dev_mode: Whether to run in development mode
+        """
         super().__init__()
         self.config = config
         self.dev_mode = dev_mode
         
-        # Initialize timezone settings
-        self.utc_tz = UTC
-        self.local_tz = config.timezone
+        # Initialize timezone settings - use cached objects if available
+        self.utc_tz = getattr(config, 'utc_tz', UTC)
+        self.local_tz = getattr(config, 'local_tz', config.timezone)
         
         # Initialize seen UIDs set
         self.seen_uids = set()
         
         with handle_errors(CalendarError, "calendar", "initialize services"):
-            # Initialize services
-            self.weather_service = WeatherManager(self.local_tz, self.utc_tz, self.config)
-            self.external_event_service = ExternalEventService(self.weather_service, self.config)
+            # Use provided weather service or create new one
+            self.weather_service = weather_service or WeatherManager(self.local_tz, self.utc_tz, self.config)
             
-            # Initialize builders
+            # Initialize builders with shared dependencies
             self.calendar_builder = CalendarBuilder(self.local_tz)
-            self.reservation_builder = ReservationEventBuilder(self.weather_service, self.config)
-            self.external_builder = ExternalEventBuilder(self.weather_service, self.config)
+            
+            # Share weather service instance across builders
+            builders_config = {
+                'weather_service': self.weather_service,
+                'config': self.config
+            }
+            self.external_event_service = ExternalEventService(**builders_config)
+            self.reservation_builder = ReservationEventBuilder(**builders_config)
+            self.external_builder = ExternalEventBuilder(**builders_config)
             
             # Set up ICS directory
             try:

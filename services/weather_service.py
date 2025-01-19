@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from zoneinfo import ZoneInfo
+import os
 
 from golfcal2.exceptions import (
     WeatherError,
@@ -15,36 +16,48 @@ from golfcal2.services.weather_types import WeatherData, WeatherResponse
 from golfcal2.services.open_weather_service import OpenWeatherService
 from golfcal2.services.met_weather_service import MetWeatherService
 from golfcal2.services.open_meteo_service import OpenMeteoService
+from golfcal2.services.cache.weather_cache import WeatherResponseCache
+from golfcal2.services.cache.location_cache import WeatherLocationCache
 
-class WeatherManager(WeatherService):
-    """Weather service manager."""
-    
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
-        """Initialize weather service manager.
+class WeatherManager:
+    """Manager for weather services."""
+
+    def __init__(self, timezone: ZoneInfo, utc: ZoneInfo, config: Dict[str, Any]):
+        """Initialize weather manager.
         
         Args:
-            local_tz: Local timezone
-            utc_tz: UTC timezone
-            config: Application configuration
+            timezone: Local timezone
+            utc: UTC timezone
+            config: Service configuration
         """
-        # Initialize parent class with timezones
-        super().__init__(local_tz, utc_tz)
-        
-        # Store config
+        self.timezone = timezone
+        self.utc = utc
         self.config = config
         
-        # Initialize weather services
-        self.services = [
-            # Global OpenMeteo service (primary)
-            OpenMeteoService(local_tz, utc_tz, config),
-            # Regional specialized services
-            MetWeatherService(local_tz, utc_tz, config),
-            # Global OpenWeather service (fallback)
-            OpenWeatherService(local_tz, utc_tz, config, region="global")
-        ]
+        # Initialize shared caches
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
         
-        self.set_log_context(service="WeatherManager")
-    
+        # Initialize core services
+        self.services = {
+            'met': MetWeatherService(timezone, utc, config),
+            'open_meteo': OpenMeteoService(timezone, utc, config),
+        }
+        
+        # Add OpenWeather if API key exists
+        if config.get('api_keys', {}).get('weather', {}).get('openweather'):
+            self.services['openweather'] = OpenWeatherService(timezone, utc, config)
+        
+        # Set default service
+        self.default_service = self.services.get('met')  # MET.no as default (no API key needed)
+        
+        # Attach caches to services after initialization
+        for service in self.services.values():
+            service.cache = self.cache
+            service.location_cache = self.location_cache
+
     def get_weather(
         self,
         lat: float,
@@ -70,10 +83,10 @@ class WeatherManager(WeatherService):
         
         # Check MET.no (Nordic region)
         if 55 <= lat <= 72 and 4 <= lon <= 32:  # Nordic region
-            responsible_service = next((s for s in self.services if isinstance(s, MetWeatherService)), None)
+            responsible_service = next((s for s in self.services.values() if isinstance(s, MetWeatherService)), None)
         # Use OpenMeteo for all other regions (including Iberia)
         else:
-            responsible_service = next((s for s in self.services if isinstance(s, OpenMeteoService)), None)
+            responsible_service = next((s for s in self.services.values() if isinstance(s, OpenMeteoService)), None)
 
         if responsible_service:
             try:
@@ -83,14 +96,14 @@ class WeatherManager(WeatherService):
                         # Service returned a list of WeatherData
                         return WeatherResponse(
                             data=response,
-                            expires=datetime.now(self.utc_tz) + timedelta(hours=1)
+                            expires=datetime.now(self.utc) + timedelta(hours=1)
                         )
                     # Service returned a WeatherResponse
                     return response
             except WeatherError as e:
                 aggregate_error(str(e), "weather_manager", e.__traceback__)
                 # Try OpenWeather as fallback
-                fallback = next((s for s in self.services if isinstance(s, OpenWeatherService)), None)
+                fallback = next((s for s in self.services.values() if isinstance(s, OpenWeatherService)), None)
                 if fallback:
                     try:
                         response = fallback.get_weather(lat, lon, start_time, end_time, club)
