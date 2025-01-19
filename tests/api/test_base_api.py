@@ -3,7 +3,7 @@
 import pytest
 import requests
 import json
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from requests.exceptions import Timeout, ConnectionError, RequestException
 from golfcal2.exceptions import APIError, APITimeoutError, APIResponseError, APIValidationError
 
@@ -13,6 +13,8 @@ def auth_service():
     mock = Mock()
     mock.create_headers.return_value = {"Authorization": "Bearer test-token"}
     mock.build_full_url.return_value = None  # Don't override base_url
+    mock.get_auth_type.return_value = "token_appauth"
+    mock.get_auth_headers.return_value = {"Authorization": "Bearer test-token"}
     return mock
 
 @pytest.fixture
@@ -22,7 +24,11 @@ def club_details():
         "club_id": "test_club",
         "api_key": "test_key",
         "auth_type": "token_appauth",
-        "cookie_name": "test_cookie"
+        "cookie_name": "test_cookie",
+        "headers": {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
     }
 
 @pytest.fixture
@@ -32,24 +38,39 @@ def membership():
         "user_id": "test_user",
         "auth_details": {
             "token": "test-token",
-            "refresh_token": "test-refresh"
+            "refresh_token": "test-refresh",
+            "appauth": "test-appauth"
+        },
+        "headers": {
+            "X-Custom-Header": "test-value"
         }
     }
 
 @pytest.fixture
-def base_api(auth_service, club_details, membership):
+def mock_session():
+    """Create a mock requests session."""
+    session = MagicMock(spec=requests.Session)
+    session.headers = {}
+    session.cookies = MagicMock()
+    session.cookies.get = MagicMock(return_value="test-cookie")
+    session.get.return_value = Mock(status_code=200, json=lambda: {"key": "value"})
+    session.post.return_value = Mock(status_code=200, json=lambda: {"key": "value"})
+    return session
+
+@pytest.fixture
+def base_api(auth_service, club_details, membership, mock_session):
     """Create a BaseAPI instance for testing."""
     from golfcal2.api.base_api import BaseAPI
-    api = BaseAPI(
-        base_url="https://api.test.com",
-        auth_service=auth_service,
-        club_details=club_details,
-        membership=membership
-    )
-    # Clear any default headers
-    api.session.headers.clear()
-    api.session.headers.update({"Authorization": "Bearer test-token"})
-    return api
+    with patch('requests.Session', return_value=mock_session):
+        api = BaseAPI(
+            base_url="https://api.test.com",
+            auth_service=auth_service,
+            club_details=club_details,
+            membership=membership
+        )
+        # Clear any default headers
+        api.session.headers.clear()
+        return api
 
 def test_base_api_initialization(auth_service, club_details, membership):
     """Test BaseAPI initialization."""
@@ -128,74 +149,66 @@ def test_parse_response_invalid_format(base_api):
 ])
 def test_make_request_error_handling(base_api, exception_class, expected_error):
     """Test error handling in make_request method."""
-    with patch("requests.Session.request") as mock_request:
-        mock_request.side_effect = exception_class("Test error")
-        with pytest.raises(expected_error):
-            base_api._make_request("GET", "/test")
+    base_api.session.request.side_effect = exception_class("Test error")
+    with pytest.raises(expected_error):
+        base_api._make_request("GET", "/test")
 
 def test_make_request_success(base_api):
     """Test successful request."""
     mock_response = Mock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"success": True}
-    
-    with patch("requests.Session.request") as mock_request:
-        mock_request.return_value = mock_response
-        result = base_api._make_request("GET", "/test")
-        assert result == {"success": True}
+    base_api.session.request.return_value = mock_response
+    result = base_api._make_request("GET", "/test")
+    assert result == {"success": True}
 
 def test_make_request_custom_timeout(base_api):
     """Test request with custom timeout."""
     mock_response = Mock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"success": True}
+    base_api.session.request.return_value = mock_response
+    base_api._make_request("GET", "/test", timeout=30)
     
-    with patch("requests.Session.request") as mock_request:
-        mock_request.return_value = mock_response
-        base_api._make_request("GET", "/test", timeout=30)
-        
-        # Get the actual call arguments
-        call_args = mock_request.call_args
-        assert call_args is not None
-        
-        # Check method and URL
-        kwargs = call_args[1]
-        assert kwargs.get("method") == "GET"
-        assert kwargs.get("url") == "https://api.test.com/test"
-        assert kwargs.get("timeout") == 30
+    # Get the actual call arguments
+    call_args = base_api.session.request.call_args
+    assert call_args is not None
+    
+    # Check method and URL
+    kwargs = call_args[1]
+    assert kwargs.get("timeout") == 30
 
 def test_make_request_with_params_and_data(base_api):
     """Test request with query parameters and data."""
     mock_response = Mock()
     mock_response.status_code = 200
     mock_response.json.return_value = {"success": True}
+    base_api.session.request.return_value = mock_response
     
     test_params = {"key": "value"}
     test_data = {"data": "test"}
     
-    with patch("requests.Session.request") as mock_request:
-        mock_request.return_value = mock_response
-        result = base_api._make_request(
-            "POST", 
-            "/test", 
-            params=test_params,
-            data=test_data
-        )
-        
-        # Verify the result
-        assert result == {"success": True}
-        
-        # Verify the request was made correctly
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args
-        assert call_args is not None
-        
-        # Check method, url and parameters
-        kwargs = call_args[1]
-        assert kwargs.get("method") == "POST"
-        assert kwargs.get("url") == "https://api.test.com/test"
-        assert kwargs.get("params") == test_params
-        assert kwargs.get("json") == test_data  # data is passed as json parameter
+    result = base_api._make_request(
+        "POST", 
+        "/test", 
+        params=test_params,
+        data=test_data
+    )
+    
+    # Verify the result
+    assert result == {"success": True}
+    
+    # Verify the request was made correctly
+    base_api.session.request.assert_called_once()
+    call_args = base_api.session.request.call_args
+    assert call_args is not None
+    
+    # Check method, url and parameters
+    kwargs = call_args[1]
+    assert kwargs.get("method") == "POST"
+    assert kwargs.get("url") == "https://api.test.com/test"
+    assert kwargs.get("params") == test_params
+    assert kwargs.get("json") == test_data  # data is passed as json parameter
 
 def test_auth_type_handling(auth_service, club_details, membership):
     """Test different authentication types."""

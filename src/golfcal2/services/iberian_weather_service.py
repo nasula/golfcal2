@@ -1520,22 +1520,8 @@ class IberianWeatherService(WeatherService):
             return None
 
     def _is_in_coverage_area(self, lat: float, lon: float) -> bool:
-        """Check if coordinates are within Spain's territory.
-        
-        Coverage areas:
-        - Mainland Spain: 35.9N to 43.8N, 9.4W to 3.4E
-        - Canary Islands: 27.6N to 29.5N, 18.2W to 13.3W
-        - Balearic Islands: 38.6N to 40.1N, 1.1E to 4.4E
-        """
-        # Mainland Spain
-        if (35.9 <= lat <= 43.8 and -9.4 <= lon <= 3.4):
-            return True
-        # Canary Islands
-        if (27.6 <= lat <= 29.5 and -18.2 <= lon <= -13.3):
-            return True
-        # Balearic Islands
-        if (38.6 <= lat <= 40.1 and 1.1 <= lon <= 4.4):
-            return True
+        """Check if location is in AEMET coverage area."""
+        # Service is disabled
         return False
 
     def _parse_dms_to_decimal(self, dms_str: str) -> float:

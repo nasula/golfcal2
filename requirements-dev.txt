@@ -4,11 +4,20 @@ pytest-cov>=4.0.0
 pytest-mock>=3.10.0
 
 # Code quality
-black>=23.0.0
-flake8>=6.0.0
-mypy>=1.0.0
+black>=23.12.1
+flake8>=7.0.0
+mypy>=1.8.0
+isort>=5.13.2
+pre-commit>=3.6.0
+flake8-docstrings>=1.7.0
+types-all>=1.0.0
 
 # Documentation
 sphinx>=7.0.0
 sphinx-rtd-theme>=1.0.0
-sphinx-autodoc-typehints>=1.0.0 
+sphinx-autodoc-typehints>=1.0.0
+
+# Development tools
+ipython>=8.0.0
+ipdb>=0.13.0
+watchdog>=3.0.0 

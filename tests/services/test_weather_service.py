@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherResponse
+from typing import Dict, Optional, Any
 
 class MockWeatherService(WeatherService):
     """Mock implementation of WeatherService for testing."""
@@ -18,7 +19,8 @@ class MockWeatherService(WeatherService):
     
     def __init__(self, local_tz=timezone.utc, utc_tz=timezone.utc):
         super().__init__(local_tz, utc_tz)
-        self.cache = {}  # Simple dict cache for testing
+        self.service_type = "mock"
+        self._cache = {}  # Simple dict cache for testing
         
     def _get_cache_key(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> str:
         """Get cache key for weather data."""
@@ -27,8 +29,21 @@ class MockWeatherService(WeatherService):
         end_utc = end_time.astimezone(timezone.utc)
         return f"{lat:.4f}_{lon:.4f}_{start_utc.isoformat()}_{end_utc.isoformat()}"
         
-    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> WeatherResponse:
+    def get_weather(
+        self,
+        lat: float,
+        lon: float,
+        start_time: datetime,
+        end_time: datetime,
+        club: Optional[str] = None
+    ) -> Optional[WeatherResponse]:
         """Get weather data with caching."""
+        # Validate coordinates
+        if not (-90 <= lat <= 90):
+            raise ValueError(f"Invalid latitude: {lat}")
+        if not (-180 <= lon <= 180):
+            raise ValueError(f"Invalid longitude: {lon}")
+            
         # Validate inputs
         if not isinstance(start_time, datetime) or not start_time.tzinfo:
             raise ValueError("start_time must be timezone-aware")
@@ -40,16 +55,17 @@ class MockWeatherService(WeatherService):
             
         # Check cache
         cache_key = self._get_cache_key(lat, lon, start_time, end_time)
-        if cache_key in self.cache:
-            cached = self.cache[cache_key]
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
             if cached.expires > datetime.now(timezone.utc):
                 return cached
         
         # Get new data
-        response = super().get_weather(lat, lon, start_time, end_time)
+        response = self._fetch_forecasts(lat, lon, start_time, end_time)
         
         # Cache the response
-        self.cache[cache_key] = response
+        if response:
+            self._cache[cache_key] = response
         return response
         
     def get_block_size(self, hours_ahead: float) -> int:
@@ -114,6 +130,7 @@ class MockWeatherService(WeatherService):
         # Calculate block size based on forecast range
         hours_ahead = (end_utc - start_utc).total_seconds() / 3600
         block_size = self.get_block_size(hours_ahead)
+        block_duration = timedelta(hours=block_size)
         
         # Generate data at appropriate intervals
         data = []
@@ -145,15 +162,15 @@ class MockWeatherService(WeatherService):
             # Determine weather symbol
             is_daytime = 6 <= hour < 18
             if thunder_prob is not None and thunder_prob > 0:
-                symbol = f"{'lightrainandthunder' if precip_amount < 0.5 else 'rainandthunder'}"
+                weather_code = f"{'lightrainandthunder' if precip_amount < 0.5 else 'rainandthunder'}"
                 if is_daytime:
-                    symbol += "_day"
+                    weather_code += "_day"
                 else:
-                    symbol += "_night"
+                    weather_code += "_night"
             elif precip_amount > 0:
-                symbol = f"{'lightrain' if precip_amount < 0.5 else 'rain'}"
+                weather_code = f"{'lightrain' if precip_amount < 0.5 else 'rain'}"
             else:
-                symbol = "clearsky_day" if is_daytime else "clearsky_night"
+                weather_code = "clearsky_day" if is_daytime else "clearsky_night"
             
             data.append(WeatherData(
                 temperature=base_temp_seasonal + temp_variation,
@@ -161,13 +178,54 @@ class MockWeatherService(WeatherService):
                 precipitation_probability=precip_prob,
                 wind_speed=wind_speed,
                 wind_direction=wind_direction,
-                symbol=symbol,
+                weather_code=weather_code,
                 elaboration_time=current,
-                thunder_probability=thunder_prob
+                thunder_probability=thunder_prob,
+                block_duration=block_duration
             ))
-            current += timedelta(hours=block_size)
+            current += block_duration
             
-        return data
+        return WeatherResponse(
+            data=data,
+            expires=self.get_expiry_time()
+        )
+        
+    def _parse_response(self, response_data: Dict[str, Any], start_time: datetime, end_time: datetime, interval: int) -> Optional[WeatherResponse]:
+        """Parse raw API response into WeatherResponse object."""
+        if not response_data:
+            return None
+            
+        if isinstance(response_data, WeatherResponse):
+            return response_data
+            
+        if isinstance(response_data, list):
+            data = []
+            block_duration = timedelta(hours=interval)
+            current = start_time
+            
+            for item in response_data:
+                if isinstance(item, WeatherData):
+                    data.append(item)
+                else:
+                    data.append(WeatherData(
+                        temperature=item.get('temperature', 0.0),
+                        precipitation=item.get('precipitation', 0.0),
+                        precipitation_probability=item.get('precipitation_probability', 0.0),
+                        wind_speed=item.get('wind_speed', 0.0),
+                        wind_direction=item.get('wind_direction', 0.0),
+                        weather_code=item.get('weather_code', 'cloudy'),
+                        elaboration_time=current,
+                        thunder_probability=item.get('thunder_probability', 0.0),
+                        block_duration=block_duration
+                    ))
+                current += block_duration
+                
+            return WeatherResponse(
+                data=data,
+                expires=self.get_expiry_time()
+            )
+            
+        return None
 
 @pytest.fixture
 def mock_weather_service():
@@ -693,10 +751,10 @@ def test_get_weather_cache_operations(mock_weather_service):
     
     # Verify cache key generation
     cache_key = mock_weather_service._get_cache_key(60.2, 24.9, start_time, end_time)
-    assert cache_key in mock_weather_service.cache
+    assert cache_key in mock_weather_service._cache
     
     # Verify cache contents
-    cached_response = mock_weather_service.cache[cache_key]
+    cached_response = mock_weather_service._cache[cache_key]
     assert isinstance(cached_response, WeatherResponse)
     assert len(cached_response.data) == len(response1.data)
     assert cached_response.data[0].temperature == response1.data[0].temperature

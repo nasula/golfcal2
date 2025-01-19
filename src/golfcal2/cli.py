@@ -98,8 +98,8 @@ def create_parser() -> argparse.ArgumentParser:
     )
     weather_parser.add_argument(
         '--service',
-        choices=['met', 'portuguese', 'iberian'],
-        help='Weather service to use (met=MET.no for Nordic countries, portuguese=IPMA for Portugal, iberian=AEMET for Spain)'
+        choices=['met', 'portuguese', 'iberian', 'openmeteo'],
+        help='Weather service to use (met=MET.no for Nordic countries, portuguese=IPMA for Portugal, iberian=AEMET for Spain, openmeteo=Open-Meteo for worldwide coverage)'
     )
     weather_parser.add_argument(
         '--format',
@@ -136,8 +136,8 @@ def create_parser() -> argparse.ArgumentParser:
     )
     weather_cache_parser.add_argument(
         '--service',
-        choices=['met', 'portuguese', 'iberian'],
-        help='Filter by weather service (met=MET.no for Nordic countries, portuguese=IPMA for Portugal, iberian=AEMET for Spain)'
+        choices=['met', 'portuguese', 'iberian', 'openmeteo'],
+        help='Filter by weather service (met=MET.no for Nordic countries, portuguese=IPMA for Portugal, iberian=AEMET for Spain, openmeteo=Open-Meteo for worldwide coverage)'
     )
     weather_cache_parser.add_argument(
         '--location',
@@ -715,10 +715,7 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config: Config
                 
                 if args.format == 'json':
                     import json
-                    print(json.dumps({
-                        'data': [w.to_dict() for w in response.data],
-                        'expires': response.expires.isoformat() if response.expires else None
-                    }, indent=2, default=str))
+                    print(json.dumps(response.to_dict(), indent=2))
                 else:
                     print("\nWeather Forecast")
                     print("---------------")

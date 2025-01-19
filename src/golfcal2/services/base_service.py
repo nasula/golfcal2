@@ -124,7 +124,7 @@ class WeatherService(EnhancedLoggerMixin):
             )
             
             # Check cache for response
-            cached_response = self.cache.get_response(
+            cached = self.cache.get_response(
                 service_type=self.service_type,
                 latitude=lat,
                 longitude=lon,
@@ -132,14 +132,14 @@ class WeatherService(EnhancedLoggerMixin):
                 end_time=fetch_end_time
             )
             
-            if cached_response:
+            if cached and cached.get('response'):
                 self.info(
                     "Using cached response",
-                    location=cached_response['location'],
+                    location=cached['location'],
                     time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}",
                     interval=interval
                 )
-                return self._parse_response(cached_response['response'], base_time, fetch_end_time, interval)
+                return self._parse_response(cached['response'], base_time, fetch_end_time, interval)
             
             # If not in cache, fetch from API
             self.info(
@@ -163,7 +163,7 @@ class WeatherService(EnhancedLoggerMixin):
                 response_data=response_data,
                 forecast_start=base_time,
                 forecast_end=fetch_end_time,
-                expires=datetime.now(self.utc_tz) + timedelta(hours=1)
+                expires=self.get_expiry_time()
             )
             
             # Parse and return just the requested time range

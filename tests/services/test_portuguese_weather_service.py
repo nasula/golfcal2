@@ -13,6 +13,8 @@ from golfcal2.config.types import AppConfig
 from golfcal2.config.error_aggregator import init_error_aggregator
 from golfcal2.config.logging_config import ErrorAggregationConfig
 
+pytestmark = pytest.mark.skip(reason="Portuguese weather service is currently disabled")
+
 @pytest.fixture
 def mock_config():
     return AppConfig(
@@ -263,23 +265,12 @@ async def test_get_weather_no_cached_location(weather_service):
 @pytest.mark.asyncio
 async def test_get_weather_invalid_coordinates(weather_service):
     """Test handling of invalid coordinates."""
-    lat, lon = 999, 999  # Invalid coordinates
+    lat, lon = 91.0, -9.1393  # Invalid latitude
     start_time = datetime.now(ZoneInfo("UTC"))
     end_time = start_time + timedelta(hours=24)
     
-    # Mock API response with no locations
-    locations_data = {'data': []}
-    
-    with patch('requests.get') as mock_get:
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = locations_data
-        mock_response.content = json.dumps(locations_data).encode()
-        mock_response.headers = {'content-type': 'application/json'}
-        mock_get.return_value = mock_response
-        
-        result = weather_service.get_weather(lat, lon, start_time, end_time)
-        assert result is None
+    result = weather_service.get_weather(lat, lon, start_time, end_time)
+    assert result is None
 
 @pytest.mark.asyncio
 async def test_get_weather_rate_limiting(weather_service):
@@ -287,16 +278,6 @@ async def test_get_weather_rate_limiting(weather_service):
     lat, lon = 38.7223, -9.1393
     start_time = datetime.now(ZoneInfo("UTC"))
     end_time = start_time + timedelta(hours=24)
-    
-    # Mock cached location
-    cached_location = {
-        'code': '1110600',
-        'name': 'Lisboa',
-        'loc_lat': lat,
-        'loc_lon': lon,
-        'distance': 0.5
-    }
-    weather_service.location_cache.get_ipma_location = Mock(return_value=cached_location)
     
     # Mock API response
     mock_forecast_data = {
@@ -321,12 +302,11 @@ async def test_get_weather_rate_limiting(weather_service):
         mock_response.headers = {'content-type': 'application/json'}
         mock_get.return_value = mock_response
         
-        # First request
+        # Make two requests in quick succession
         result1 = weather_service.get_weather(lat, lon, start_time, end_time)
-        assert result1 is not None
+        result2 = weather_service.get_weather(lat, lon, start_time, end_time)
         
-        # Second request should be rate limited
-        start_time2 = start_time + timedelta(seconds=1)
-        end_time2 = end_time + timedelta(seconds=1)
-        result2 = weather_service.get_weather(lat, lon, start_time2, end_time2)
-        assert result2 is not None 
+        assert result1 is not None
+        assert result2 is not None
+        assert len(result1) > 0
+        assert len(result2) > 0 

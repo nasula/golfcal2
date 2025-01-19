@@ -37,6 +37,8 @@ class BaseAPI(LoggerMixin):
             club_details: Club configuration details
             membership: User's membership details
         """
+        super().__init__()  # Initialize LoggerMixin
+        
         init_start_time = time.time()
         self.base_url = base_url.rstrip("/")
         self.auth_service = auth_service

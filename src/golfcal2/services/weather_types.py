@@ -154,6 +154,37 @@ def get_weather_symbol(symbol_code: str) -> str:
     return emoji_map.get(symbol_code, '☁️')  # Default to cloudy if code not found
 
 @dataclass
+class Location:
+    """Location data container."""
+    id: str
+    name: str
+    latitude: float
+    longitude: float
+    altitude: Optional[float] = None
+    region: Optional[str] = None
+    country: Optional[str] = None
+    timezone: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        """Initialize optional fields after dataclass creation."""
+        self.metadata = self.metadata or {}
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert location data to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "altitude": self.altitude,
+            "region": self.region,
+            "country": self.country,
+            "timezone": self.timezone,
+            "metadata": self.metadata
+        }
+
+@dataclass
 class WeatherData:
     """Weather data container."""
     elaboration_time: datetime
@@ -198,11 +229,37 @@ class WeatherData:
             f")"
         )
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert weather data to dictionary for JSON serialization."""
+        return {
+            "time": self.elaboration_time.isoformat(),
+            "duration": str(self.block_duration),
+            "temperature": self.temperature,
+            "temperature_min": self.temperature_min,
+            "temperature_max": self.temperature_max,
+            "precipitation": self.precipitation,
+            "precipitation_probability": self.precipitation_probability,
+            "wind_speed": self.wind_speed,
+            "wind_direction": self.wind_direction,
+            "weather_code": self.weather_code,
+            "weather_description": self.weather_description,
+            "thunder_probability": self.thunder_probability,
+            "symbol_time_range": self.symbol_time_range,
+            "metadata": self.metadata
+        }
+
 @dataclass
 class WeatherResponse:
     """Weather response container with data and expiry time."""
     data: List[WeatherData]
     expires: datetime
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert weather response to dictionary for JSON serialization."""
+        return {
+            "data": [d.to_dict() for d in self.data],
+            "expires": self.expires.isoformat()
+        }
 
 class WeatherError(Exception):
     """Base class for weather service errors."""

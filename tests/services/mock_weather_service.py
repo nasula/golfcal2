@@ -146,15 +146,15 @@ class MockWeatherService(WeatherService):
             # Determine weather symbol
             is_daytime = 6 <= hour < 18
             if thunder_prob is not None and thunder_prob > 0:
-                symbol = f"{'lightrainandthunder' if precip_amount < 0.5 else 'rainandthunder'}"
+                weather_code = f"{'lightrainandthunder' if precip_amount < 0.5 else 'rainandthunder'}"
                 if is_daytime:
-                    symbol += "_day"
+                    weather_code += "_day"
                 else:
-                    symbol += "_night"
+                    weather_code += "_night"
             elif precip_amount > 0:
-                symbol = f"{'lightrain' if precip_amount < 0.5 else 'rain'}"
+                weather_code = f"{'lightrain' if precip_amount < 0.5 else 'rain'}"
             else:
-                symbol = "clearsky_day" if is_daytime else "clearsky_night"
+                weather_code = "clearsky_day" if is_daytime else "clearsky_night"
             
             data.append(WeatherData(
                 temperature=base_temp_seasonal + temp_variation,
@@ -162,9 +162,10 @@ class MockWeatherService(WeatherService):
                 precipitation_probability=precip_prob,
                 wind_speed=wind_speed,
                 wind_direction=wind_direction,
-                symbol=symbol,
+                weather_code=weather_code,
                 elaboration_time=current,
-                thunder_probability=thunder_prob
+                thunder_probability=thunder_prob,
+                block_duration=timedelta(hours=block_size)
             ))
             current += timedelta(hours=block_size)
             
