@@ -14,6 +14,8 @@ from golfcal2.utils.logging_utils import get_logger
 from golfcal2.config.logging import setup_logging
 from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
 from golfcal2.services import WeatherManager, CalendarService, ExternalEventService
+from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
+from golfcal2.models.user import User
 
 @dataclass
 class EventState:
@@ -81,19 +83,36 @@ def create_args():
     args.user = None  # Add required CLI args
     return args
 
-def get_next_event_time(calendar_service: CalendarService, service_state: ServiceState) -> tuple[Optional[datetime], Optional[str]]:
-    """Get the time of the next upcoming event across all users."""
-    next_event_time = None
-    next_event_uid = None
-    calendar_changed = False
+def get_next_event_time(calendar_service, service_state):
+    """Get the next event time from the calendar service.
     
-    try:
-        # Get all users from config
-        users = calendar_service.config.users.values()
+    Args:
+        calendar_service: The calendar service instance
+        service_state: The service state instance
         
-        # Check each user's calendar for upcoming events
-        for user in users:
-            calendar_path = calendar_service._get_calendar_path(user.name)
+    Returns:
+        Tuple of (next_event_time, next_event_uid) or (None, None) if no events
+    """
+    try:
+        # Convert timezone strings to ZoneInfo objects if needed
+        local_tz = calendar_service.local_tz
+        if isinstance(local_tz, str):
+            local_tz = ZoneInfo(local_tz)
+            
+        utc_tz = calendar_service.utc_tz
+        if isinstance(utc_tz, str):
+            utc_tz = ZoneInfo(utc_tz)
+            
+        now = datetime.now(local_tz)
+        
+        # Get next event time
+        next_event = None
+        next_event_uid = None
+        
+        # Process each user's calendar
+        for user_name, user in calendar_service.config.users.items():
+            # Get calendar path
+            calendar_path = calendar_service._get_calendar_path(user_name)
             if not calendar_path.exists():
                 continue
                 
@@ -103,38 +122,37 @@ def get_next_event_time(calendar_service: CalendarService, service_state: Servic
             if last_mtime and current_mtime <= last_mtime:
                 continue
                 
-            calendar_changed = True
+            # Update calendar mtime
             service_state.calendar_mtimes[str(calendar_path)] = current_mtime
             
             # Read and parse calendar
             with open(calendar_path, 'rb') as f:
-                cal = calendar_service.calendar_builder.parse_calendar(f.read())
-                for component in cal.walk('VEVENT'):
+                calendar = calendar_service.calendar_builder.parse_calendar(f.read())
+                for component in calendar.walk('VEVENT'):
                     event_start = component.get('dtstart').dt
                     if isinstance(event_start, datetime):
                         # Convert to local timezone if needed
                         if event_start.tzinfo is None:
-                            event_start = event_start.replace(tzinfo=calendar_service.utc_tz)
-                        event_start = event_start.astimezone(calendar_service.local_tz)
+                            event_start = event_start.replace(tzinfo=utc_tz)
+                        event_start = event_start.astimezone(local_tz)
                         
                         # Check if event is in the future and needs processing
-                        now = datetime.now(calendar_service.local_tz)
                         event_uid = str(component.get('uid'))
                         if event_start > now and service_state.needs_processing(event_uid, event_start, now):
-                            if next_event_time is None or event_start < next_event_time:
-                                next_event_time = event_start
+                            if next_event is None or event_start < next_event:
+                                next_event = event_start
                                 next_event_uid = event_uid
-                                
+                    
+        # Store next event in service state
+        service_state.next_event = next_event
+        service_state.next_event_uid = next_event_uid
+        
+        return next_event, next_event_uid
+        
     except Exception as e:
         logger = get_logger(__name__)
         logger.error(f"Error getting next event time: {e}", exc_info=True)
-    
-    # Only update state if calendars changed or we found a new next event
-    if calendar_changed or next_event_time != service_state.next_event:
-        service_state.next_event = next_event_time
-        service_state.next_event_uid = next_event_uid
-        
-    return next_event_time, next_event_uid
+        return None, None
 
 def get_next_processing_time(now: datetime, next_event: datetime = None) -> datetime:
     """Calculate the next processing time based on current time and next event."""
@@ -179,18 +197,37 @@ def main():
         
         logger.info("Starting GolfCal2 service")
         
+        # Store original user configs
+        user_configs = config.users.copy()
+        
+        # Convert user configs to User objects for CalendarService
+        config.users = {
+            name: User.from_config(name, user_config) if not isinstance(user_config, User) else user_config
+            for name, user_config in config.users.items()
+        }
+        
         # Initialize services and state
         calendar_service = CalendarService(config, dev_mode=args.dev)
         service_state = ServiceState()
         
+        # Get timezone from config
+        timezone = config.global_config.get('timezone', 'UTC')
+        timezone_info = ZoneInfo(timezone)
+        
         while True:
             try:
                 logger.info("Starting calendar processing")
+                
+                # Temporarily restore original user configs for ReservationService
+                original_users = config.users
+                config.users = user_configs
                 process_command(args, logger, config, is_dev=False)
+                config.users = original_users
+                
                 logger.info("Calendar processing completed successfully")
                 
                 # Mark current event as processed if applicable
-                now = datetime.now(ZoneInfo(config.timezone))
+                now = datetime.now(timezone_info)
                 if service_state.next_event_uid:
                     service_state.mark_processed(
                         service_state.next_event_uid,
@@ -205,7 +242,7 @@ def main():
                 logger.error(f"Error in calendar processing: {e}", exc_info=True)
             
             # Get current time and next event time
-            now = datetime.now(ZoneInfo(config.timezone))
+            now = datetime.now(timezone_info)
             next_event, next_event_uid = get_next_event_time(calendar_service, service_state)
             
             # Calculate time until next processing

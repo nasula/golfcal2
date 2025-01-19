@@ -18,6 +18,7 @@ from golfcal2.config.settings import AppConfig
 from golfcal2.services.auth_service import AuthService
 from golfcal2.services.weather_service import WeatherManager
 from golfcal2.models.mixins import ReservationHandlerMixin, CalendarHandlerMixin
+from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
 from golfcal2.exceptions import (
     APIError,
     APITimeoutError,

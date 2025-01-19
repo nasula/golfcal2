@@ -217,11 +217,18 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, config: Ap
             try:
                 logger.info(f"Processing calendar for user {username}")
                 
+                # Get the User object (already converted in main)
+                user = config.users[username]
+                if not isinstance(user, User):
+                    # Convert if not already a User object (e.g. when called directly from CLI)
+                    user = User.from_config(username, user)
+                    config.users[username] = user
+                
                 reservation_service = ReservationService(username, config)
                 calendar_service = CalendarService(config, dev_mode=is_dev)
                 
                 # Get reservations
-                calendar, reservations = reservation_service.process_user(username, config.users[username])
+                calendar, reservations = reservation_service.process_user(username, user)
                 if not reservations:
                     logger.info(f"No reservations found for user {username}")
                 else:
@@ -229,7 +236,6 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, config: Ap
                 
                 # Process calendar regardless of reservations
                 if not args.dry_run:
-                    user = User.from_config(username, config.users[username])
                     calendar_service.process_user_reservations(user, reservations)
                     logger.info(f"Calendar processed successfully for user {username}")
                 

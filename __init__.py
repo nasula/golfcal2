@@ -4,7 +4,7 @@ Golf calendar application.
 
 __version__ = '0.6.0'
 
-from golfcal2.exceptions import (
+from .exceptions import (
     GolfCalError,
     APIError,
     APITimeoutError,
@@ -33,11 +33,3 @@ __all__ = [
     'CalendarWriteError',
     'CalendarEventError'
 ]
-
-def verify_package():
-    """Verify that we're running under the correct package."""
-    import sys
-    module = sys.modules[__name__]
-    if module.__package__ != 'golfcal2':
-        raise ImportError(f"Package is running as '{module.__package__}' instead of 'golfcal2'")
-    return True

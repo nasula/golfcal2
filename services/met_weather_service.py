@@ -25,10 +25,6 @@ class MetWeatherService(WeatherService):
     def __init__(self, timezone: ZoneInfo, utc: ZoneInfo, config: Dict[str, Any]):
         """Initialize the service."""
         super().__init__(timezone, utc)
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-        os.makedirs(data_dir, exist_ok=True)
-        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
-        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
         self.config = config
         self.set_log_context(service="met_weather")
 
