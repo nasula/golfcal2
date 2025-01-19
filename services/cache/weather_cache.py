@@ -4,8 +4,9 @@ import sqlite3
 import json
 from datetime import datetime
 from typing import Optional, Dict, Any
+from dataclasses import asdict
 
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherResponse, WeatherData
 from golfcal2.utils.logging_utils import LoggerMixin
 
 class WeatherResponseCache(LoggerMixin):
@@ -17,8 +18,10 @@ class WeatherResponseCache(LoggerMixin):
         Args:
             db_path: Path to SQLite database file
         """
+        super().__init__()  # Initialize LoggerMixin
         self.db_path = db_path
         self._init_db()
+        self.set_log_context(component="weather_cache")
     
     def _init_db(self) -> None:
         """Initialize database tables."""
@@ -31,6 +34,82 @@ class WeatherResponseCache(LoggerMixin):
                 )
             """)
             conn.commit()
+    
+    def _make_cache_key(
+        self,
+        service_type: str,
+        latitude: float,
+        longitude: float,
+        start_time: datetime,
+        end_time: datetime
+    ) -> str:
+        """Create a cache key from the parameters.
+        
+        Args:
+            service_type: Type of weather service
+            latitude: Location latitude
+            longitude: Location longitude
+            start_time: Start time of forecast
+            end_time: End time of forecast
+            
+        Returns:
+            Cache key string
+        """
+        return f"{service_type}:{latitude:.4f}:{longitude:.4f}:{start_time.isoformat()}:{end_time.isoformat()}"
+    
+    def get_response(
+        self,
+        service_type: str,
+        latitude: float,
+        longitude: float,
+        start_time: datetime,
+        end_time: datetime
+    ) -> Optional[Dict[str, Any]]:
+        """Get cached weather response.
+        
+        Args:
+            service_type: Type of weather service
+            latitude: Location latitude
+            longitude: Location longitude
+            start_time: Start time of forecast
+            end_time: End time of forecast
+            
+        Returns:
+            Dictionary containing cached response data if found and not expired
+        """
+        key = self._make_cache_key(service_type, latitude, longitude, start_time, end_time)
+        response = self.get(key)
+        if response:
+            return {'response': response.data}
+        return None
+    
+    def store_response(
+        self,
+        service_type: str,
+        latitude: float,
+        longitude: float,
+        response_data: Dict[str, Any],
+        forecast_start: datetime,
+        forecast_end: datetime,
+        expires: datetime
+    ) -> None:
+        """Store weather response in cache.
+        
+        Args:
+            service_type: Type of weather service
+            latitude: Location latitude
+            longitude: Location longitude
+            response_data: Weather response data to cache
+            forecast_start: Start time of forecast
+            forecast_end: End time of forecast
+            expires: Expiration time for cached data
+        """
+        key = self._make_cache_key(service_type, latitude, longitude, forecast_start, forecast_end)
+        response = WeatherResponse(
+            data=response_data,
+            expires=expires
+        )
+        self.set(key, response)
     
     def get(self, key: str) -> Optional[WeatherResponse]:
         """Get cached response.
@@ -54,7 +133,11 @@ class WeatherResponseCache(LoggerMixin):
                     expires_dt = datetime.fromisoformat(expires)
                     
                     if expires_dt > datetime.now():
-                        return WeatherResponse(**json.loads(data))
+                        data_dict = json.loads(data)
+                        return WeatherResponse(
+                            data=data_dict['data'],
+                            expires=expires_dt
+                        )
                     else:
                         # Clean up expired entry
                         conn.execute("DELETE FROM weather_cache WHERE key = ?", (key,))
@@ -75,11 +158,15 @@ class WeatherResponseCache(LoggerMixin):
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
+                data_dict = {
+                    'data': response.data,
+                    'expires': response.expires.isoformat()
+                }
                 conn.execute(
                     "INSERT OR REPLACE INTO weather_cache (key, data, expires) VALUES (?, ?, ?)",
                     (
                         key,
-                        json.dumps(response.dict()),
+                        json.dumps(data_dict),
                         response.expires.isoformat()
                     )
                 )

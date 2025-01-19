@@ -19,6 +19,24 @@ from golfcal2.services.open_meteo_service import OpenMeteoService
 from golfcal2.services.cache.weather_cache import WeatherResponseCache
 from golfcal2.services.cache.location_cache import WeatherLocationCache
 
+# Module-level timezone caching
+DEFAULT_UTC = ZoneInfo('UTC')
+_DEFAULT_LOCAL_TZ = None
+_TZ_CACHE: Dict[str, ZoneInfo] = {}
+
+def get_timezone(tz_name: str) -> ZoneInfo:
+    """Get cached timezone instance.
+    
+    Args:
+        tz_name: Name of the timezone
+        
+    Returns:
+        Cached ZoneInfo instance
+    """
+    if tz_name not in _TZ_CACHE:
+        _TZ_CACHE[tz_name] = ZoneInfo(tz_name)
+    return _TZ_CACHE[tz_name]
+
 class WeatherManager:
     """Manager for weather services."""
 
@@ -30,33 +48,64 @@ class WeatherManager:
             utc: UTC timezone
             config: Service configuration
         """
-        self.timezone = timezone
-        self.utc = utc
+        global _DEFAULT_LOCAL_TZ
+        
+        # Use cached timezones
+        self.utc = DEFAULT_UTC
+        if isinstance(timezone, str):
+            self.timezone = get_timezone(timezone)
+        else:
+            self.timezone = timezone
+            
+        if _DEFAULT_LOCAL_TZ is None:
+            _DEFAULT_LOCAL_TZ = self.timezone
+            
         self.config = config
+        self._services = {}
         
         # Initialize shared caches
         data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
         os.makedirs(data_dir, exist_ok=True)
         self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
         self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
+
+    def _create_service(self, service_name: str) -> WeatherService:
+        """Create a weather service instance.
         
-        # Initialize core services
-        self.services = {
-            'met': MetWeatherService(timezone, utc, config),
-            'open_meteo': OpenMeteoService(timezone, utc, config),
-        }
-        
-        # Add OpenWeather if API key exists
-        if config.get('api_keys', {}).get('weather', {}).get('openweather'):
-            self.services['openweather'] = OpenWeatherService(timezone, utc, config)
-        
-        # Set default service
-        self.default_service = self.services.get('met')  # MET.no as default (no API key needed)
-        
-        # Attach caches to services after initialization
-        for service in self.services.values():
+        Args:
+            service_name: Name of the service to create
+            
+        Returns:
+            Initialized weather service
+        """
+        service = None
+        if service_name == 'met':
+            service = MetWeatherService(self.timezone, self.utc, self.config)
+        elif service_name == 'open_meteo':
+            service = OpenMeteoService(self.timezone, self.utc, self.config)
+        elif service_name == 'openweather' and self.config.get('api_keys', {}).get('weather', {}).get('openweather'):
+            service = OpenWeatherService(self.timezone, self.utc, self.config)
+            
+        if service:
             service.cache = self.cache
             service.location_cache = self.location_cache
+            
+        return service
+
+    def _get_service(self, service_name: str) -> Optional[WeatherService]:
+        """Get or create a weather service instance.
+        
+        Args:
+            service_name: Name of the service to get
+            
+        Returns:
+            Weather service instance or None if service cannot be created
+        """
+        if service_name not in self._services:
+            service = self._create_service(service_name)
+            if service:
+                self._services[service_name] = service
+        return self._services.get(service_name)
 
     def get_weather(
         self,
@@ -83,10 +132,10 @@ class WeatherManager:
         
         # Check MET.no (Nordic region)
         if 55 <= lat <= 72 and 4 <= lon <= 32:  # Nordic region
-            responsible_service = next((s for s in self.services.values() if isinstance(s, MetWeatherService)), None)
+            responsible_service = self._get_service('met')
         # Use OpenMeteo for all other regions (including Iberia)
         else:
-            responsible_service = next((s for s in self.services.values() if isinstance(s, OpenMeteoService)), None)
+            responsible_service = self._get_service('open_meteo')
 
         if responsible_service:
             try:
@@ -103,7 +152,7 @@ class WeatherManager:
             except WeatherError as e:
                 aggregate_error(str(e), "weather_manager", e.__traceback__)
                 # Try OpenWeather as fallback
-                fallback = next((s for s in self.services.values() if isinstance(s, OpenWeatherService)), None)
+                fallback = self._get_service('openweather')
                 if fallback:
                     try:
                         response = fallback.get_weather(lat, lon, start_time, end_time, club)
