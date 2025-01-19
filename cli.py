@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import os
 from pathlib import Path
 
-from golfcal2.config.settings import load_config, AppConfig
+from golfcal2.config.settings import ConfigurationManager
 from golfcal2.utils.logging_utils import get_logger
 from golfcal2.config.logging import setup_logging
 from golfcal2.services.calendar_service import CalendarService
@@ -200,7 +200,7 @@ def create_parser() -> argparse.ArgumentParser:
     
     return parser
 
-def process_command(args: argparse.Namespace, logger: logging.Logger, config: AppConfig, is_dev: bool = False) -> int:
+def process_command(args: argparse.Namespace, logger: logging.Logger, config: ConfigurationManager, is_dev: bool = False) -> int:
     """Process golf calendar."""
     try:
         # Get list of users to process
@@ -218,12 +218,12 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, config: Ap
                 logger.info(f"Processing calendar for user {username}")
                 
                 # Get the User object (already converted in main)
-                user = config.users[username]
-                if not isinstance(user, User):
-                    # Convert if not already a User object (e.g. when called directly from CLI)
-                    user = User.from_config(username, user)
-                    config.users[username] = user
+                user_config = config.users.get(username)
+                if not user_config:
+                    logger.warning(f"User {username} not found in configuration")
+                    continue
                 
+                user = User(username, user_config)
                 reservation_service = ReservationService(username, config)
                 calendar_service = CalendarService(config, dev_mode=is_dev)
                 
@@ -250,7 +250,7 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, config: Ap
         logger.error(f"Failed to process calendars: {e}", exc_info=True)
         return 1
 
-def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppConfig) -> int:
+def list_command(args: argparse.Namespace, logger: logging.Logger, config: ConfigurationManager) -> int:
     """List golf courses or reservations."""
     try:
         if not args.list_type:
@@ -259,8 +259,20 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
             
         # Initialize weather manager if needed for reservations
         weather_manager = None
+        config_with_tz = None
         if args.list_type == 'reservations':
-            weather_manager = WeatherManager(ZoneInfo(config.timezone), ZoneInfo('UTC'), config)
+            config_manager = ConfigurationManager()
+            weather_manager = WeatherManager(
+                config_manager.get_timezone(config.global_config['timezone']),
+                config_manager.get_timezone('UTC'),
+                config.global_config
+            )
+            
+            # Create config object with timezone attributes
+            config_with_tz = config
+            config_with_tz.local_tz = config_manager.get_timezone(config.global_config['timezone'])
+            config_with_tz.utc_tz = config_manager.get_timezone('UTC')
+            config_with_tz.timezone = config_with_tz.local_tz
         
         if args.list_type == 'weather-cache':
             logger.info("Listing weather cache contents")
@@ -394,7 +406,7 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
                     init_error_aggregator(logging_config.error_aggregation)
                     
                     # Get external events
-                    calendar_service = CalendarService(config, dev_mode=args.dev)
+                    calendar_service = CalendarService(config_with_tz, weather_manager, dev_mode=args.dev)
                     external_events = calendar_service.external_event_service.process_events(username, dev_mode=args.dev)
                     
                     if not reservations and not external_events:
@@ -503,7 +515,7 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
         logger.error(f"Failed to list {args.list_type}: {e}", exc_info=True)
         return 1
 
-def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppConfig) -> int:
+def check_command(args: argparse.Namespace, logger: logging.Logger, config: ConfigurationManager) -> int:
     """Check configuration and system health."""
     try:
         # Get list of users to check
@@ -519,9 +531,9 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppC
         
         # Check directory permissions
         dirs_to_check = [
-            ('ICS', config.get('ics_dir', 'ics')),
-            ('Logs', config.get('logs_dir', 'logs')),
-            ('Config', config.get('config_dir', 'config'))
+            ('ICS', config.global_config.get('ics_dir', 'ics')),
+            ('Logs', config.global_config.get('logs_dir', 'logs')),
+            ('Config', config.global_config.get('config_dir', 'config'))
         ]
         
         for dir_name, dir_path in dirs_to_check:
@@ -551,7 +563,7 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppC
         
         # Check weather cache
         try:
-            cache = WeatherResponseCache(os.path.join(config.get('data_dir', 'data'), 'weather_cache.db'))
+            cache = WeatherResponseCache(os.path.join(config.global_config.get('data_dir', 'data'), 'weather_cache.db'))
             if not cache.check_health():
                 logger.error("Weather cache health check failed")
                 success = False
@@ -605,7 +617,11 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: AppC
                     logger.info(f"Performing full configuration check for user {username}")
                     
                     # Check weather services
-                    weather_manager = WeatherManager(ZoneInfo(config.timezone), ZoneInfo('UTC'), config)
+                    weather_manager = WeatherManager(
+                        config.get_timezone(config.global_config['timezone']),
+                        config.get_timezone('UTC'),
+                        config.global_config
+                    )
                     for service_name, service in weather_manager.services.items():
                         try:
                             service.check_availability()
@@ -668,7 +684,7 @@ def cleanup_weather_cache(args):
         return 1
     return 0
 
-def get_command(args: argparse.Namespace, logger: logging.Logger, config: AppConfig) -> int:
+def get_command(args: argparse.Namespace, logger: logging.Logger, config: ConfigurationManager) -> int:
     """Get various types of data."""
     try:
         if not args.get_type:
@@ -679,11 +695,16 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config: AppCon
             logger.info(f"Getting weather data for location ({args.lat}, {args.lon})")
             
             # Initialize weather manager
-            weather_manager = WeatherManager(ZoneInfo(config.timezone), ZoneInfo('UTC'), config)
+            config_manager = ConfigurationManager()
+            weather_manager = WeatherManager(
+                config_manager.get_timezone(config.global_config['timezone']),
+                config_manager.get_timezone('UTC'),
+                config.global_config
+            )
             
             # Get weather data for the next 24 hours
             from datetime import datetime, timedelta
-            now = datetime.now(ZoneInfo(config.timezone))
+            now = datetime.now(config_manager.get_timezone(config.global_config['timezone']))
             end = now + timedelta(hours=24)
             
             try:
@@ -729,33 +750,48 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config: AppCon
         return 1
 
 def main() -> int:
-    """Main entry point."""
+    """Main entry point for CLI."""
     try:
         # Parse arguments
         parser = create_parser()
         args = parser.parse_args()
         
-        # Load configuration
-        config = load_config()
+        # Initialize configuration
+        config_manager = ConfigurationManager()
+        config = config_manager.load_config(dev_mode=args.dev, verbose=args.verbose)
         
         # Set up logging
-        setup_logging(config, dev_mode=args.dev, verbose=args.verbose, log_file=args.log_file)
+        setup_logging(config.global_config, dev_mode=args.dev, verbose=args.verbose, log_file=args.log_file)
         logger = get_logger(__name__)
         
         # Initialize error aggregator
         error_config = ErrorAggregationConfig(
             enabled=True,
-            report_interval=config.get('ERROR_REPORT_INTERVAL', 3600),
-            error_threshold=config.get('ERROR_THRESHOLD', 5),
-            time_threshold=config.get('ERROR_TIME_THRESHOLD', 300),  # 5 minutes
+            report_interval=config.global_config.get('ERROR_REPORT_INTERVAL', 3600),
+            error_threshold=config.global_config.get('ERROR_THRESHOLD', 5),
+            time_threshold=config.global_config.get('ERROR_TIME_THRESHOLD', 300),  # 5 minutes
             categorize_by=['service', 'error_type']  # Categorize errors by service and type
         )
         init_error_aggregator(error_config)
         
         # Initialize services
-        weather_manager = WeatherManager(ZoneInfo(config.timezone), ZoneInfo('UTC'), config)
-        calendar_service = CalendarService(config)
-        external_event_service = ExternalEventService(weather_manager, config)
+        weather_manager = WeatherManager(
+            config_manager.get_timezone(config.global_config['timezone']),
+            config_manager.get_timezone('UTC'),
+            config.global_config
+        )
+        
+        # Create config object with timezone attributes
+        config_with_tz = config
+        config_with_tz.local_tz = config_manager.get_timezone(config.global_config['timezone'])
+        config_with_tz.utc_tz = config_manager.get_timezone('UTC')
+        config_with_tz.timezone = config_with_tz.local_tz
+        
+        calendar_service = CalendarService(
+            config_with_tz,
+            weather_manager,
+            dev_mode=args.dev
+        )
         
         # Execute command
         if not args.command:

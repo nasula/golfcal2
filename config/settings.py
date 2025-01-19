@@ -6,6 +6,8 @@ import yaml
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
+from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.config.validation import validate_config, ConfigValidationError
@@ -16,6 +18,70 @@ from golfcal2.config.types import (
 from golfcal2.config.logging import setup_logging
 from golfcal2.config.env import EnvConfig
 from golfcal2.config.utils import deep_merge, resolve_path, validate_api_key, get_config_paths
+
+class ConfigurationManager:
+    """Centralized configuration management with caching."""
+    
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ConfigurationManager, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+            
+        self._config: Optional[AppConfig] = None
+        self._config_path: Optional[Path] = None
+        self._initialized = True
+        self._timezone_cache = {}
+    
+    @property
+    def config(self) -> AppConfig:
+        """Get the current configuration, loading it if necessary."""
+        if self._config is None:
+            raise RuntimeError("Configuration not loaded. Call load_config() first.")
+        return self._config
+    
+    @lru_cache(maxsize=32)
+    def get_timezone(self, tz_name: str) -> ZoneInfo:
+        """Get cached timezone instance."""
+        return ZoneInfo(tz_name)
+    
+    def load_config(self, config_dir: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig:
+        """Load configuration with caching."""
+        if self._config is not None:
+            return self._config
+            
+        self._config_path = _get_config_path(config_dir)
+        
+        # Load configurations
+        global_config = _load_global_config(self._config_path)
+        users_config = _load_users_config(self._config_path)
+        clubs_config = _load_clubs_config(self._config_path)
+        
+        # Create AppConfig instance
+        self._config = AppConfig(
+            global_config=global_config,
+            users=users_config,
+            clubs=clubs_config,
+            api_keys=global_config.get('api_keys', {'weather': {'aemet': '', 'openweather': ''}}),
+            timezone=global_config.get('timezone', 'UTC'),
+            ics_dir=global_config.get('ics_dir', 'ics'),
+            config_dir=str(self._config_path),
+            log_level=global_config.get('log_level', 'WARNING'),
+            log_file=global_config.get('log_file')
+        )
+        
+        return self._config
+    
+    def reload_config(self) -> AppConfig:
+        """Force reload configuration."""
+        self._config = None
+        return self.load_config()
 
 def _get_config_path(config_dir: Optional[str] = None) -> Path:
     """Get configuration directory path."""
@@ -69,55 +135,6 @@ def _load_clubs_config(config_path: Path) -> Dict[str, ClubConfig]:
         return json.load(f)
 
 def load_config(config_dir: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig:
-    """Load configuration from JSON and YAML files.
-    
-    Args:
-        config_dir: Optional path to configuration directory
-        dev_mode: Whether to run in development mode
-        verbose: Whether to enable verbose logging
-        
-    Returns:
-        AppConfig object
-        
-    Raises:
-        ConfigValidationError: If configuration is invalid
-        FileNotFoundError: If required configuration files are not found
-        json.JSONDecodeError: If configuration files contain invalid JSON
-    """
-    try:
-        # Get configuration directory
-        config_path = _get_config_path(config_dir)
-        
-        # Load configurations
-        global_config = _load_global_config(config_path)
-        users = _load_users_config(config_path)
-        clubs = _load_clubs_config(config_path)
-        
-        # Create configuration object
-        config = AppConfig(
-            users=users,
-            clubs=clubs,
-            global_config=global_config,
-            api_keys=global_config.get('api_keys', {'weather': {'aemet': '', 'openweather': ''}}),
-            timezone=global_config.get('timezone', 'Europe/Helsinki'),
-            ics_dir=global_config.get('ics_dir', 'ics'),
-            config_dir=str(config_path),
-            log_level=global_config.get('log_level', 'WARNING'),
-            log_file=global_config.get('log_file')
-        )
-
-        # Validate configuration
-        validate_config(config)
-        
-        # Set up logging based on mode
-        # Removed setup_logging call since it's handled by the application entry point
-
-        return config
-        
-    except (FileNotFoundError, json.JSONDecodeError, ConfigValidationError):
-        raise
-    except Exception as e:
-        raise ConfigValidationError(
-            f"Unexpected error during configuration loading: {str(e)}",
-            {"error_type": type(e).__name__}
-        ) from e 
+    """Load configuration using the ConfigurationManager."""
+    config_manager = ConfigurationManager()
+    return config_manager.load_config(config_dir, dev_mode, verbose) 
