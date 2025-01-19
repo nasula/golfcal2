@@ -9,11 +9,11 @@ from typing import Dict, Any, List, Optional
 from zoneinfo import ZoneInfo
 import math
 
-from golfcal2.services.weather_service import WeatherService
+from golfcal2.services.base_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse, Location
 from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_location_cache import WeatherLocationCache
-from golfcal2.utils.logging_utils import log_execution
+from golfcal2.utils.logging_utils import log_execution, get_logger
 from golfcal2.config.settings import load_config
 from golfcal2.exceptions import (
     WeatherError,
@@ -51,28 +51,18 @@ class IberianWeatherService(WeatherService):
     """Service for handling weather data for Iberian region."""
 
     BASE_URL = "https://opendata.aemet.es/opendata/api"
-    USER_AGENT = "GolfCal/2.0 github.com/jahonen/golfcal (jarkko.ahonen@iki.fi)"
+    USER_AGENT = "GolfCal/2.0 github.com/jahonen/golfcal2 (jarkko.ahonen@iki.fi)"
     
     # AEMET forecast ranges
     HOURLY_RANGE = 48  # 48 hours of hourly forecasts
     SIX_HOURLY_RANGE = 96  # Up to 96 hours (4 days) for 6-hourly forecasts
     DAILY_RANGE = 168  # Up to 168 hours (7 days) for daily forecasts
     
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
-        """Initialize service.
-        
-        Args:
-            local_tz: Local timezone
-            utc_tz: UTC timezone
-            config: Application configuration
-        """
-        super().__init__(local_tz, utc_tz)
+    def __init__(self, timezone: ZoneInfo, utc: ZoneInfo, config: Dict[str, Any]):
+        """Initialize service."""
+        super().__init__(timezone, utc)
         self.config = config
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-        os.makedirs(data_dir, exist_ok=True)
-        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
-        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
-        self.set_log_context(service="IberianWeatherService")
+        self.set_log_context(service="iberian_weather")
         
         # Rate limiting
         self._last_api_call = None
@@ -83,9 +73,6 @@ class IberianWeatherService(WeatherService):
             'Accept': 'application/json',
             'api_key': config.global_config['api_keys']['weather']['aemet']
         }
-        
-        # Don't initialize municipality cache here - it will be initialized on demand
-        # only when needed for locations within coverage area
 
     def _init_municipality_cache(self):
         """Initialize municipality cache with data from AEMET API."""

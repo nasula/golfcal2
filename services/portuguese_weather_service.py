@@ -15,12 +15,12 @@ import math
 from datetime import timezone
 import logging
 
-from golfcal2.services.weather_service import WeatherService
+from golfcal2.services.base_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse
 from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_schemas import PORTUGUESE_SCHEMA
 from golfcal2.services.weather_location_cache import WeatherLocationCache
-from golfcal2.utils.logging_utils import log_execution, EnhancedLoggerMixin
+from golfcal2.utils.logging_utils import log_execution, EnhancedLoggerMixin, get_logger
 from golfcal2.exceptions import (
     WeatherError,
     APIError,
@@ -49,15 +49,11 @@ class PortugueseWeatherService(WeatherService):
     BASE_URL = "https://api.ipma.pt/open-data"
     USER_AGENT = "GolfCal/2.0 github.com/jahonen/golfcal2 (jarkko.ahonen@iki.fi)"
     
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
-        """Initialize service.
-        
-        Args:
-            local_tz: Local timezone
-            utc_tz: UTC timezone
-            config: Application configuration
-        """
-        super().__init__(local_tz, utc_tz)
+    def __init__(self, timezone: ZoneInfo, utc: ZoneInfo, config: Dict[str, Any]):
+        """Initialize service."""
+        super().__init__(timezone, utc)
+        self.config = config
+        self.set_log_context(service="portuguese_weather")
         
         # Configure logger
         for handler in self.logger.handlers:
@@ -85,8 +81,6 @@ class PortugueseWeatherService(WeatherService):
             self._last_api_call = None
             self._min_call_interval = timedelta(seconds=1)
             self._last_request_time = 0
-            
-            self.set_log_context(service="PortugueseWeatherService")
 
     def get_block_size(self, hours_ahead: float) -> int:
         """Get the block size in hours for grouping forecasts.

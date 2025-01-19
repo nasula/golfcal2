@@ -1,10 +1,13 @@
 """Base class for weather services."""
 
+import os
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from zoneinfo import ZoneInfo
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin, log_execution
 from golfcal2.services.weather_types import WeatherData, WeatherResponse
+from golfcal2.services.weather_database import WeatherResponseCache
+from golfcal2.services.weather_location_cache import WeatherLocationCache
 
 class WeatherService(EnhancedLoggerMixin):
     """Base class for weather services."""
@@ -19,6 +22,12 @@ class WeatherService(EnhancedLoggerMixin):
             utc_tz = ZoneInfo(utc_tz)
         self.local_tz = local_tz
         self.utc_tz = utc_tz
+        
+        # Initialize caches
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
     
     def get_expiry_time(self) -> datetime:
         """Get expiry time for current weather data.

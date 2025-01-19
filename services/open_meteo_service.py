@@ -4,6 +4,7 @@ Source: Open-Meteo
 API Documentation: https://open-meteo.com/en/docs
 """
 
+import logging
 import os
 import time
 from datetime import datetime, timedelta
@@ -14,11 +15,11 @@ import requests_cache
 import pandas as pd
 from retry_requests import retry
 
-from golfcal2.services.weather_service import WeatherService
+from golfcal2.services.base_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse
 from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_location_cache import WeatherLocationCache
-from golfcal2.utils.logging_utils import log_execution, EnhancedLoggerMixin
+from golfcal2.utils.logging_utils import log_execution, EnhancedLoggerMixin, get_logger
 from golfcal2.exceptions import (
     WeatherError,
     APIError,
@@ -38,15 +39,11 @@ class OpenMeteoService(WeatherService):
     Data is updated hourly.
     """
 
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: AppConfig):
-        """Initialize service.
-        
-        Args:
-            local_tz: Local timezone
-            utc_tz: UTC timezone
-            config: Application configuration
-        """
-        super().__init__(local_tz, utc_tz)
+    def __init__(self, timezone: ZoneInfo, utc: ZoneInfo, config: Dict[str, Any]):
+        """Initialize service."""
+        super().__init__(timezone, utc)
+        self.config = config
+        self.set_log_context(service="open_meteo")
         
         # Configure logger
         for handler in self.logger.handlers:
@@ -75,8 +72,6 @@ class OpenMeteoService(WeatherService):
             
             # Service type for caching
             self.service_type = 'open_meteo'
-            
-            self.set_log_context(service="OpenMeteoService")
 
     def get_block_size(self, hours_ahead: float) -> int:
         """Get the block size in hours for grouping forecasts.
