@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 import os
+from functools import lru_cache
 
 from golfcal2.exceptions import (
     WeatherError,
@@ -16,16 +17,12 @@ from golfcal2.services.weather_types import WeatherData, WeatherResponse
 from golfcal2.services.open_weather_service import OpenWeatherService
 from golfcal2.services.met_weather_service import MetWeatherService
 from golfcal2.services.open_meteo_service import OpenMeteoService
-from golfcal2.services.cache.weather_cache import WeatherResponseCache
+from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.cache.location_cache import WeatherLocationCache
 
-# Module-level timezone caching
-DEFAULT_UTC = ZoneInfo('UTC')
-_DEFAULT_LOCAL_TZ = None
-_TZ_CACHE: Dict[str, ZoneInfo] = {}
-
+@lru_cache(maxsize=32)
 def get_timezone(tz_name: str) -> ZoneInfo:
-    """Get cached timezone instance.
+    """Get cached timezone instance using Python's lru_cache.
     
     Args:
         tz_name: Name of the timezone
@@ -33,12 +30,10 @@ def get_timezone(tz_name: str) -> ZoneInfo:
     Returns:
         Cached ZoneInfo instance
     """
-    if tz_name not in _TZ_CACHE:
-        _TZ_CACHE[tz_name] = ZoneInfo(tz_name)
-    return _TZ_CACHE[tz_name]
+    return ZoneInfo(tz_name)
 
 class WeatherManager:
-    """Manager for weather services."""
+    """Manager for weather services with lazy loading."""
 
     def __init__(self, timezone: ZoneInfo, utc: ZoneInfo, config: Dict[str, Any]):
         """Initialize weather manager.
@@ -48,44 +43,62 @@ class WeatherManager:
             utc: UTC timezone
             config: Service configuration
         """
-        global _DEFAULT_LOCAL_TZ
-        
         # Use cached timezones
-        self.utc = DEFAULT_UTC
-        if isinstance(timezone, str):
-            self.timezone = get_timezone(timezone)
-        else:
-            self.timezone = timezone
-            
-        if _DEFAULT_LOCAL_TZ is None:
-            _DEFAULT_LOCAL_TZ = self.timezone
-            
-        self.config = config
+        self.utc = get_timezone('UTC')
+        self.timezone = get_timezone(timezone) if isinstance(timezone, str) else timezone
+        
+        # Store minimal config needed for service creation
+        self._service_config = {
+            'timezone': self.timezone,
+            'api_keys': config.get('api_keys', {}),
+            'weather': config.get('weather', {})
+        }
+        
+        # Initialize shared caches lazily
+        self._cache = None
+        self._location_cache = None
         self._services = {}
         
-        # Initialize shared caches
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-        os.makedirs(data_dir, exist_ok=True)
-        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
-        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
+        # Cache paths
+        self._data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+        os.makedirs(self._data_dir, exist_ok=True)
 
-    def _create_service(self, service_name: str) -> WeatherService:
-        """Create a weather service instance.
+    @property
+    def cache(self) -> WeatherResponseCache:
+        """Lazy initialization of weather response cache."""
+        if self._cache is None:
+            self._cache = WeatherResponseCache(os.path.join(self._data_dir, 'weather_cache.db'))
+        return self._cache
+
+    @property
+    def location_cache(self) -> WeatherLocationCache:
+        """Lazy initialization of location cache."""
+        if self._location_cache is None:
+            self._location_cache = WeatherLocationCache(os.path.join(self._data_dir, 'weather_locations.db'))
+        return self._location_cache
+
+    def _create_service(self, service_name: str) -> Optional[WeatherService]:
+        """Create a weather service instance only when needed.
         
         Args:
             service_name: Name of the service to create
             
         Returns:
-            Initialized weather service
+            Initialized weather service or None if service cannot be created
         """
-        service = None
-        if service_name == 'met':
-            service = MetWeatherService(self.timezone, self.utc, self.config)
-        elif service_name == 'open_meteo':
-            service = OpenMeteoService(self.timezone, self.utc, self.config)
-        elif service_name == 'openweather' and self.config.get('api_keys', {}).get('weather', {}).get('openweather'):
-            service = OpenWeatherService(self.timezone, self.utc, self.config)
+        service_map = {
+            'met': lambda: MetWeatherService(self.timezone, self.utc, self._service_config),
+            'open_meteo': lambda: OpenMeteoService(self.timezone, self.utc, self._service_config),
+            'openweather': lambda: OpenWeatherService(self.timezone, self.utc, self._service_config) 
+                if self._service_config.get('api_keys', {}).get('weather', {}).get('openweather') 
+                else None
+        }
+        
+        service_creator = service_map.get(service_name)
+        if not service_creator:
+            return None
             
+        service = service_creator()
         if service:
             service.cache = self.cache
             service.location_cache = self.location_cache
@@ -93,7 +106,7 @@ class WeatherManager:
         return service
 
     def _get_service(self, service_name: str) -> Optional[WeatherService]:
-        """Get or create a weather service instance.
+        """Get or create a weather service instance lazily.
         
         Args:
             service_name: Name of the service to get

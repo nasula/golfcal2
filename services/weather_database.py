@@ -199,4 +199,16 @@ class WeatherResponseCache:
             return []
         except Exception as e:
             self.logger.error("Error listing cache entries: %s", str(e))
-            return [] 
+            return []
+    
+    def clear(self) -> None:
+        """Clear all cached responses."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM weather_responses")
+                conn.commit()
+                self.logger.debug("Weather cache cleared")
+        except sqlite3.Error as e:
+            self.logger.error("Failed to clear weather cache: %s", str(e))
+            raise 

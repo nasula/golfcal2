@@ -267,15 +267,18 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
             import json
             from datetime import datetime, timedelta
             import sqlite3
+            import os
             
-            # Initialize cache
-            cache = WeatherResponseCache('weather_cache.db')
+            # Initialize cache with proper path
+            data_dir = os.path.join(os.path.dirname(__file__), 'data')
+            os.makedirs(data_dir, exist_ok=True)
+            cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
             
             # Handle clear command
             if args.clear:
                 try:
-                    deleted = cache.cleanup_expired()
-                    logger.info(f"Removed {deleted} expired weather cache entries")
+                    cache.clear()  # Use the clear method instead of cleanup_expired
+                    logger.info("Weather cache cleared")
                     return 0
                 except sqlite3.Error as e:
                     logger.error(f"Database error while clearing weather cache: {e}")
@@ -286,7 +289,25 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
             
             # List cache contents
             try:
-                entries = cache.list_entries()
+                with sqlite3.connect(cache.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.execute("""
+                        SELECT service_type, latitude, longitude, forecast_start, forecast_end, expires 
+                        FROM weather_responses 
+                        WHERE expires > ? 
+                        ORDER BY expires DESC
+                    """, (datetime.utcnow().isoformat(),))
+                    
+                    entries = []
+                    for row in cursor:
+                        entries.append({
+                            'service': row['service_type'],
+                            'location': f"{row['latitude']}, {row['longitude']}",
+                            'start_time': row['forecast_start'],
+                            'end_time': row['forecast_end'],
+                            'expires': row['expires']
+                        })
+                
                 if not entries:
                     logger.info("Weather cache is empty")
                     return 0
@@ -299,17 +320,17 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: AppCo
                     for entry in entries:
                         print(f"\nService: {entry['service']}")
                         print(f"Location: {entry['location']}")
-                        print(f"Start Time: {entry['start_time']}")
-                        print(f"End Time: {entry['end_time']}")
+                        print(f"Time Range: {entry['start_time']} to {entry['end_time']}")
                         print(f"Expires: {entry['expires']}")
-                        print("-" * 60)
+                        print("-" * 40)
+                
                 return 0
                 
             except sqlite3.Error as e:
                 logger.error(f"Database error while listing weather cache: {e}")
                 return 1
             except Exception as e:
-                logger.error(f"Failed to list weather cache: {e}")
+                logger.error(f"Failed to list weather-cache: {e}")
                 return 1
 
         elif args.list_type == 'courses':
