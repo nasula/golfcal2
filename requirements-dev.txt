@@ -11,7 +11,7 @@ isort>=5.13.2
 pre-commit>=3.6.0
 flake8-docstrings>=1.7.0
 types-requests>=2.31.0
-types-pandas>=1.5.3
+pandas-stubs>=2.1.1.230928
 
 # Documentation
 sphinx>=7.0.0
