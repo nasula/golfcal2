@@ -3,6 +3,22 @@ config/config.yaml
 config/users.json
 config/clubs.json
 
+# Additional config files that might contain secrets
+config/*.yaml
+config/*.yml
+config/*.env
+config/*.key
+config/*.pem
+config/*.json
+.env
+*.env
+api_keys.yaml
+credentials.json
+*_token
+*_key
+*_secret
+*_password
+
 # Generated files
 ics/*.ics
 data/

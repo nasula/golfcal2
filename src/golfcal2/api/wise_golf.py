@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from urllib.parse import urljoin
 import time
+import requests
 
 from golfcal2.api.base_api import BaseAPI, APIError, APIResponseError
 from golfcal2.services.auth_service import AuthService
@@ -45,12 +46,29 @@ class WiseGolfAPI(BaseAPI, RequestHandlerMixin):
             WiseGolfAuthError: If authentication fails
         """
         try:
+            # Debug logging
+            self.logger.debug("WiseGolfAPI initialization:")
+            self.logger.debug(f"Base URL: {base_url}")
+            self.logger.debug(f"Club details: {club_details}")
+            self.logger.debug(f"Membership auth details: {membership.get('auth_details', {})}")
+            
             super().__init__(base_url, auth_service, club_details, membership)
+            
+            # Debug logging after initialization
+            self.logger.debug("WiseGolfAPI headers after initialization:")
+            self.logger.debug(f"Headers: {dict(self.session.headers)}")
+            self.logger.debug(f"Final base URL: {self.base_url}")
+            
             self.session.headers.update({
                 "x-session-type": "wisegolf",
                 "Accept": "application/json, text/plain, */*"
             })
+            
+            # Debug logging after header update
+            self.logger.debug("WiseGolfAPI final headers:")
+            self.logger.debug(f"Final headers: {dict(self.session.headers)}")
         except Exception as e:
+            self.logger.error(f"Failed to initialize WiseGolf API: {str(e)}")
             raise WiseGolfAuthError(f"Failed to initialize WiseGolf API: {str(e)}")
     
     def get_reservations(self) -> List[Dict[str, Any]]:
@@ -113,6 +131,11 @@ class WiseGolf0API(BaseAPI, RequestHandlerMixin):
         # Extract auth details from membership
         self.auth_details = getattr(membership, 'auth_details', {})
         
+        # Get the REST URL for player details
+        self.rest_url = club_details.get('restUrl')
+        if not self.rest_url:
+            self.logger.error("No restUrl found in club_details")
+        
         self.session.headers.update({
             "Accept": "application/json, text/plain, */*",
             "Accept-Encoding": "gzip, deflate, br",
@@ -138,9 +161,11 @@ class WiseGolf0API(BaseAPI, RequestHandlerMixin):
                 "reservations": "getusergolfreservations"
             }
             
-            # Add token to params if present
-            if 'token' in self.auth_details:
-                params['token'] = self.auth_details['token']
+            # Add cookie value to headers
+            if 'cookie_value' in self.auth_details:
+                self.session.headers.update({
+                    'Cookie': f"wisenetwork_session={self.auth_details['cookie_value']}"
+                })
             
             # Make the request to the shop URL path
             endpoint = "/pd/simulaattorit/18/simulaattorit/"
@@ -180,13 +205,21 @@ class WiseGolf0API(BaseAPI, RequestHandlerMixin):
             if order_id:
                 params["orderid"] = order_id
             
-            # Use the REST URL path for player details
-            endpoint = "/api/1.0/reservations/"
-            response = self._make_request("GET", endpoint, params=params)
+            # Use the REST URL for player details
+            if not self.rest_url:
+                return {"reservationsGolfPlayers": []}
+            
+            # Make request to REST API
+            response = requests.get(
+                self.rest_url + "/reservations/",
+                params=params,
+                headers=self.session.headers,
+                timeout=self.DEFAULT_TIMEOUT
+            )
             
             # Extract relevant data from response
-            if isinstance(response, dict) and 'reservationsGolfPlayers' in response:
-                return response
+            if response.ok and isinstance(response.json(), dict):
+                return response.json()
             
             return {"reservationsGolfPlayers": []}
             
@@ -201,11 +234,23 @@ class WiseGolf0API(BaseAPI, RequestHandlerMixin):
         
         # Log request details
         self.logger.debug("Making WiseGolf0 player details request:")
-        self.logger.debug(f"URL: {self.base_url}")
+        self.logger.debug(f"URL: {self.rest_url}")
         self.logger.debug(f"Headers: {dict(self.session.headers)}")
         
-        endpoint = f"/api/1.0/reservations/{reservation_id}/players"
-        self.logger.debug(f"WiseGolf0API: Making request to {self.base_url}{endpoint}")
-        response = self._make_request("GET", endpoint)
-        self.logger.debug(f"WiseGolf0API: Got response: {response}")
-        return response
+        if not self.rest_url:
+            return []
+        
+        endpoint = f"/reservations/{reservation_id}/players"
+        self.logger.debug(f"WiseGolf0API: Making request to {self.rest_url}{endpoint}")
+        
+        # Make request to REST API
+        response = requests.get(
+            self.rest_url + endpoint,
+            headers=self.session.headers,
+            timeout=self.DEFAULT_TIMEOUT
+        )
+        
+        self.logger.debug(f"WiseGolf0API: Got response: {response.text}")
+        if response.ok:
+            return response.json()
+        return []

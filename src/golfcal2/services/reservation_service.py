@@ -135,21 +135,21 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         Returns:
             Tuple of (calendar, list of reservations)
         """
-        # Create calendar and empty reservations list outside error handler
-        cal = self.build_base_calendar(user_name, self.local_tz)
-        all_reservations = []
-        
         with handle_errors(
             APIError,
             "reservation",
             f"process user {user_name}",
-            lambda: (cal, all_reservations)  # Return current state instead of empty
+            lambda: (Calendar(), [])  # Fallback to empty calendar and reservations
         ):
             self.debug(f"Processing reservations for user {user_name}")
             self.debug(f"User config: {user_config}")
             
             user = User.from_config(user_name, user_config)
             self.debug(f"Created user with {len(user.memberships)} memberships")
+            all_reservations = []
+            
+            # Create calendar
+            cal = self.build_base_calendar(user_name, self.local_tz)
             
             # Calculate cutoff time (24 hours ago)
             now = datetime.now(self.local_tz)
@@ -157,7 +157,12 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             self.debug(f"Using cutoff time: {cutoff_time}")
             
             for membership in user.memberships:
-                try:
+                with handle_errors(
+                    APIError,
+                    "reservation",
+                    f"process membership {membership.club} for user {user_name}",
+                    lambda: None
+                ):
                     self.debug(f"Processing membership {membership.club} for user {user_name}")
                     self.debug(f"Membership details: {membership.__dict__}")
                     
@@ -190,7 +195,12 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                     self.debug(f"Found {len(raw_reservations)} raw reservations for {club.name}")
                     
                     for raw_reservation in raw_reservations:
-                        try:
+                        with handle_errors(
+                            APIError,
+                            "reservation",
+                            f"process reservation for {club.name}",
+                            lambda: None
+                        ):
                             if club_details["type"] == "wisegolf":
                                 self._process_wisegolf_reservation(
                                     raw_reservation, club, user, membership,
@@ -219,29 +229,13 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                                 )
                                 aggregate_error(str(error), "reservation", None)
                                 continue
-                        except Exception as e:
-                            error = APIError(
-                                f"Failed to process reservation: {str(e)}",
-                                ErrorCode.PROCESSING_ERROR,
-                                {"club": club.name, "user": user_name}
-                            )
-                            aggregate_error(str(error), "reservation", None)
-                            continue
-                except Exception as e:
-                    error = APIError(
-                        f"Failed to process membership: {str(e)}",
-                        ErrorCode.PROCESSING_ERROR,
-                        {"club": membership.club, "user": user_name}
-                    )
-                    aggregate_error(str(error), "reservation", None)
-                    continue
             
             # Sort reservations by start time
             all_reservations.sort(key=lambda r: r.start_time)
             self.debug(f"Returning {len(all_reservations)} reservations for user {user_name}")
             
-        # Return both calendar and reservations
-        return cal, all_reservations
+            # Return both calendar and reservations
+            return cal, all_reservations
 
     def _process_wisegolf_reservation(
         self,
