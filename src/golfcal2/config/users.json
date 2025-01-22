@@ -1,0 +1,122 @@
+{
+  "Jarkko": {
+    "email": "jarkko@example.com",
+    "phone": "+358123456789",
+    "memberships": [
+      {
+        "club": "SHG",
+        "id": 2961,
+        "auth_details": {
+          "token": "IB1XBhZpdHHoipUhWofCyYPnPuoZNbnFqd9S86DKsY8,-JyBpBTuWGl-NXFkzQ7WQIp1KcMmOfZL8wgHwZk5CiECNn",
+          "appauth": "BZSEuePVm5624Tyf"
+        },
+        "duration": { "hours": 4, "minutes": 30 }
+      },
+      {
+        "club": "Vantaankoski",
+        "id": 710,
+        "auth_details": {
+          "cookie_value": "NJo3bmQKFR7lnuq1uBQv0jZELWmKnQxHSpL8GfRG0B6m1se77m7n%2Cg3dgUK6q8Aa3HAMUqCzimexL4wbwm-bCBIpVm"
+        },
+        "duration": { "hours": 2, "minutes": 0 },
+        "reminder_time_minutes": -60
+      },
+      {
+        "club": "PGC",
+        "id": 33046,
+        "auth_details": {
+          "cookie_value": "FB97678E02A524DDD872CF0B24F3EE49",
+          "X-Auth-Token": "b3e36785009ba6c288bf91529a76f18b"
+        },
+        "headers": {
+          "Accept": "application/json, text/plain, */*",
+          "Cookie": "NGLOCALE=fi; JSESSIONID=FB97678E02A524DDD872CF0B24F3EE49",
+          "X-Auth-Token": "b3e36785009ba6c288bf91529a76f18b"
+        },
+        "duration": { "hours": 4, "minutes": 30 }
+      },
+      {
+        "club": "teetime",
+        "id": 33046,
+        "auth_details": {
+          "token": "2003b6c9c32010095aafc9196fbe10d6b9a7ddd2",
+          "cookie": "023455cdf4e5ad5ccb94e2c5bf60bf26a"
+        },
+        "duration": { "hours": 4, "minutes": 30 }
+      }
+    ],
+    "past_events_to_include": 0
+  },
+  "Nana": {
+    "email": "nana@example.com",
+    "phone": "+358987654321",
+    "memberships": [
+      {
+        "club": "SHG",
+        "id": 3586,
+        "auth_details": {
+          "token": "hmevbU0JEICEmfvE7LaTbDvvrNPdRapCmbyGhj-oBP3HjeCndZ,gS1JsDcVIQf43zbX6En9ntF0KN8EYm8HY7shcpM",
+          "appauth": "BZSEuePVm5624Tyf"
+        },
+        "duration": { "hours": 4, "minutes": 30 }
+      },
+      {
+        "club": "Vantaankoski",
+        "id": 1050,
+        "auth_details": {
+          "cookie_value": "aQVs1M1u%2CkItR2go0bIrr9Nb6dOX-H2Uws7oIT3tOSNL7b8g7iMIDP8Ftod3ILyiguePonnZ0dMyNwvteck-ocNqLt"
+        },
+        "duration": { "hours": 2, "minutes": 0 },
+        "reminder_time_minutes": -60
+      },
+      {
+        "club": "teetime",
+        "id": 33046,
+        "auth_details": {
+          "token": "d12132e5cdcf8c452db8f285b2eb9f03e5d8f2e5",
+          "cookie": "08ec20bcc46c2db96c20ce29df53b7278"
+        },
+        "duration": { "hours": 4, "minutes": 30 }
+      }
+    ],
+    "past_events_to_include": 0
+  },
+  "Seven": {
+    "memberships": [
+      {
+        "club": "PGC",
+        "id": 3770,
+        "auth_details": {
+          "cookie_value": "1d7124a8c5e801435fe7410e38a27814",
+          "X-Auth-Token": "1d7124a8c5e801435fe7410e38a27814"
+        },
+        "headers": {
+          "Accept": "application/json, text/plain, */*",
+          "Cookie": "NGLOCALE=fi; JSESSIONID=6BA89850E3AC7F2B034C8734EF54A0DB",
+          "X-Auth-Token": "1d7124a8c5e801435fe7410e38a27814"
+        },
+        "duration": { "hours": 4, "minutes": 30 }
+      },
+      {
+        "club": "SHG",
+        "id": 2961,
+        "auth_details": {
+          "token": "4Ja2TDRjB,N8EXaaeLmEYtzlcPwdaR6co1,y8IkXKge03cP-jHQhHPIWPX3qTpU6k42IePvwF6yPnnaTiCIldFwmZ2",
+          "appauth": "BZSEuePVm5624Tyf"
+        },
+        "duration": { "hours": 4, "minutes": 30 }
+      },
+      {
+        "club": "teetime",
+        "id": 33046,
+        "auth_details": {
+          "token": "3b2b618d24b427fc91ce0df7eeefcf92f403b66c",
+          "cookie": "064ad607c133d26fe766f33e681e65564"
+        },
+        "duration": { "hours": 4, "minutes": 30 }
+      }
+    ],
+    "past_events_to_include": 0,
+    "ics_file_path": "/home/jahonen/golfcal/scripts/ics/Seven_golf_reservations.ics"
+  }
+} 

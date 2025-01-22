@@ -1,0 +1,41 @@
+# Global configuration parameters
+timezone: "Europe/Helsinki"
+
+# Directory paths
+directories:
+  ics: "ics"
+  config: "config"
+  logs: "logs"
+
+# ICS file paths (override default naming)
+ics_files:
+  Seven: "ics/Seven_golf_reservations.ics"
+  Jarkko: "ics/Jarkko_golf_reservations.ics"
+  Nana: "ics/Nana_golf_reservations.ics"
+
+# API Keys
+api_keys:
+  weather:
+    # Spanish Meteorological Agency (AEMET)
+    # Get your key from: https://opendata.aemet.es/centrodedescargas/inicio
+    aemet: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqYXJra29haG9uZW5AaWNsb3VkLmNvbSIsImp0aSI6IjEyYTVjNzJjLWU1MWEtNDEzNi1hZDhjLTFiMzAwOTMxNGNlMCIsImlzcyI6IkFFTUVUIiwiaWF0IjoxNzM0OTU5MDI3LCJ1c2VySWQiOiIxMmE1YzcyYy1lNTFhLTQxMzYtYWQ4Yy0xYjMwMDkzMTRjZTAiLCJyb2xlIjoiIn0.0TiIQojEVD0VBJqHj8zMSPjQsZXHA3QOZKXyfwD5j7Q"
+    
+    # OpenWeather API (Mediterranean region)
+    # Default key is provided, but you can override it here
+    openweather: "92577a95d8e413ac11ed1c1d54b23e60"  # Default key, can be changed
+    
+    # Other weather services (MET.no, IPMA) don't require API keys
+
+# Logging configuration
+logging:
+  dev_level: "DEBUG"
+  verbose_level: "INFO"
+  default_level: "WARNING"
+
+# Default durations for clubs if not specified in club config
+default_durations:
+  regular: { "hours": 4, "minutes": 30 }
+  short: { "hours": 2, "minutes": 0 }
+
+# Default reminder times
+default_reminder_minutes: -60 
