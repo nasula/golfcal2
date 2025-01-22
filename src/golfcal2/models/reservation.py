@@ -256,8 +256,7 @@ class Reservation(LoggerMixin):
         # Filter forecasts to only include those that overlap with event time range
         filtered_data = []
         for forecast in normalized_data:
-            forecast_end = forecast.elaboration_time + forecast.block_duration
-            if forecast.elaboration_time < self.end_time and forecast_end > self.start_time:
+            if forecast.elaboration_time < self.end_time:
                 filtered_data.append(forecast)
         
         self.debug(
@@ -271,13 +270,11 @@ class Reservation(LoggerMixin):
         
         formatted_lines = []
         for forecast in filtered_data:
-            # Format time string based on block duration
-            interval_hours = forecast.block_duration.total_seconds() / 3600
-            if interval_hours == 1:
-                time_str = forecast.elaboration_time.strftime('%H:%M')
+            # Format time string based on symbol_time_range or just use the elaboration time
+            if forecast.symbol_time_range:
+                time_str = forecast.symbol_time_range
             else:
-                end_time = forecast.elaboration_time + forecast.block_duration
-                time_str = f"{forecast.elaboration_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
+                time_str = forecast.elaboration_time.strftime('%H:%M')
             
             # Get weather symbol
             symbol = get_weather_symbol(forecast.symbol)
@@ -299,7 +296,7 @@ class Reservation(LoggerMixin):
             self.debug(
                 "Formatted forecast line",
                 time=forecast.elaboration_time.isoformat(),
-                block_duration_hours=interval_hours,
+                symbol_time_range=forecast.symbol_time_range,
                 temperature=forecast.temperature,
                 wind_speed=forecast.wind_speed,
                 symbol=forecast.symbol,

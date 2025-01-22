@@ -1,4 +1,6 @@
-from api.crm.base import BaseCRMImplementation
+import requests
+from typing import List, Dict, Any
+from golfcal2.api.crm.base import BaseCRMImplementation
 
 class NewCRMImplementation(BaseCRMImplementation):
     def authenticate(self) -> None:

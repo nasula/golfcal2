@@ -125,23 +125,23 @@ class AppConfig:
         # Get workspace directory
         workspace_dir = Path(self.config_dir).parent
         
-        # Then check global config
+        # Check both global and user configs for the path
+        user_path: Optional[str] = None
+        
+        # Check global config first
         if self.global_config and 'ics_files' in self.global_config:
             user_path = self.global_config['ics_files'].get(user_name)
-            if user_path:
-                # If path is relative, make it relative to workspace
-                if not os.path.isabs(user_path):
-                    return str(workspace_dir / user_path)
-                return user_path
         
-        # Finally check user config
-        if user_name in self.users:
+        # If not found, check user config
+        if not user_path and user_name in self.users:
             user_config = self.users[user_name]
-            if 'ics_file_path' in user_config:
-                user_path = user_config['ics_file_path']
-                # If path is relative, make it relative to workspace
-                if not os.path.isabs(user_path):
-                    return str(workspace_dir / user_path)
-                return user_path
+            user_path = user_config.get('ics_file_path')
         
-        return None 
+        # Process the path if found
+        if user_path is None or not isinstance(user_path, str):
+            return None
+            
+        if not os.path.isabs(user_path):
+            return str(workspace_dir / user_path)
+            
+        return user_path 

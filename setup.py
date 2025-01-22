@@ -5,6 +5,7 @@ setup(
     version="0.1.0",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
+    package_data={"golfcal2": ["py.typed"]},
     install_requires=[
         'openmeteo-requests>=1.1.0',
         'requests-cache>=1.1.0',

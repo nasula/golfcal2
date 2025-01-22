@@ -2,38 +2,50 @@
 
 import os
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from zoneinfo import ZoneInfo
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin, log_execution
-from golfcal2.services.weather_types import WeatherData, WeatherResponse
+from golfcal2.services.weather_types import WeatherData, WeatherResponse, WeatherCode
 from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_location_cache import WeatherLocationCache
 
 class WeatherService(EnhancedLoggerMixin):
     """Base class for weather services."""
     
-    def __init__(self, local_tz, utc_tz):
-        """Initialize service."""
+    service_type: str = "base"  # Should be overridden by subclasses
+    HOURLY_RANGE: int = 48  # Default hourly forecast range in hours
+    SIX_HOURLY_RANGE: int = 240  # Default 6-hourly forecast range in hours
+    
+    def __init__(self, local_tz: Union[str, ZoneInfo], utc_tz: Union[str, ZoneInfo]) -> None:
+        """Initialize service.
+        
+        Args:
+            local_tz: Local timezone as string or ZoneInfo
+            utc_tz: UTC timezone as string or ZoneInfo
+        """
         super().__init__()
         # Ensure we have proper ZoneInfo objects
         if isinstance(local_tz, str):
             local_tz = ZoneInfo(local_tz)
         if isinstance(utc_tz, str):
             utc_tz = ZoneInfo(utc_tz)
-        self.local_tz = local_tz
-        self.utc_tz = utc_tz
+        self.local_tz: ZoneInfo = local_tz
+        self.utc_tz: ZoneInfo = utc_tz
         
         # Initialize caches
         data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
         os.makedirs(data_dir, exist_ok=True)
-        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
-        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
+        self.cache: WeatherResponseCache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+        self.location_cache: WeatherLocationCache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
     
     def get_expiry_time(self) -> datetime:
         """Get expiry time for current weather data.
         
         Each service should implement this based on their update schedule.
         Default implementation is 1 hour from now.
+        
+        Returns:
+            datetime: Expiry time in UTC
         """
         return datetime.now(self.utc_tz) + timedelta(hours=1)
     
@@ -46,7 +58,18 @@ class WeatherService(EnhancedLoggerMixin):
         end_time: datetime,
         club: Optional[str] = None
     ) -> Optional[WeatherResponse]:
-        """Get weather data for a location."""
+        """Get weather data for a location.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            start_time: Start time for forecast
+            end_time: End time for forecast
+            club: Optional club identifier for caching
+            
+        Returns:
+            Optional[WeatherResponse]: Weather data if available
+        """
         try:
             # Validate input
             if not (-90 <= lat <= 90):
@@ -102,76 +125,11 @@ class WeatherService(EnhancedLoggerMixin):
         end_time: datetime,
         club: Optional[str] = None
     ) -> Optional[WeatherResponse]:
-        """Get weather data from service."""
-        try:
-            # Calculate time range for fetching data
-            now = datetime.now(self.utc_tz)
-            hours_ahead = (end_time - now).total_seconds() / 3600
-            interval = self.get_block_size(hours_ahead)
-            
-            # Align start and end times to block boundaries
-            base_time = start_time.replace(minute=0, second=0, microsecond=0)
-            fetch_end_time = end_time.replace(minute=0, second=0, microsecond=0)
-            if end_time.minute > 0 or end_time.second > 0:
-                fetch_end_time += timedelta(hours=1)
-            
-            self.debug(
-                "Using forecast interval",
-                hours_ahead=hours_ahead,
-                interval=interval,
-                aligned_start=base_time.isoformat(),
-                aligned_end=fetch_end_time.isoformat()
-            )
-            
-            # Check cache for response
-            cached = self.cache.get_response(
-                service_type=self.service_type,
-                latitude=lat,
-                longitude=lon,
-                start_time=base_time,
-                end_time=fetch_end_time
-            )
-            
-            if cached and cached.get('response'):
-                self.info(
-                    "Using cached response",
-                    location=cached['location'],
-                    time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}",
-                    interval=interval
-                )
-                return self._parse_response(cached['response'], base_time, fetch_end_time, interval)
-            
-            # If not in cache, fetch from API
-            self.info(
-                "Fetching new data from API",
-                coords=(lat, lon),
-                time_range=f"{base_time.isoformat()} to {fetch_end_time.isoformat()}",
-                interval=interval
-            )
-            
-            # Fetch data for the full forecast range
-            response_data = self._fetch_forecasts(lat, lon, base_time, fetch_end_time)
-            if not response_data:
-                self.warning("No forecasts found for requested time range")
-                return None
-            
-            # Store the full response in cache
-            self.cache.store_response(
-                service_type=self.service_type,
-                latitude=lat,
-                longitude=lon,
-                response_data=response_data,
-                forecast_start=base_time,
-                forecast_end=fetch_end_time,
-                expires=self.get_expiry_time()
-            )
-            
-            # Parse and return just the requested time range
-            return self._parse_response(response_data, base_time, fetch_end_time, interval)
-            
-        except Exception as e:
-            self.error("Failed to get weather data", exc_info=e)
-            return None
+        """Internal method to get weather data.
+        
+        This should be implemented by subclasses.
+        """
+        raise NotImplementedError
 
     def _fetch_forecasts(
         self,
@@ -180,12 +138,11 @@ class WeatherService(EnhancedLoggerMixin):
         start_time: datetime,
         end_time: datetime
     ) -> Optional[Dict[str, Any]]:
-        """Fetch forecast data from service."""
-        try:
-            raise NotImplementedError("_fetch_forecasts must be implemented by subclass")
-        except Exception as e:
-            self.error("Failed to fetch forecasts", exc_info=e)
-            return None
+        """Fetch forecast data from the weather service.
+        
+        This should be implemented by subclasses.
+        """
+        raise NotImplementedError
 
     def _parse_response(
         self,
@@ -193,32 +150,46 @@ class WeatherService(EnhancedLoggerMixin):
         start_time: datetime,
         end_time: datetime,
         interval: int
-    ) -> Optional[WeatherResponse]:
-        """Parse raw API response into WeatherData objects."""
-        try:
-            raise NotImplementedError("_parse_response must be implemented by subclass")
-        except Exception as e:
-            self.error("Failed to parse response", exc_info=e)
-            return None
+    ) -> Optional[List[WeatherData]]:
+        """Parse response data into weather data objects.
+        
+        This should be implemented by subclasses.
+        
+        Args:
+            response_data: Raw response data from weather service
+            start_time: Start time for forecast
+            end_time: End time for forecast
+            interval: Time interval in hours
+            
+        Returns:
+            Optional[List[WeatherData]]: List of weather data objects if parsing successful
+        """
+        raise NotImplementedError
 
     def covers_location(self, lat: float, lon: float) -> bool:
-        """Check if service covers a location."""
-        try:
-            # Default implementation - override in subclass if needed
-            return True
-        except Exception as e:
-            self.error("Failed to check location coverage", exc_info=e)
-            return False
+        """Check if service covers given location.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            
+        Returns:
+            bool: True if location is covered
+        """
+        return True  # Default implementation covers all locations
 
     def get_block_size(self, hours_ahead: float) -> int:
-        """Get forecast block size in hours based on how far ahead we're looking."""
-        try:
-            if hours_ahead <= self.HOURLY_RANGE:
-                return 1  # Hourly forecasts for first 48 hours
-            elif hours_ahead <= self.SIX_HOURLY_RANGE:
-                return 6  # 6-hourly forecasts for next 2 days
-            else:
-                return 24  # Daily forecasts beyond that
-        except Exception as e:
-            self.error("Failed to get block size", exc_info=e)
-            return 1  # Default to hourly blocks 
+        """Get forecast block size in hours based on how far ahead we're looking.
+        
+        Args:
+            hours_ahead: Hours ahead from current time
+            
+        Returns:
+            int: Block size in hours (1 or 6)
+        """
+        if hours_ahead <= self.HOURLY_RANGE:
+            return 1
+        elif hours_ahead <= self.SIX_HOURLY_RANGE:
+            return 6
+        else:
+            return 6  # Default to 6-hour blocks for long-range forecasts 

@@ -1,9 +1,9 @@
 from typing import Dict, List, Any
 import requests
 
-from api.crm.base import BaseCRMImplementation
-from api.models.reservation import Reservation, Player, CourseInfo
-from models.mixins import APIAuthError
+from golfcal2.api.crm.base import BaseCRMImplementation
+from golfcal2.api.models.reservation import ReservationModel
+from golfcal2.models.mixins import APIError
 
 class TeeTimeImplementation(BaseCRMImplementation):
     """TeeTime CRM implementation"""
@@ -20,7 +20,7 @@ class TeeTimeImplementation(BaseCRMImplementation):
         # Verify credentials
         test_response = self._make_request('GET', '/api/verify')
         if not test_response.ok:
-            raise APIAuthError("Invalid API credentials")
+            raise APIError("Invalid API credentials")
     
     def _fetch_reservations(self) -> List[Dict[str, Any]]:
         response = self._make_request(
@@ -30,8 +30,8 @@ class TeeTimeImplementation(BaseCRMImplementation):
         )
         return response.json()['data']
     
-    def parse_reservation(self, raw_reservation: Dict[str, Any]) -> Reservation:
-        return Reservation(
+    def parse_reservation(self, raw_reservation: Dict[str, Any]) -> ReservationModel:
+        return ReservationModel(
             datetime_start=self._parse_datetime(
                 raw_reservation["teeTime"], 
                 fmt="%Y-%m-%d %H:%M:%S"

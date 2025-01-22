@@ -1,13 +1,13 @@
 """Weather service types and base classes."""
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union, Iterator
 from zoneinfo import ZoneInfo
 import requests
 
-from golfcal2.exceptions import ErrorCode
+from golfcal2.exceptions import ErrorCode, GolfCalError, handle_errors
 
 class WeatherCode(str, Enum):
     """Standard weather codes used across all weather services."""
@@ -74,6 +74,7 @@ class WeatherCode(str, Enum):
     SNOWSHOWERSANDTHUNDER_NIGHT = 'snowshowersandthunder_night'
     HEAVYSNOWSHOWERSANDTHUNDER_DAY = 'heavysnowshowersandthunder_day'
     HEAVYSNOWSHOWERSANDTHUNDER_NIGHT = 'heavysnowshowersandthunder_night'
+    UNKNOWN = 'unknown'
 
 def get_weather_symbol(symbol_code: str) -> str:
     """Map weather symbol codes to emojis."""
@@ -149,7 +150,8 @@ def get_weather_symbol(symbol_code: str) -> str:
         'snowshowersandthunder_day': '⛈️',
         'snowshowersandthunder_night': '⛈️',
         'heavysnowshowersandthunder_day': '⛈️',
-        'heavysnowshowersandthunder_night': '⛈️'
+        'heavysnowshowersandthunder_night': '⛈️',
+        'unknown': '☁️'
     }
     return emoji_map.get(symbol_code, '☁️')  # Default to cloudy if code not found
 
@@ -164,11 +166,7 @@ class Location:
     region: Optional[str] = None
     country: Optional[str] = None
     timezone: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-    def __post_init__(self):
-        """Initialize optional fields after dataclass creation."""
-        self.metadata = self.metadata or {}
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert location data to dictionary for JSON serialization."""
@@ -186,43 +184,65 @@ class Location:
 
 @dataclass
 class WeatherData:
-    """Weather data container."""
-    elaboration_time: datetime
-    block_duration: timedelta
-    temperature: float
-    precipitation: float
-    precipitation_probability: float
-    wind_speed: float
-    wind_direction: float
-    weather_code: str  # Internal weather code (e.g., 'clearsky_day')
+    """Container for weather data."""
+    elaboration_time: Optional[datetime] = None
+    temperature: Optional[Union[float, str]] = None
+    precipitation: Optional[Union[float, str]] = None
+    precipitation_probability: Optional[Union[float, str]] = None
+    wind_speed: Optional[Union[float, str]] = None
+    wind_direction: Optional[Union[float, str]] = None
+    weather_code: Optional[Union[WeatherCode, str]] = None
     weather_description: str = ''  # Human-readable description
-    thunder_probability: float = 0.0
+    thunder_probability: Optional[Union[float, str]] = None
     temperature_min: Optional[float] = None
     temperature_max: Optional[float] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
     symbol_time_range: Optional[str] = None  # For 6h blocks, shows time range like "18:00 to 24:00"
 
-    def __post_init__(self):
-        """Initialize optional fields after dataclass creation."""
-        self.temperature_min = self.temperature_min or self.temperature
-        self.temperature_max = self.temperature_max or self.temperature
-        self.metadata = self.metadata or {}
+    def __post_init__(self) -> None:
+        """Convert string values to appropriate types."""
+        self.temperature = self._convert_to_float(self.temperature)
+        self.precipitation = self._convert_to_float(self.precipitation)
+        self.precipitation_probability = self._convert_to_float(self.precipitation_probability)
+        self.wind_speed = self._convert_to_float(self.wind_speed)
+        self.wind_direction = self._convert_to_float(self.wind_direction, default=0.0)
+        if isinstance(self.weather_code, str):
+            try:
+                self.weather_code = WeatherCode[self.weather_code]
+            except (KeyError, ValueError):
+                self.weather_code = WeatherCode.UNKNOWN
+        self.thunder_probability = self._convert_to_float(self.thunder_probability)
+        
+        # Set min/max temperatures
+        self.temperature_min = self._convert_to_float(self.temperature_min, self.temperature)
+        self.temperature_max = self._convert_to_float(self.temperature_max, self.temperature)
+
+    def _convert_to_float(self, value: Optional[Union[float, str]], default: Optional[float] = None) -> Optional[float]:
+        """Convert string value to float."""
+        if value is None:
+            return default
+        if isinstance(value, float):
+            return value
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
 
     @property
     def symbol(self) -> str:
-        """Alias for weather_code to maintain backward compatibility."""
-        return self.weather_code
-
-    @symbol.setter
-    def symbol(self, value: str):
-        """Set weather_code through symbol property."""
-        self.weather_code = value
+        """Get the weather symbol."""
+        if isinstance(self.weather_code, str):
+            return self.weather_code
+        if self.weather_code is None:
+            return WeatherCode.UNKNOWN.value
+        return self.weather_code.value
 
     def __str__(self) -> str:
         """Return string representation of weather data."""
+        time_str = self.elaboration_time.isoformat() if self.elaboration_time else "unknown"
         return (
             f"WeatherData("
-            f"time={self.elaboration_time.isoformat()}, "
+            f"time={time_str}, "
             f"temp={self.temperature}°C, "
             f"precip={self.precipitation}mm, "
             f"wind={self.wind_speed}m/s@{self.wind_direction}°"
@@ -230,53 +250,142 @@ class WeatherData:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert weather data to dictionary for JSON serialization."""
+        """Convert to dictionary."""
         return {
-            "time": self.elaboration_time.isoformat(),
-            "duration": str(self.block_duration),
-            "temperature": self.temperature,
-            "temperature_min": self.temperature_min,
-            "temperature_max": self.temperature_max,
-            "precipitation": self.precipitation,
-            "precipitation_probability": self.precipitation_probability,
-            "wind_speed": self.wind_speed,
-            "wind_direction": self.wind_direction,
-            "weather_code": self.weather_code,
-            "weather_description": self.weather_description,
-            "thunder_probability": self.thunder_probability,
-            "symbol_time_range": self.symbol_time_range,
-            "metadata": self.metadata
+            'elaboration_time': self.elaboration_time.isoformat() if self.elaboration_time else None,
+            'temperature': self.temperature,
+            'precipitation': self.precipitation,
+            'precipitation_probability': self.precipitation_probability,
+            'wind_speed': self.wind_speed,
+            'wind_direction': self.wind_direction,
+            'weather_code': self.weather_code.value if isinstance(self.weather_code, WeatherCode) else self.weather_code,
+            'weather_description': self.weather_description,
+            'thunder_probability': self.thunder_probability,
+            'temperature_min': self.temperature_min,
+            'temperature_max': self.temperature_max,
+            'metadata': self.metadata,
+            'symbol_time_range': self.symbol_time_range
         }
 
 @dataclass
 class WeatherResponse:
-    """Weather response container with data and expiry time."""
-    data: List[WeatherData]
-    expires: datetime
+    """Container for weather response data."""
+    elaboration_time: datetime
+    data: Union[WeatherData, List[WeatherData]]
+    expires: Optional[datetime] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def forecasts(self) -> List[WeatherData]:
+        """Get forecasts as a list for backward compatibility."""
+        if isinstance(self.data, list):
+            return self.data
+        return [self.data]
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert weather response to dictionary for JSON serialization."""
+        """Convert to dictionary."""
         return {
-            "data": [d.to_dict() for d in self.data],
-            "expires": self.expires.isoformat()
+            'elaboration_time': self.elaboration_time.isoformat(),
+            'expires': self.expires.isoformat() if self.expires else None,
+            'data': [d.to_dict() for d in self.forecasts],
+            'metadata': self.metadata
         }
 
-class WeatherError(Exception):
+class WeatherError(GolfCalError):
     """Base class for weather service errors."""
-    def __init__(self, message: str, error_code: ErrorCode):
-        super().__init__(message)
+
+    def __init__(self, message: str, error_code: ErrorCode) -> None:
+        """Initialize error with message and code."""
+        super().__init__(message, code=error_code)
         self.error_code = error_code
 
 class WeatherServiceUnavailable(WeatherError):
-    """Error indicating that a weather service is unavailable."""
-    pass
+    """Error raised when weather service is unavailable."""
 
 class WeatherDataError(WeatherError):
-    """Error indicating invalid or missing weather data."""
-    pass
+    """Error raised when there is an issue with weather data."""
 
 class APIResponseError(WeatherError):
-    """Error indicating an invalid API response."""
-    def __init__(self, message: str, error_code: ErrorCode, response: requests.Response):
+    """Error raised when there is an issue with API response."""
+
+    def __init__(self, message: str, error_code: ErrorCode, response: requests.Response) -> None:
+        """Initialize error with message, code and response."""
         super().__init__(message, error_code)
         self.response = response 
+
+@handle_errors(GolfCalError, service="weather", operation="base")
+class WeatherService:
+    """Base class for weather services."""
+
+    def __init__(self, utc: ZoneInfo, config: Dict[str, Any]) -> None:
+        """Initialize weather service.
+        
+        Args:
+            utc: UTC timezone
+            config: Service configuration
+        """
+        self.utc = utc
+        self.config = config
+
+    def get_weather(
+        self,
+        lat: float,
+        lon: float,
+        start_time: datetime,
+        end_time: datetime,
+        club: Optional[str] = None
+    ) -> Optional[WeatherResponse]:
+        """Get weather data for given location and time range.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            start_time: Start time
+            end_time: End time
+            club: Optional club name for caching
+            
+        Returns:
+            Weather data response or None if not available
+        """
+        raise NotImplementedError
+
+    def _parse_response(self, response: requests.Response) -> Optional[WeatherResponse]:
+        """Parse weather service response.
+        
+        Args:
+            response: Response from weather service
+            
+        Returns:
+            Parsed weather data or None if parsing failed
+        """
+        raise NotImplementedError
+
+    def _create_response(
+        self,
+        data: Union[WeatherData, List[WeatherData]],
+        elaboration_time: datetime,
+        expires: Optional[datetime] = None
+    ) -> WeatherResponse:
+        """Create weather response with proper data handling.
+        
+        Args:
+            data: Weather data or list of weather data
+            elaboration_time: Time when data was elaborated
+            expires: Optional expiry time
+            
+        Returns:
+            Weather response
+        """
+        if expires is None:
+            expires = elaboration_time + timedelta(hours=1)
+            
+        if isinstance(data, list):
+            return WeatherResponse(
+                elaboration_time=elaboration_time,
+                data=data
+            )
+        else:
+            return WeatherResponse(
+                elaboration_time=elaboration_time,
+                data=[data]
+            ) 
