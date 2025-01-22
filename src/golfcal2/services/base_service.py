@@ -5,9 +5,10 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any, Union
 from zoneinfo import ZoneInfo
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin, log_execution
-from golfcal2.services.weather_types import WeatherData, WeatherResponse, WeatherCode
+from golfcal2.services.weather_types import WeatherData, WeatherResponse
 from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_location_cache import WeatherLocationCache
+from golfcal2.exceptions import WeatherError, ErrorCode
 
 class WeatherService(EnhancedLoggerMixin):
     """Base class for weather services."""
@@ -32,11 +33,22 @@ class WeatherService(EnhancedLoggerMixin):
         self.local_tz: ZoneInfo = local_tz
         self.utc_tz: ZoneInfo = utc_tz
         
-        # Initialize caches
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-        os.makedirs(data_dir, exist_ok=True)
-        self.cache: WeatherResponseCache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
-        self.location_cache: WeatherLocationCache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
+        # Initialize caches as None - they will be set by the manager
+        self.cache: Optional[WeatherResponseCache] = None
+        self.location_cache: Optional[WeatherLocationCache] = None
+    
+    def _handle_errors(self, error_code: ErrorCode, message: str) -> None:
+        """Handle errors by logging and raising appropriate exceptions.
+        
+        Args:
+            error_code: The error code from ErrorCode enum
+            message: Error message to log
+            
+        Raises:
+            WeatherError: With the given error code and message
+        """
+        self.error(f"Weather service error: {message}", error_code=error_code)
+        raise WeatherError(error_code, message)
     
     def get_expiry_time(self) -> datetime:
         """Get expiry time for current weather data.

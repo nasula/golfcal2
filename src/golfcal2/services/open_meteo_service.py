@@ -14,6 +14,7 @@ import openmeteo_requests
 import requests_cache
 import pandas as pd
 from retry_requests import retry
+import requests
 
 from golfcal2.services.base_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse, WeatherError
@@ -41,19 +42,20 @@ class OpenMeteoService(WeatherService):
     """
 
     service_type: str = "open_meteo"
-    HOURLY_RANGE: int = 168  # 7 days of hourly forecasts
-    SIX_HOURLY_RANGE: int = 240  # 10 days of 6-hourly forecasts
+    HOURLY_RANGE: int = 168  # 7 days
+    SIX_HOURLY_RANGE: int = 216  # 9 days
+    MAX_FORECAST_RANGE: int = 216  # 9 days
 
-    def __init__(self, timezone: Union[str, ZoneInfo], utc: Union[str, ZoneInfo], config: Dict[str, Any]) -> None:
+    def __init__(self, local_tz: Union[str, ZoneInfo], utc_tz: Union[str, ZoneInfo], config: Optional[Dict[str, Any]] = None) -> None:
         """Initialize service.
         
         Args:
-            timezone: Local timezone
-            utc: UTC timezone
-            config: Service configuration
+            local_tz: Local timezone
+            utc_tz: UTC timezone
+            config: Optional service configuration
         """
-        super().__init__(timezone, utc)
-        self.config = config
+        super().__init__(local_tz, utc_tz)
+        self.config = config or {}
         self.set_log_context(service="open_meteo")
         
         # Configure logger
@@ -117,214 +119,140 @@ class OpenMeteoService(WeatherService):
         Returns:
             WeatherCode: Internal weather code
         """
-        # Determine if it's day or night (simple 6-20 rule)
-        is_daytime = 6 <= hour < 20
-        
-        # Map WMO codes to our internal codes
-        # Reference: https://open-meteo.com/en/docs
-        code_map = {
-            0: WeatherCode.CLEARSKY_DAY if is_daytime else WeatherCode.CLEARSKY_NIGHT,
-            1: WeatherCode.FAIR_DAY if is_daytime else WeatherCode.FAIR_NIGHT,
-            2: WeatherCode.PARTLYCLOUDY_DAY if is_daytime else WeatherCode.PARTLYCLOUDY_NIGHT,
-            3: WeatherCode.CLOUDY,
-            45: WeatherCode.FOG,
-            48: WeatherCode.FOG,
-            51: WeatherCode.LIGHTRAIN,
-            53: WeatherCode.RAIN,
-            55: WeatherCode.HEAVYRAIN,
-            56: WeatherCode.SLEET,
-            57: WeatherCode.SLEET,
-            61: WeatherCode.LIGHTRAIN,
-            63: WeatherCode.RAIN,
-            65: WeatherCode.HEAVYRAIN,
-            66: WeatherCode.SLEET,
-            67: WeatherCode.SLEET,
-            71: WeatherCode.LIGHTSNOW,
-            73: WeatherCode.SNOW,
-            75: WeatherCode.HEAVYSNOW,
-            77: WeatherCode.SNOW,
-            80: WeatherCode.LIGHTRAINSHOWERS_DAY if is_daytime else WeatherCode.LIGHTRAINSHOWERS_NIGHT,
-            81: WeatherCode.RAINSHOWERS_DAY if is_daytime else WeatherCode.RAINSHOWERS_NIGHT,
-            82: WeatherCode.HEAVYRAINSHOWERS_DAY if is_daytime else WeatherCode.HEAVYRAINSHOWERS_NIGHT,
-            85: WeatherCode.LIGHTSNOWSHOWERS_DAY if is_daytime else WeatherCode.LIGHTSNOWSHOWERS_NIGHT,
-            86: WeatherCode.SNOWSHOWERS_DAY if is_daytime else WeatherCode.SNOWSHOWERS_NIGHT,
-            95: WeatherCode.THUNDER,
-            96: WeatherCode.THUNDER,
-            99: WeatherCode.THUNDER
-        }
-        
-        return code_map.get(code, WeatherCode.CLOUDY)  # Default to cloudy if code not found
-
-    def _fetch_forecasts(
-        self,
-        lat: float,
-        lon: float,
-        start_time: datetime,
-        end_time: datetime
-    ) -> Optional[Dict[str, Any]]:
-        """Fetch forecast data from Open-Meteo API."""
         try:
-            # Calculate time range for fetching data
-            now = datetime.now(self.utc_tz)
-            hours_ahead = (end_time - now).total_seconds() / 3600
-            
-            # Configure API parameters
-            params = {
-                "latitude": lat,
-                "longitude": lon,
-                "hourly": [
-                    "temperature_2m",
-                    "precipitation",
-                    "precipitation_probability",
-                    "weathercode",
-                    "windspeed_10m",
-                    "winddirection_10m"
-                ],
-                "timezone": "UTC"
-            }
-            
-            self.debug("Making API request with params", params=params)
-            
-            # Make API request
-            response = self.client.weather_api("https://api.open-meteo.com/v1/forecast", params=params)
-            
-            self.debug("Got API response", 
-                      response_type=type(response).__name__,
-                      response_len=len(response) if isinstance(response, list) else 0)
-            
-            if not response or not isinstance(response, list) or len(response) == 0:
-                self.error("Failed to get forecast data")
-                return None
-            
-            # Get the first response (should only be one)
-            data = response[0]
-            hourly = data.Hourly()
-            
-            if not hourly:
-                self.error("No hourly data in response")
-                return None
-            
-            self.debug("Processing hourly data",
-                      variables_length=hourly.VariablesLength())
-            
-            # Get timestamps
-            timestamps = []
-            interval = hourly.Interval()  # Usually 3600 for hourly data
-            start_timestamp = hourly.Time()
-            end_timestamp = hourly.TimeEnd()
-            
-            current_timestamp = start_timestamp
-            while current_timestamp < end_timestamp:
-                timestamps.append(datetime.fromtimestamp(current_timestamp, tz=self.utc_tz))
-                current_timestamp += interval
-            
-            # Convert response to dictionary
-            hourly_entries = []
-            
-            # Variables are in the same order as in the request
-            var_indices = {
-                'temperature_2m': 0,      # temperature_2m
-                'precipitation': 1,        # precipitation
-                'precipitation_probability': 2,  # precipitation_probability
-                'weathercode': 3,         # weathercode
-                'windspeed_10m': 4,       # windspeed_10m
-                'winddirection_10m': 5    # winddirection_10m
-            }
-            
-            # Process each timestamp
-            for i, timestamp in enumerate(timestamps):
-                try:
-                    # Skip if outside requested range
-                    if timestamp < start_time or timestamp > end_time:
-                        continue
-                        
-                    # Get hour for weather code mapping
-                    hour = timestamp.hour
-                    
-                    # Get values for each variable at this timestamp
-                    temp = hourly.Variables(var_indices['temperature_2m']).Values(i)
-                    precip = hourly.Variables(var_indices['precipitation']).Values(i)
-                    precip_prob = hourly.Variables(var_indices['precipitation_probability']).Values(i)
-                    weathercode = int(hourly.Variables(var_indices['weathercode']).Values(i))
-                    windspeed = hourly.Variables(var_indices['windspeed_10m']).Values(i)
-                    winddir = hourly.Variables(var_indices['winddirection_10m']).Values(i)
-                    
-                    entry = {
-                        'time': timestamp.isoformat(),
-                        'temperature_2m': temp,
-                        'precipitation': precip,
-                        'precipitation_probability': precip_prob,
-                        'weathercode': self._map_wmo_code(weathercode, hour),
-                        'windspeed_10m': windspeed,
-                        'winddirection_10m': winddir
-                    }
-                    
-                    self.debug("Processed hourly entry", index=i, entry=entry)
-                    
-                    hourly_entries.append(entry)
-                except (IndexError, ValueError, AttributeError) as e:
-                    self.warning(f"Error parsing forecast at index {i}: {e}")
-                    continue
-            
-            self.debug("Processed all hourly entries", total_entries=len(hourly_entries))
-            
-            return {'hourly': hourly_entries}
-            
+            if code == 0:  # Clear sky
+                return WeatherCode.CLEARSKY_DAY if 6 <= hour < 22 else WeatherCode.CLEARSKY_NIGHT
+            elif code == 1:  # Mainly clear
+                return WeatherCode.FAIR_DAY if 6 <= hour < 22 else WeatherCode.FAIR_NIGHT
+            elif code == 2:  # Partly cloudy
+                return WeatherCode.PARTLYCLOUDY_DAY if 6 <= hour < 22 else WeatherCode.PARTLYCLOUDY_NIGHT
+            elif code == 3:  # Overcast
+                return WeatherCode.CLOUDY
+            elif code in (45, 48):  # Foggy
+                return WeatherCode.FOG
+            elif code in (51, 53, 55):  # Drizzle
+                return WeatherCode.LIGHTRAIN
+            elif code in (61, 63):  # Rain
+                return WeatherCode.RAIN
+            elif code == 65:  # Heavy rain
+                return WeatherCode.HEAVYRAIN
+            elif code in (71, 73, 75):  # Snow
+                return WeatherCode.SNOW
+            elif code in (77,):  # Snow grains
+                return WeatherCode.SLEET
+            elif code == 80:  # Light rain showers
+                return WeatherCode.LIGHTRAINSHOWERS_DAY if 6 <= hour < 22 else WeatherCode.LIGHTRAINSHOWERS_NIGHT
+            elif code == 81:  # Rain showers
+                return WeatherCode.RAINSHOWERS_DAY if 6 <= hour < 22 else WeatherCode.RAINSHOWERS_NIGHT
+            elif code == 82:  # Heavy rain showers
+                return WeatherCode.HEAVYRAINSHOWERS_DAY if 6 <= hour < 22 else WeatherCode.HEAVYRAINSHOWERS_NIGHT
+            elif code == 85:  # Snow showers
+                return WeatherCode.SNOWSHOWERS_DAY if 6 <= hour < 22 else WeatherCode.SNOWSHOWERS_NIGHT
+            elif code == 86:  # Heavy snow showers
+                return WeatherCode.HEAVYSNOWSHOWERS_DAY if 6 <= hour < 22 else WeatherCode.HEAVYSNOWSHOWERS_NIGHT
+            elif code in (95, 96, 99):  # Thunderstorm
+                return WeatherCode.THUNDER
+            return WeatherCode.UNKNOWN
         except Exception as e:
-            self.error("Error fetching forecasts", exc_info=e)
+            self._handle_errors(
+                ErrorCode.WEATHER_PARSE_ERROR,
+                f"Failed to map weather code {code}: {str(e)}"
+            )
+            return WeatherCode.UNKNOWN
+
+    def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
+        """Fetch forecasts from Open-Meteo API."""
+        if (end_time - start_time).total_seconds() / 3600 > self.MAX_FORECAST_RANGE:
+            self._handle_errors(
+                ErrorCode.WEATHER_ERROR,
+                f"Request exceeds maximum forecast range of {self.MAX_FORECAST_RANGE} hours"
+            )
             return None
 
-    def _parse_response(
-        self,
-        response_data: Dict[str, Any],
-        start_time: datetime,
-        end_time: datetime,
-        interval: int
-    ) -> Optional[List[WeatherData]]:
-        """Parse OpenMeteo API response into WeatherData objects."""
         try:
-            if not isinstance(response_data, dict):
-                self.warning("Invalid response data type")
-                return None
-
-            hourly = response_data.get('hourly', [])
-            if not isinstance(hourly, list):
-                self.warning("Invalid hourly data type")
-                return None
-
-            forecasts = []
-            for entry in hourly:
-                try:
-                    time = datetime.fromisoformat(entry['time'])
-                    
-                    # Skip if outside requested range
-                    if time < start_time or time > end_time:
-                        continue
-                        
-                    # Skip if not aligned with interval for 6-hourly blocks
-                    if interval > 1 and time.hour % interval != 0:
-                        continue
-
-                    weather_data = WeatherData(
-                        elaboration_time=time,
-                        temperature=entry['temperature_2m'],
-                        precipitation=entry['precipitation'],
-                        precipitation_probability=entry['precipitation_probability'],
-                        wind_speed=entry['windspeed_10m'] / 3.6,  # Convert km/h to m/s
-                        wind_direction=entry['winddirection_10m'],
-                        weather_code=entry['weathercode'],  # Already mapped in _fetch_forecasts
-                        symbol_time_range=f"{time.hour:02d}:00-{((time.hour + interval) % 24):02d}:00"
-                    )
-                    forecasts.append(weather_data)
-                except (KeyError, IndexError, ValueError) as e:
-                    self.warning(f"Failed to process entry: {e}")
-                    continue
-
-            return forecasts if forecasts else None
-
-        except (KeyError, ValueError, TypeError) as e:
-            self.error(f"Failed to parse OpenMeteo response: {str(e)}", exc_info=e)
+            url = f"https://api.open-meteo.com/v1/forecast"
+            params = {
+                'latitude': latitude,
+                'longitude': longitude,
+                'hourly': 'temperature_2m,precipitation,precipitation_probability,weathercode,windspeed_10m,winddirection_10m',
+                'timezone': 'UTC',
+                'start_date': start_time.date().isoformat(),
+                'end_date': end_time.date().isoformat()
+            }
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            self._handle_errors(
+                ErrorCode.WEATHER_REQUEST_ERROR,
+                f"Failed to fetch weather data: {str(e)}"
+            )
             return None
+
+    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+        """Parse response from Open-Meteo API."""
+        try:
+            if not isinstance(response_data, dict) or 'hourly' not in response_data:
+                self._handle_errors(
+                    ErrorCode.WEATHER_PARSE_ERROR,
+                    "Invalid response format from Open-Meteo API"
+                )
+                return None
+
+            hourly = response_data['hourly']
+            if not isinstance(hourly, dict):
+                self._handle_errors(
+                    ErrorCode.WEATHER_PARSE_ERROR,
+                    "Invalid hourly data format from Open-Meteo API"
+                )
+                return None
+
+            times = hourly.get('time', [])
+            if not times:
+                return None
+
+            weather_data = []
+            for i, time_str in enumerate(times):
+                try:
+                    time = datetime.fromisoformat(time_str)
+                    weather_data.append(WeatherData(
+                        elaboration_time=time,
+                        temperature=hourly['temperature_2m'][i],
+                        precipitation=hourly['precipitation'][i],
+                        precipitation_probability=hourly['precipitation_probability'][i],
+                        wind_speed=hourly['windspeed_10m'][i],
+                        wind_direction=hourly['winddirection_10m'][i],
+                        weather_code=self._map_wmo_code(hourly['weathercode'][i], time.hour),
+                        symbol_time_range=f"{time.hour:02d}:00-{((time.hour + 1) % 24):02d}:00",
+                        thunder_probability=self._get_thunder_probability(hourly['weathercode'][i])
+                    ))
+                except (KeyError, IndexError, ValueError) as e:
+                    self._handle_errors(
+                        ErrorCode.WEATHER_PARSE_ERROR,
+                        f"Failed to parse weather entry: {str(e)}"
+                    )
+
+            if not weather_data:
+                return None
+
+            return WeatherResponse(
+                data=weather_data,
+                elaboration_time=datetime.now(self.utc_tz)
+            )
+
+        except Exception as e:
+            self._handle_errors(
+                ErrorCode.WEATHER_PARSE_ERROR,
+                f"Failed to parse weather data: {str(e)}"
+            )
+            return None
+
+    def _get_thunder_probability(self, wmo_code: int) -> float:
+        """Get thunder probability based on WMO weather code."""
+        # WMO codes for thunderstorms: 95 (slight/moderate), 96 (with hail), 99 (heavy)
+        if wmo_code in (95, 96, 99):
+            return 80.0 if wmo_code == 99 else 50.0
+        return 0.0
 
     def _get_weather(
         self,
@@ -368,14 +296,11 @@ class OpenMeteoService(WeatherService):
             if not response_data:
                 return None
                 
-            forecasts = self._parse_response(response_data, start_time, end_time, interval)
+            forecasts = self._parse_response(response_data)
             if not forecasts:
                 return None
                 
-            return WeatherResponse(
-                elaboration_time=now_utc,
-                data=forecasts
-            )
+            return forecasts
             
         except Exception as e:
             self.error("Failed to get weather data from Open-Meteo", exc_info=e)

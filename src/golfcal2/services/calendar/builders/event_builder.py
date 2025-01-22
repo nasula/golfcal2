@@ -62,7 +62,7 @@ class EventBuilder(ABC, LoggerMixin):
                 end_time=end_time,
                 club=club_name
             )
-            
+
             if weather_data:
                 # Create a simple reservation just for formatting
                 from golfcal2.models.reservation import Reservation
@@ -77,11 +77,10 @@ class EventBuilder(ABC, LoggerMixin):
                     raw_data={}
                 )
                 
-                # Handle both WeatherResponse objects and direct lists of forecasts
-                forecasts = weather_data.data if hasattr(weather_data, 'data') else weather_data
+                # Convert forecast times back to local timezone
+                forecasts = weather_data if isinstance(weather_data, list) else weather_data.data
                 
-                # Convert forecast times back to local timezone only if they are WeatherData objects
-                if forecasts and isinstance(forecasts, list) and all(hasattr(f, 'elaboration_time') for f in forecasts):
+                if forecasts and all(hasattr(f, 'elaboration_time') for f in forecasts):
                     for forecast in forecasts:
                         if forecast.elaboration_time.tzinfo is None:
                             forecast.elaboration_time = forecast.elaboration_time.replace(tzinfo=ZoneInfo('UTC'))

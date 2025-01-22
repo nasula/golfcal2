@@ -255,9 +255,25 @@ class Reservation(LoggerMixin):
         
         # Filter forecasts to only include those that overlap with event time range
         filtered_data = []
+        
         for forecast in normalized_data:
-            if forecast.elaboration_time < self.end_time:
-                filtered_data.append(forecast)
+            # For 6-hour blocks, include if the event overlaps with the block
+            if '-' in forecast.symbol_time_range:
+                start_hour = int(forecast.symbol_time_range.split('-')[0].split(':')[0])
+                end_hour = int(forecast.symbol_time_range.split('-')[1].split(':')[0])
+                forecast_start = forecast.elaboration_time.replace(hour=start_hour, minute=0)
+                forecast_end = forecast.elaboration_time.replace(hour=end_hour, minute=0)
+                if end_hour < start_hour:  # Handle blocks that cross midnight
+                    forecast_end += timedelta(days=1)
+                
+                # Check if the event overlaps with this block
+                # Event starts before block ends AND event ends after block starts
+                if self.start_time < forecast_end and self.end_time > forecast_start:
+                    filtered_data.append(forecast)
+            else:
+                # For hourly forecasts, use the original logic
+                if self.start_time <= forecast.elaboration_time < self.end_time:
+                    filtered_data.append(forecast)
         
         self.debug(
             "Filtered forecasts to event time range",
@@ -272,7 +288,15 @@ class Reservation(LoggerMixin):
         for forecast in filtered_data:
             # Format time string based on symbol_time_range or just use the elaboration time
             if forecast.symbol_time_range:
-                time_str = forecast.symbol_time_range
+                if '-' in forecast.symbol_time_range:
+                    start_hour, end_hour = forecast.symbol_time_range.split('-')
+                    # If it's a 1-hour block (end hour is start hour + 1), only show start time
+                    start_h = int(start_hour.split(':')[0])
+                    end_h = int(end_hour.split(':')[0])
+                    if (end_h == (start_h + 1) % 24):
+                        time_str = start_hour
+                    else:
+                        time_str = forecast.symbol_time_range
             else:
                 time_str = forecast.elaboration_time.strftime('%H:%M')
             

@@ -10,9 +10,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from golfcal2.exceptions import ErrorCode
 from golfcal2.services.base_service import WeatherService
-from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.services.weather_location_cache import WeatherLocationCache
 from golfcal2.services.weather_types import WeatherData, WeatherResponse, WeatherCode
 from golfcal2.utils.logging_utils import get_logger
 
@@ -20,20 +19,20 @@ class MetWeatherService(WeatherService):
     """Weather service implementation for Norwegian Meteorological Institute (MET)."""
 
     service_type: str = "met"
-    HOURLY_RANGE: int = 48  # 2 days of hourly forecasts
-    SIX_HOURLY_RANGE: int = 216  # 9 days of 6-hourly forecasts
-    MAX_FORECAST_RANGE: int = 216  # 9 days * 24 hours
+    HOURLY_RANGE: int = 168  # 7 days
+    SIX_HOURLY_RANGE: int = 216  # 9 days
+    MAX_FORECAST_RANGE: int = 216  # 9 days
 
-    def __init__(self, timezone: Union[str, ZoneInfo], utc: Union[str, ZoneInfo], config: Dict[str, Any]) -> None:
+    def __init__(self, local_tz: Union[str, ZoneInfo], utc_tz: Union[str, ZoneInfo], config: Optional[Dict[str, Any]] = None) -> None:
         """Initialize the service.
         
         Args:
-            timezone: Local timezone
-            utc: UTC timezone
-            config: Service configuration
+            local_tz: Local timezone
+            utc_tz: UTC timezone
+            config: Optional service configuration
         """
-        super().__init__(timezone, utc)
-        self.config = config
+        super().__init__(local_tz, utc_tz)
+        self.config = config or {}
         self.set_log_context(service="met_weather")
 
     def _get_weather(
@@ -78,200 +77,174 @@ class MetWeatherService(WeatherService):
             if not response_data:
                 return None
                 
-            weather_data = self._parse_response(response_data, start_time, end_time, interval)
+            weather_data = self._parse_response(response_data)
             if not weather_data:
                 return None
                 
-            return WeatherResponse(
-                elaboration_time=now_utc,
-                data=weather_data
-            )
+            return weather_data  # Return the WeatherResponse directly
             
         except Exception as e:
             self.error("Failed to get weather data from MET", exc_info=e)
             return None
 
-    def _fetch_forecasts(
-        self,
-        lat: float,
-        lon: float,
-        start_time: datetime,
-        end_time: datetime
-    ) -> Optional[Dict[str, Any]]:
-        """Fetch forecast data from MET API.
-        
-        Args:
-            lat: Latitude
-            lon: Longitude
-            start_time: Start time for forecast
-            end_time: End time for forecast
-            
-        Returns:
-            Optional[Dict[str, Any]]: Raw forecast data if successful
-        """
-        try:
-            # Build API URL
-            base_url = self.config.get('api_url', 'https://api.met.no/weatherapi/locationforecast/2.0/complete')
-            user_agent = self.config.get('user_agent', 'GolfCal2/1.0')
-            
-            # Make request
-            headers = {'User-Agent': user_agent}
-            params = {'lat': lat, 'lon': lon}
-            
-            response = requests.get(base_url, params=params, headers=headers)
-            response.raise_for_status()
-            
-            return cast(Dict[str, Any], response.json())
-            
-        except Exception as e:
-            self.error("Failed to fetch forecast data from MET", exc_info=e)
+    def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
+        """Fetch forecasts from MET API."""
+        if (end_time - start_time).total_seconds() / 3600 > self.MAX_FORECAST_RANGE:
+            self._handle_errors(
+                ErrorCode.WEATHER_ERROR,
+                f"Request exceeds maximum forecast range of {self.MAX_FORECAST_RANGE} hours"
+            )
             return None
 
-    def _parse_response(
-        self,
-        response_data: Dict[str, Any],
-        start_time: datetime,
-        end_time: datetime,
-        interval: int
-    ) -> Optional[List[WeatherData]]:
-        """Parse response data into weather data objects.
-        
-        Args:
-            response_data: Raw response data from MET API
-            start_time: Start time for forecast
-            end_time: End time for forecast
-            interval: Time interval in hours
-            
-        Returns:
-            Optional[List[WeatherData]]: List of weather data objects if parsing successful
-        """
         try:
+            url = f"https://api.met.no/weatherapi/locationforecast/2.0/complete"
+            headers = {
+                'User-Agent': 'GolfCal/2.0 github.com/jarkko/golfcal2'
+            }
+            params = {
+                'lat': latitude,
+                'lon': longitude
+            }
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            self._handle_errors(
+                ErrorCode.WEATHER_REQUEST_ERROR,
+                f"Failed to fetch weather data: {str(e)}"
+            )
+            return None
+
+    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+        """Parse response from MET API."""
+        try:
+            if not isinstance(response_data, dict) or 'properties' not in response_data:
+                self._handle_errors(
+                    ErrorCode.WEATHER_PARSE_ERROR,
+                    "Invalid response format from MET API"
+                )
+                return None
+
             timeseries = response_data.get('properties', {}).get('timeseries', [])
             if not timeseries:
-                self.warning("No timeseries data in response")
                 return None
-                
-            weather_data: List[WeatherData] = []
-            
-            # For 6-hour blocks, align start and end times to block boundaries
-            if interval > 1:
-                # Convert to UTC for block alignment
-                start_utc = start_time.astimezone(self.utc_tz)
-                end_utc = end_time.astimezone(self.utc_tz)
-                
-                # Find the previous and next block boundaries
-                start_block = (start_utc.hour // 6) * 6
-                end_block = ((end_utc.hour + 5) // 6) * 6
-                
-                # Adjust start and end times to block boundaries
-                aligned_start = start_utc.replace(hour=start_block, minute=0, second=0, microsecond=0)
-                if end_block == 24:
-                    aligned_end = (end_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-                else:
-                    aligned_end = end_utc.replace(hour=end_block, minute=0, second=0, microsecond=0)
-                    
-                self.debug(
-                    "Aligned time boundaries",
-                    original_start=start_time.isoformat(),
-                    original_end=end_time.isoformat(),
-                    aligned_start=aligned_start.isoformat(),
-                    aligned_end=aligned_end.isoformat()
-                )
-            else:
-                aligned_start = start_time
-                aligned_end = end_time
-            
-            for timepoint in timeseries:
-                time_str = timepoint.get('time')
-                if not time_str:
-                    continue
-                    
-                time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                
-                # Use aligned times for filtering when using 6-hour blocks
-                if interval > 1:
-                    if time < aligned_start or time > aligned_end:
-                        continue
-                else:
-                    if time < start_time or time > end_time:
-                        continue
-                    
-                instant = timepoint.get('data', {}).get('instant', {}).get('details', {})
-                if not instant:
-                    continue
 
-                # Use appropriate forecast block based on interval
-                if interval <= 1:
-                    next_block = timepoint.get('data', {}).get('next_1_hours', {})
-                else:
-                    next_block = timepoint.get('data', {}).get('next_6_hours', {})
-                    # Skip non-aligned 6-hour blocks
-                    if time.hour % 6 != 0:
-                        continue
+            weather_data = []
+            for entry in timeseries:
+                try:
+                    time = datetime.fromisoformat(entry['time'].replace('Z', '+00:00'))
+                    instant = entry.get('data', {}).get('instant', {}).get('details', {})
+                    next_hour = entry.get('data', {}).get('next_1_hours', {})
+                    next_six_hours = entry.get('data', {}).get('next_6_hours', {})
 
-                # Skip if we don't have the required forecast data
-                if not next_block:
-                    continue
+                    # Get precipitation and its probability
+                    precipitation = (
+                        next_hour.get('details', {}).get('precipitation_amount')
+                        or next_six_hours.get('details', {}).get('precipitation_amount')
+                        or 0.0
+                    )
+                    precipitation_probability = (
+                        next_hour.get('details', {}).get('probability_of_precipitation')
+                        or next_six_hours.get('details', {}).get('probability_of_precipitation')
+                    )
                     
-                # Create weather data object
-                data = WeatherData(
-                    elaboration_time=time,
-                    temperature=float(instant.get('air_temperature', 0.0)),
-                    precipitation=float(next_block.get('details', {}).get('precipitation_amount', 0.0)),
-                    precipitation_probability=float(next_block.get('details', {}).get('probability_of_precipitation', 0.0)),
-                    wind_speed=float(instant.get('wind_speed', 0.0)),
-                    wind_direction=float(instant.get('wind_from_direction', 0.0)),
-                    weather_code=self._map_symbol_code(next_block.get('summary', {}).get('symbol_code', 'cloudy')),
-                    weather_description=str(next_block.get('summary', {}).get('symbol_code', '')),
-                    thunder_probability=0.0,  # MET doesn't provide thunder probability
-                    symbol_time_range=f"{time.hour:02d}:00-{((time.hour + interval) % 24):02d}:00"
-                )
-                weather_data.append(data)
-                
-            return weather_data if weather_data else None
-            
+                    # Get thunder probability
+                    thunder_probability = (
+                        next_hour.get('details', {}).get('probability_of_thunder')
+                        or next_six_hours.get('details', {}).get('probability_of_thunder')
+                    )
+
+                    # Get symbol code from next_1_hours if available, otherwise from next_6_hours
+                    symbol = (
+                        next_hour.get('summary', {}).get('symbol_code')
+                        or next_six_hours.get('summary', {}).get('symbol_code')
+                        or 'cloudy'
+                    )
+
+                    # Determine interval based on which forecast is available
+                    interval = 1 if 'next_1_hours' in entry.get('data', {}) else 6
+
+                    # Convert time to local timezone for symbol_time_range
+                    local_time = time.astimezone(self.local_tz)
+                    weather_data.append(WeatherData(
+                        elaboration_time=time,
+                        temperature=instant.get('air_temperature'),
+                        precipitation=precipitation,
+                        precipitation_probability=precipitation_probability,
+                        thunder_probability=thunder_probability,
+                        wind_speed=instant.get('wind_speed'),
+                        wind_direction=instant.get('wind_from_direction'),
+                        weather_code=self._map_met_code(symbol),
+                        symbol_time_range=f"{local_time.hour:02d}:00-{((local_time.hour + interval) % 24):02d}:00"
+                    ))
+                except (KeyError, ValueError) as e:
+                    self._handle_errors(
+                        ErrorCode.WEATHER_PARSE_ERROR,
+                        f"Failed to parse weather entry: {e}"
+                    )
+
+            if not weather_data:
+                return None
+
+            return WeatherResponse(
+                data=weather_data,
+                elaboration_time=datetime.now(self.utc_tz)
+            )
+
         except Exception as e:
-            self.error("Failed to parse MET response", exc_info=e)
+            self._handle_errors(
+                ErrorCode.WEATHER_PARSE_ERROR,
+                f"Failed to parse weather data: {e}"
+            )
             return None
 
-    def _map_symbol_code(self, met_code: str) -> WeatherCode:
-        """Map MET symbol codes to internal weather codes.
-        
-        Args:
-            met_code: MET weather symbol code
-            
-        Returns:
-            WeatherCode: Internal weather code
-        """
-        # Strip _day/_night suffix if present
-        base_code = met_code.split('_')[0] if '_' in met_code else met_code
-        
+    def _map_met_code(self, code: str) -> str:
+        """Map MET symbol code to internal weather code string."""
+        # Extract base code without variants (_day, _night, _polartwilight)
+        base_code = code.split('_')[0]
+
         # Map MET codes to internal codes
-        code_map = {
-            'clearsky': WeatherCode.CLEARSKY_DAY,
-            'fair': WeatherCode.FAIR_DAY,
-            'partlycloudy': WeatherCode.PARTLYCLOUDY_DAY,
-            'cloudy': WeatherCode.CLOUDY,
-            'fog': WeatherCode.FOG,
-            'lightrainshowers': WeatherCode.LIGHTRAINSHOWERS_DAY,
-            'rainshowers': WeatherCode.RAINSHOWERS_DAY,
-            'heavyrainshowers': WeatherCode.HEAVYRAINSHOWERS_DAY,
-            'lightrain': WeatherCode.LIGHTRAIN,
-            'rain': WeatherCode.RAIN,
-            'heavyrain': WeatherCode.HEAVYRAIN,
-            'lightsleetshowers': WeatherCode.LIGHTSLEETSHOWERS_DAY,
-            'sleetshowers': WeatherCode.SLEETSHOWERS_DAY,
-            'heavysleetshowers': WeatherCode.HEAVYSLEETSHOWERS_DAY,
-            'lightsleet': WeatherCode.LIGHTSLEET,
-            'sleet': WeatherCode.SLEET,
-            'heavysleet': WeatherCode.HEAVYSLEET,
-            'lightsnowshowers': WeatherCode.LIGHTSNOWSHOWERS_DAY,
-            'snowshowers': WeatherCode.SNOWSHOWERS_DAY,
-            'heavysnowshowers': WeatherCode.HEAVYSNOWSHOWERS_DAY,
-            'lightsnow': WeatherCode.LIGHTSNOW,
-            'snow': WeatherCode.SNOW,
-            'heavysnow': WeatherCode.HEAVYSNOW,
-            'thunder': WeatherCode.THUNDER
-        }
-        
-        return code_map.get(base_code, WeatherCode.CLOUDY)
+        # Reference: https://api.met.no/weatherapi/weathericon/2.0/documentation
+        if base_code == 'clearsky':
+            return WeatherCode.CLEARSKY_DAY.value if 'day' in code else WeatherCode.CLEARSKY_NIGHT.value
+        elif base_code == 'fair':
+            return WeatherCode.FAIR_DAY.value if 'day' in code else WeatherCode.FAIR_NIGHT.value
+        elif base_code == 'partlycloudy':
+            return WeatherCode.PARTLYCLOUDY_DAY.value if 'day' in code else WeatherCode.PARTLYCLOUDY_NIGHT.value
+        elif base_code == 'cloudy':
+            return WeatherCode.CLOUDY.value
+        elif base_code == 'fog':
+            return WeatherCode.FOG.value
+        elif base_code == 'lightrainshowers':
+            return WeatherCode.LIGHTRAINSHOWERS_DAY.value if 'day' in code else WeatherCode.LIGHTRAINSHOWERS_NIGHT.value
+        elif base_code == 'rainshowers':
+            return WeatherCode.RAINSHOWERS_DAY.value if 'day' in code else WeatherCode.RAINSHOWERS_NIGHT.value
+        elif base_code == 'heavyrainshowers':
+            return WeatherCode.HEAVYRAINSHOWERS_DAY.value if 'day' in code else WeatherCode.HEAVYRAINSHOWERS_NIGHT.value
+        elif base_code == 'lightrain':
+            return WeatherCode.LIGHTRAIN.value
+        elif base_code == 'rain':
+            return WeatherCode.RAIN.value
+        elif base_code == 'heavyrain':
+            return WeatherCode.HEAVYRAIN.value
+        elif base_code == 'lightsleet':
+            return WeatherCode.LIGHTSLEET.value
+        elif base_code == 'sleet':
+            return WeatherCode.SLEET.value
+        elif base_code == 'heavysleet':
+            return WeatherCode.HEAVYSLEET.value
+        elif base_code == 'lightsnow':
+            return WeatherCode.LIGHTSNOW.value
+        elif base_code == 'snow':
+            return WeatherCode.SNOW.value
+        elif base_code == 'heavysnow':
+            return WeatherCode.HEAVYSNOW.value
+        elif base_code == 'lightsnowshowers':
+            return WeatherCode.LIGHTSNOWSHOWERS_DAY.value if 'day' in code else WeatherCode.LIGHTSNOWSHOWERS_NIGHT.value
+        elif base_code == 'snowshowers':
+            return WeatherCode.SNOWSHOWERS_DAY.value if 'day' in code else WeatherCode.SNOWSHOWERS_NIGHT.value
+        elif base_code == 'heavysnowshowers':
+            return WeatherCode.HEAVYSNOWSHOWERS_DAY.value if 'day' in code else WeatherCode.HEAVYSNOWSHOWERS_NIGHT.value
+        elif base_code == 'thunder':
+            return WeatherCode.THUNDER.value
+        return WeatherCode.UNKNOWN.value
