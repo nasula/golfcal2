@@ -145,6 +145,7 @@ class Reservation(LoggerMixin):
         super().__init__()
         if self._tz_manager is None:
             self._tz_manager = TimezoneManager()
+        self.utc_tz = ZoneInfo('UTC')
 
     def _extract_resource_id(self) -> str:
         """Extract resource ID from raw data."""
@@ -228,7 +229,7 @@ class Reservation(LoggerMixin):
         """Format weather data into a human-readable string."""
         if not weather_data:
             self.debug("No weather data provided")
-            return "No weather data available"
+            return "No forecast available"
         
         # Get event timezone
         event_tz = self.start_time.tzinfo
@@ -239,69 +240,69 @@ class Reservation(LoggerMixin):
             event_timezone=str(event_tz)
         )
         
-        # Convert all forecasts to event timezone
+        # Convert all forecasts to event timezone and sort by time
         normalized_data = []
         for forecast in weather_data:
-            if forecast.elaboration_time.tzinfo != event_tz:
-                forecast.elaboration_time = forecast.elaboration_time.astimezone(event_tz)
+            if forecast.time.tzinfo != event_tz:
+                forecast.time = forecast.time.astimezone(event_tz)
             normalized_data.append(forecast)
         
-        # Sort forecasts by time
-        normalized_data = sorted(normalized_data, key=lambda x: x.elaboration_time)
+        normalized_data = sorted(normalized_data, key=lambda x: x.time)
+        
+        # Check if we have any forecasts for the event date
+        event_date = self.start_time.date()
+        date_forecasts = [f for f in normalized_data if f.time.date() == event_date]
+        
+        if not date_forecasts:
+            self.debug(
+                "No forecasts found for event date",
+                event_date=event_date.isoformat(),
+                earliest_forecast=normalized_data[0].time.isoformat() if normalized_data else None,
+                latest_forecast=normalized_data[-1].time.isoformat() if normalized_data else None
+            )
+            return "No forecast available for this date"
+        
+        # Find first forecast before event start and last forecast before event end
+        start_idx = 0
+        for i, forecast in enumerate(date_forecasts):
+            if forecast.time > self.start_time:
+                start_idx = max(0, i - 1)
+                break
+        
+        end_idx = len(date_forecasts) - 1
+        for i, forecast in enumerate(date_forecasts):
+            if forecast.time > self.end_time:
+                end_idx = max(0, i - 1)
+                break
+        
+        filtered_data = date_forecasts[start_idx:end_idx + 1]
+        
         self.debug(
-            "Sorted forecasts by time",
-            times=[f.elaboration_time.isoformat() for f in normalized_data]
-        )
-        
-        # Filter forecasts to only include those that overlap with event time range
-        filtered_data = []
-        
-        for forecast in normalized_data:
-            # For 6-hour blocks, include if the event overlaps with the block
-            if '-' in forecast.symbol_time_range:
-                start_hour = int(forecast.symbol_time_range.split('-')[0].split(':')[0])
-                end_hour = int(forecast.symbol_time_range.split('-')[1].split(':')[0])
-                forecast_start = forecast.elaboration_time.replace(hour=start_hour, minute=0)
-                forecast_end = forecast.elaboration_time.replace(hour=end_hour, minute=0)
-                if end_hour < start_hour:  # Handle blocks that cross midnight
-                    forecast_end += timedelta(days=1)
-                
-                # Check if the event overlaps with this block
-                # Event starts before block ends AND event ends after block starts
-                if self.start_time < forecast_end and self.end_time > forecast_start:
-                    filtered_data.append(forecast)
-            else:
-                # For hourly forecasts, use the original logic
-                if self.start_time <= forecast.elaboration_time < self.end_time:
-                    filtered_data.append(forecast)
-        
-        self.debug(
-            "Filtered forecasts to event time range",
+            "Filtered forecasts",
+            event_date=event_date.isoformat(),
             original_count=len(normalized_data),
+            date_forecast_count=len(date_forecasts),
             filtered_count=len(filtered_data),
-            filtered_times=[f.elaboration_time.isoformat() for f in filtered_data],
-            start_time=self.start_time.isoformat(),
-            end_time=self.end_time.isoformat()
+            filtered_times=[f.time.isoformat() for f in filtered_data]
         )
+        
+        if not filtered_data:
+            return "No forecast available for event time"
         
         formatted_lines = []
+        now = datetime.now(self.utc_tz)
+        
         for forecast in filtered_data:
-            # Format time string based on symbol_time_range or just use the elaboration time
-            if forecast.symbol_time_range:
-                if '-' in forecast.symbol_time_range:
-                    start_hour, end_hour = forecast.symbol_time_range.split('-')
-                    # If it's a 1-hour block (end hour is start hour + 1), only show start time
-                    start_h = int(start_hour.split(':')[0])
-                    end_h = int(end_hour.split(':')[0])
-                    if (end_h == (start_h + 1) % 24):
-                        time_str = start_hour
-                    else:
-                        time_str = forecast.symbol_time_range
+            # Format time string based on block duration
+            if forecast.block_duration.total_seconds() > 3600:
+                # For multi-hour blocks, show the full range
+                block_end = forecast.time + forecast.block_duration
+                time_str = f"{forecast.time.strftime('%H:%M')}-{block_end.strftime('%H:%M')}"
             else:
-                time_str = forecast.elaboration_time.strftime('%H:%M')
+                time_str = forecast.time.strftime('%H:%M')
             
-            # Get weather symbol
-            symbol = get_weather_symbol(forecast.symbol)
+            # Get weather symbol - both services already convert to our WeatherCode enum
+            symbol = get_weather_symbol(forecast.weather_code.value)
             
             # Build weather line with optional precipitation and thunder probability
             parts = [time_str, symbol, f"{forecast.temperature:.1f}°C", f"{forecast.wind_speed:.1f}m/s"]
@@ -312,18 +313,18 @@ class Reservation(LoggerMixin):
                 else:
                     parts.append(f"💧{forecast.precipitation_probability:.0f}%")
             
-            if forecast.thunder_probability is not None and forecast.thunder_probability > 0:
+            if hasattr(forecast, 'thunder_probability') and forecast.thunder_probability is not None and forecast.thunder_probability > 0:
                 parts.append(f"⚡{forecast.thunder_probability:.0f}%")
             
             line = " ".join(parts)
             formatted_lines.append(line)
             self.debug(
                 "Formatted forecast line",
-                time=forecast.elaboration_time.isoformat(),
-                symbol_time_range=forecast.symbol_time_range,
+                time=forecast.time.isoformat(),
+                block_duration=forecast.block_duration.total_seconds() / 3600,
                 temperature=forecast.temperature,
                 wind_speed=forecast.wind_speed,
-                symbol=forecast.symbol,
+                weather_code=forecast.weather_code.value,
                 formatted=line
             )
         

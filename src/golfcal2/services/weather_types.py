@@ -3,81 +3,115 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Dict, Any, List, Optional, Union, Iterator, cast, TypeVar, Callable, overload
+from typing import Dict, Any, List, Optional, Union, Iterator, cast, TypeVar, Callable, overload, Sized
+from collections.abc import Iterable
 from zoneinfo import ZoneInfo
 import requests
+import traceback
 
-from golfcal2.exceptions import ErrorCode, GolfCalError, handle_errors
+from golfcal2.error_codes import ErrorCode
+from golfcal2.exceptions import GolfCalError, handle_errors
+from golfcal2.config.error_aggregator import aggregate_error
 
-class WeatherCode(str, Enum):
-    """Standard weather codes used across all weather services."""
-    CLEARSKY_DAY = 'clearsky_day'
-    CLEARSKY_NIGHT = 'clearsky_night'
-    FAIR_DAY = 'fair_day'
-    FAIR_NIGHT = 'fair_night'
-    PARTLYCLOUDY_DAY = 'partlycloudy_day'
-    PARTLYCLOUDY_NIGHT = 'partlycloudy_night'
-    CLOUDY = 'cloudy'
-    FOG = 'fog'
-    LIGHTRAIN = 'lightrain'
-    RAIN = 'rain'
-    HEAVYRAIN = 'heavyrain'
-    LIGHTRAINSHOWERS_DAY = 'lightrainshowers_day'
-    LIGHTRAINSHOWERS_NIGHT = 'lightrainshowers_night'
-    RAINSHOWERS_DAY = 'rainshowers_day'
-    RAINSHOWERS_NIGHT = 'rainshowers_night'
-    HEAVYRAINSHOWERS_DAY = 'heavyrainshowers_day'
-    HEAVYRAINSHOWERS_NIGHT = 'heavyrainshowers_night'
-    LIGHTSLEET = 'lightsleet'
-    SLEET = 'sleet'
-    HEAVYSLEET = 'heavysleet'
-    LIGHTSLEETSHOWERS_DAY = 'lightsleetshowers_day'
-    LIGHTSLEETSHOWERS_NIGHT = 'lightsleetshowers_night'
-    SLEETSHOWERS_DAY = 'sleetshowers_day'
-    SLEETSHOWERS_NIGHT = 'sleetshowers_night'
-    HEAVYSLEETSHOWERS_DAY = 'heavysleetshowers_day'
-    HEAVYSLEETSHOWERS_NIGHT = 'heavysleetshowers_night'
-    LIGHTSNOW = 'lightsnow'
-    SNOW = 'snow'
-    HEAVYSNOW = 'heavysnow'
-    LIGHTSNOWSHOWERS_DAY = 'lightsnowshowers_day'
-    LIGHTSNOWSHOWERS_NIGHT = 'lightsnowshowers_night'
-    SNOWSHOWERS_DAY = 'snowshowers_day'
-    SNOWSHOWERS_NIGHT = 'snowshowers_night'
-    HEAVYSNOWSHOWERS_DAY = 'heavysnowshowers_day'
-    HEAVYSNOWSHOWERS_NIGHT = 'heavysnowshowers_night'
-    THUNDER = 'thunder'
-    LIGHTRAINANDTHUNDER = 'lightrainandthunder'
-    RAINANDTHUNDER = 'rainandthunder'
-    HEAVYRAINANDTHUNDER = 'heavyrainandthunder'
-    LIGHTSLEETANDTHUNDER = 'lightsleetandthunder'
-    SLEETANDTHUNDER = 'sleetandthunder'
-    HEAVYSLEETANDTHUNDER = 'heavysleetandthunder'
-    LIGHTSNOWANDTHUNDER = 'lightsnowandthunder'
-    SNOWANDTHUNDER = 'snowandthunder'
-    HEAVYSNOWANDTHUNDER = 'heavysnowandthunder'
-    LIGHTRAINSHOWERSANDTHUNDER_DAY = 'lightrainshowersandthunder_day'
-    LIGHTRAINSHOWERSANDTHUNDER_NIGHT = 'lightrainshowersandthunder_night'
-    RAINSHOWERSANDTHUNDER_DAY = 'rainshowersandthunder_day'
-    RAINSHOWERSANDTHUNDER_NIGHT = 'rainshowersandthunder_night'
-    HEAVYRAINSHOWERSANDTHUNDER_DAY = 'heavyrainshowersandthunder_day'
-    HEAVYRAINSHOWERSANDTHUNDER_NIGHT = 'heavyrainshowersandthunder_night'
-    LIGHTSLEETSHOWERSANDTHUNDER_DAY = 'lightsleetshowersandthunder_day'
-    LIGHTSLEETSHOWERSANDTHUNDER_NIGHT = 'lightsleetshowersandthunder_night'
-    SLEETSHOWERSANDTHUNDER_DAY = 'sleetshowersandthunder_day'
-    SLEETSHOWERSANDTHUNDER_NIGHT = 'sleetshowersandthunder_night'
-    HEAVYSLEETSHOWERSANDTHUNDER_DAY = 'heavysleetshowersandthunder_day'
-    HEAVYSLEETSHOWERSANDTHUNDER_NIGHT = 'heavysleetshowersandthunder_night'
-    LIGHTSNOWSHOWERSANDTHUNDER_DAY = 'lightsnowshowersandthunder_day'
-    LIGHTSNOWSHOWERSANDTHUNDER_NIGHT = 'lightsnowshowersandthunder_night'
-    SNOWSHOWERSANDTHUNDER_DAY = 'snowshowersandthunder_day'
-    SNOWSHOWERSANDTHUNDER_NIGHT = 'snowshowersandthunder_night'
-    HEAVYSNOWSHOWERSANDTHUNDER_DAY = 'heavysnowshowersandthunder_day'
-    HEAVYSNOWSHOWERSANDTHUNDER_NIGHT = 'heavysnowshowersandthunder_night'
-    UNKNOWN = 'unknown'
+class SupportsIter(Iterable[Any]):
+    """Protocol for types that support iteration."""
+    pass
+
+class WeatherCode(Enum):
+    """Weather codes."""
+    UNKNOWN = "UNKNOWN"
+    CLEARSKY_DAY = "CLEARSKY_DAY"
+    CLEARSKY_NIGHT = "CLEARSKY_NIGHT"
+    FAIR_DAY = "FAIR_DAY"
+    FAIR_NIGHT = "FAIR_NIGHT"
+    PARTLYCLOUDY_DAY = "PARTLYCLOUDY_DAY"
+    PARTLYCLOUDY_NIGHT = "PARTLYCLOUDY_NIGHT"
+    CLOUDY = "CLOUDY"
+    RAINSHOWERS_DAY = "RAINSHOWERS_DAY"
+    RAINSHOWERS_NIGHT = "RAINSHOWERS_NIGHT"
+    LIGHTRAINSHOWERS_DAY = "LIGHTRAINSHOWERS_DAY"
+    LIGHTRAINSHOWERS_NIGHT = "LIGHTRAINSHOWERS_NIGHT"
+    HEAVYRAINSHOWERS_DAY = "HEAVYRAINSHOWERS_DAY"
+    HEAVYRAINSHOWERS_NIGHT = "HEAVYRAINSHOWERS_NIGHT"
+    LIGHTRAIN = "LIGHTRAIN"
+    RAIN = "RAIN"
+    HEAVYRAIN = "HEAVYRAIN"
+    THUNDERSTORM = "THUNDERSTORM"
+    THUNDER = "THUNDER"
+    RAINANDTHUNDER = "RAINANDTHUNDER"
+    HEAVYRAINANDTHUNDER = "HEAVYRAINANDTHUNDER"
+    LIGHTSNOW = "LIGHTSNOW"
+    SNOW = "SNOW"
+    HEAVYSNOW = "HEAVYSNOW"
+    LIGHTSNOWSHOWERS_DAY = "LIGHTSNOWSHOWERS_DAY"
+    LIGHTSNOWSHOWERS_NIGHT = "LIGHTSNOWSHOWERS_NIGHT"
+    SNOWSHOWERS_DAY = "SNOWSHOWERS_DAY"
+    SNOWSHOWERS_NIGHT = "SNOWSHOWERS_NIGHT"
+    HEAVYSNOWSHOWERS_DAY = "HEAVYSNOWSHOWERS_DAY"
+    HEAVYSNOWSHOWERS_NIGHT = "HEAVYSNOWSHOWERS_NIGHT"
+    LIGHTSLEET = "LIGHTSLEET"
+    SLEET = "SLEET"
+    HEAVYSLEET = "HEAVYSLEET"
+    FOG = "FOG"
+
+    @property
+    def thunder_probability(self) -> float:
+        """Get thunder probability based on weather code."""
+        if self in (WeatherCode.THUNDERSTORM, WeatherCode.HEAVYRAINANDTHUNDER):
+            return 0.8
+        elif self in (WeatherCode.THUNDER, WeatherCode.RAINANDTHUNDER):
+            return 0.5
+        return 0.0
+
+    @property
+    def description(self) -> str:
+        """Get human-readable description of the weather code."""
+        return {
+            WeatherCode.UNKNOWN: "Unknown",
+            WeatherCode.CLEARSKY_DAY: "Clear sky",
+            WeatherCode.CLEARSKY_NIGHT: "Clear sky",
+            WeatherCode.FAIR_DAY: "Fair",
+            WeatherCode.FAIR_NIGHT: "Fair",
+            WeatherCode.PARTLYCLOUDY_DAY: "Partly cloudy",
+            WeatherCode.PARTLYCLOUDY_NIGHT: "Partly cloudy",
+            WeatherCode.CLOUDY: "Cloudy",
+            WeatherCode.RAINSHOWERS_DAY: "Rain showers",
+            WeatherCode.RAINSHOWERS_NIGHT: "Rain showers",
+            WeatherCode.LIGHTRAINSHOWERS_DAY: "Light rain showers",
+            WeatherCode.LIGHTRAINSHOWERS_NIGHT: "Light rain showers",
+            WeatherCode.HEAVYRAINSHOWERS_DAY: "Heavy rain showers",
+            WeatherCode.HEAVYRAINSHOWERS_NIGHT: "Heavy rain showers",
+            WeatherCode.LIGHTRAIN: "Light rain",
+            WeatherCode.RAIN: "Rain",
+            WeatherCode.HEAVYRAIN: "Heavy rain",
+            WeatherCode.THUNDERSTORM: "Thunderstorm",
+            WeatherCode.THUNDER: "Thunder",
+            WeatherCode.RAINANDTHUNDER: "Rain and thunder",
+            WeatherCode.HEAVYRAINANDTHUNDER: "Heavy rain and thunder",
+            WeatherCode.LIGHTSNOW: "Light snow",
+            WeatherCode.SNOW: "Snow",
+            WeatherCode.HEAVYSNOW: "Heavy snow",
+            WeatherCode.LIGHTSNOWSHOWERS_DAY: "Light snow showers",
+            WeatherCode.LIGHTSNOWSHOWERS_NIGHT: "Light snow showers",
+            WeatherCode.SNOWSHOWERS_DAY: "Snow showers",
+            WeatherCode.SNOWSHOWERS_NIGHT: "Snow showers",
+            WeatherCode.HEAVYSNOWSHOWERS_DAY: "Heavy snow showers",
+            WeatherCode.HEAVYSNOWSHOWERS_NIGHT: "Heavy snow showers",
+            WeatherCode.LIGHTSLEET: "Light sleet",
+            WeatherCode.SLEET: "Sleet",
+            WeatherCode.HEAVYSLEET: "Heavy sleet",
+            WeatherCode.FOG: "Fog"
+        }[self]
+
+    def __str__(self) -> str:
+        """Return string representation of weather code."""
+        return self.value
 
 def get_weather_symbol(symbol_code: str) -> str:
     """Map weather symbol codes to emojis."""
+    # Convert to lowercase for case-insensitive matching
+    code = symbol_code.lower()
+    
     emoji_map = {
         # Clear and cloudy conditions
         'clearsky_day': '☀️',
@@ -100,17 +134,6 @@ def get_weather_symbol(symbol_code: str) -> str:
         'heavyrainshowers_day': '🌦️',
         'heavyrainshowers_night': '🌦️',
         
-        # Sleet
-        'lightsleet': '🌨️',
-        'sleet': '🌨️',
-        'heavysleet': '🌨️',
-        'lightsleetshowers_day': '🌨️',
-        'lightsleetshowers_night': '🌨️',
-        'sleetshowers_day': '🌨️',
-        'sleetshowers_night': '🌨️',
-        'heavysleetshowers_day': '🌨️',
-        'heavysleetshowers_night': '🌨️',
-        
         # Snow
         'lightsnow': '🌨️',
         'snow': '🌨️',
@@ -122,8 +145,20 @@ def get_weather_symbol(symbol_code: str) -> str:
         'heavysnowshowers_day': '🌨️',
         'heavysnowshowers_night': '🌨️',
         
+        # Sleet
+        'lightsleet': '🌨️',
+        'sleet': '🌨️',
+        'heavysleet': '🌨️',
+        'lightsleetshowers_day': '🌨️',
+        'lightsleetshowers_night': '🌨️',
+        'sleetshowers_day': '🌨️',
+        'sleetshowers_night': '🌨️',
+        'heavysleetshowers_day': '🌨️',
+        'heavysleetshowers_night': '🌨️',
+        
         # Thunder
         'thunder': '⛈️',
+        'thunderstorm': '⛈️',
         'lightrainandthunder': '⛈️',
         'rainandthunder': '⛈️',
         'heavyrainandthunder': '⛈️',
@@ -153,7 +188,7 @@ def get_weather_symbol(symbol_code: str) -> str:
         'heavysnowshowersandthunder_night': '⛈️',
         'unknown': '☁️'
     }
-    return emoji_map.get(symbol_code, '☁️')  # Default to cloudy if code not found
+    return emoji_map.get(code, '☁️')  # Default to cloudy if code not found
 
 @dataclass
 class Location:
@@ -184,171 +219,267 @@ class Location:
 
 @dataclass
 class WeatherData:
-    """Container for weather data."""
-    elaboration_time: datetime
-    temperature: Optional[float] = None
-    precipitation: Optional[float] = None
-    precipitation_probability: Optional[float] = None
-    wind_speed: Optional[float] = None
-    wind_direction: Optional[float] = None
-    weather_code: Union[WeatherCode, str] = WeatherCode.UNKNOWN
-    weather_description: str = ''  # Human-readable description
-    thunder_probability: Optional[float] = None
-    temperature_min: Optional[float] = None
-    temperature_max: Optional[float] = None
-    symbol_time_range: Optional[str] = None  # Time range for the weather symbol (e.g. "10:00-11:00")
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    """Weather data class."""
+    temperature: float  # Celsius
+    precipitation: float  # mm/h
+    precipitation_probability: float  # 0-100%
+    wind_speed: float  # m/s
+    wind_direction: float  # Degrees (0-360)
+    weather_code: WeatherCode  # Internal weather code
+    time: datetime  # UTC
+    thunder_probability: float = 0.0  # 0-100%
+    block_duration: timedelta = field(default_factory=lambda: timedelta(hours=1))  # Forecast block duration
 
     def __post_init__(self) -> None:
-        """Convert string values to appropriate types."""
-        if isinstance(self.temperature, str):
-            self.temperature = float(self.temperature)
-        if isinstance(self.precipitation, str):
-            self.precipitation = float(self.precipitation)
-        if isinstance(self.precipitation_probability, str):
-            self.precipitation_probability = float(self.precipitation_probability)
-        if isinstance(self.wind_speed, str):
-            self.wind_speed = float(self.wind_speed)
-        if isinstance(self.wind_direction, str):
-            try:
-                self.wind_direction = float(self.wind_direction)
-            except (ValueError, TypeError):
-                self.wind_direction = 0.0
-        if isinstance(self.thunder_probability, str):
-            self.thunder_probability = float(self.thunder_probability)
-        if isinstance(self.weather_code, str):
-            try:
-                self.weather_code = WeatherCode(self.weather_code)
-            except ValueError:
-                self.weather_code = WeatherCode.UNKNOWN
+        """Validate the weather data."""
+        if not isinstance(self.time, datetime):
+            raise ValueError("time must be a datetime object")
+        if not isinstance(self.block_duration, timedelta):
+            raise ValueError("block_duration must be a timedelta object")
+        if not isinstance(self.weather_code, WeatherCode):
+            raise ValueError("weather_code must be a WeatherCode enum value")
         
-        # Set min/max temperatures
-        self.temperature_min = self._convert_to_float(self.temperature_min, self.temperature)
-        self.temperature_max = self._convert_to_float(self.temperature_max, self.temperature)
+        # Ensure numeric fields are floats
+        self.temperature = float(self.temperature)
+        self.precipitation = float(self.precipitation)
+        self.precipitation_probability = float(self.precipitation_probability)
+        self.wind_speed = float(self.wind_speed)
+        self.wind_direction = float(self.wind_direction)
+        self.thunder_probability = float(self.thunder_probability)
 
-    def _convert_to_float(self, value: Optional[Union[float, str]], default: Optional[float] = None) -> Optional[float]:
-        """Convert string value to float."""
-        if value is None:
-            return default
-        if isinstance(value, float):
-            return value
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return default
-
-    @property
-    def symbol(self) -> str:
-        """Get weather symbol."""
-        if isinstance(self.weather_code, str):
-            return self.weather_code
-        return get_weather_symbol(self.weather_code)
-
-    def __str__(self) -> str:
-        """Return string representation of weather data."""
-        return (
-            f"WeatherData("
-            f"time={self.elaboration_time.isoformat()}, "
-            f"temp={self.temperature}°C, "
-            f"precip={self.precipitation}mm, "
-            f"wind={self.wind_speed}m/s@{self.wind_direction}°"
-            f")"
-        )
+        # Validate ranges
+        if not (0 <= self.precipitation_probability <= 100):
+            raise ValueError("precipitation_probability must be between 0 and 100")
+        if not (0 <= self.thunder_probability <= 100):
+            raise ValueError("thunder_probability must be between 0 and 100")
+        if not (0 <= self.wind_direction <= 360):
+            raise ValueError("wind_direction must be between 0 and 360")
+        if self.wind_speed < 0:
+            raise ValueError("wind_speed cannot be negative")
+        if self.precipitation < 0:
+            raise ValueError("precipitation cannot be negative")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
-            'elaboration_time': self.elaboration_time.isoformat(),
             'temperature': self.temperature,
             'precipitation': self.precipitation,
             'precipitation_probability': self.precipitation_probability,
             'wind_speed': self.wind_speed,
             'wind_direction': self.wind_direction,
-            'weather_code': self.weather_code.value if isinstance(self.weather_code, WeatherCode) else self.weather_code,
-            'weather_description': self.weather_description,
+            'weather_code': self.weather_code.value,
+            'time': self.time.isoformat(),
             'thunder_probability': self.thunder_probability,
-            'temperature_min': self.temperature_min,
-            'temperature_max': self.temperature_max,
-            'symbol_time_range': self.symbol_time_range,
-            'metadata': self.metadata
+            'block_duration': self.block_duration.total_seconds()
         }
 
 T = TypeVar('T', bound='WeatherData')
 
 @dataclass
 class WeatherResponse:
-    """Container for weather service responses."""
-    data: Union[WeatherData, List[WeatherData]]
+    """Weather response data class."""
+    data: List[WeatherData]
     elaboration_time: datetime
-    expires: Optional[datetime] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Validate the response data."""
         if not isinstance(self.data, list):
-            self.data = [self.data]
+            self.data = [self.data] if self.data is not None else []
+        if not isinstance(self.elaboration_time, datetime):
+            raise ValueError("elaboration_time must be a datetime object")
+        if not all(isinstance(item, WeatherData) for item in self.data):
+            raise ValueError("All items in data must be WeatherData objects")
 
     def __len__(self) -> int:
-        return len(self.data)  # Now data is always a list
+        return len(self.data)
 
     def __iter__(self) -> Iterator[WeatherData]:
-        return iter(self.data)  # Now data is always a list
+        return iter(self.data)
 
     def __getitem__(self, idx: int) -> WeatherData:
-        return self.data[idx]  # Now data is always a list
+        return self.data[idx]
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             'data': [d.to_dict() for d in self.data],
-            'elaboration_time': self.elaboration_time.isoformat(),
-            'expires': self.expires.isoformat() if self.expires else None,
-            'metadata': self.metadata
+            'elaboration_time': self.elaboration_time.isoformat()
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'WeatherResponse':
+        """Create WeatherResponse from dictionary.
+        
+        Args:
+            data: Dictionary containing weather response data
+            
+        Returns:
+            WeatherResponse object
+        """
+        weather_data = []
+        for item in data['data']:
+            # Convert block_duration from seconds back to timedelta
+            block_duration = timedelta(seconds=item['block_duration'])
+            # Parse time from ISO format
+            time = datetime.fromisoformat(item['time'])
+            # Create WeatherData object
+            weather_data.append(WeatherData(
+                temperature=item['temperature'],
+                precipitation=item['precipitation'],
+                precipitation_probability=item['precipitation_probability'],
+                wind_speed=item['wind_speed'],
+                wind_direction=item['wind_direction'],
+                weather_code=WeatherCode(item['weather_code']),
+                time=time,
+                thunder_probability=item['thunder_probability'],
+                block_duration=block_duration
+            ))
+        
+        # Parse elaboration_time from ISO format
+        elaboration_time = datetime.fromisoformat(data['elaboration_time'])
+        
+        return cls(data=weather_data, elaboration_time=elaboration_time)
+
     def __str__(self) -> str:
-        return f"WeatherResponse(data={self.data}, elaboration_time={self.elaboration_time}, expires={self.expires})"
+        return f"WeatherResponse(data={self.data}, elaboration_time={self.elaboration_time})"
+
+def _handle_weather_error(error: Exception, service: str, operation: str) -> Dict[str, Any]:
+    """Handle weather service error and return details."""
+    details = {
+        "service": service,
+        "operation": operation,
+        "error_type": type(error).__name__,
+        "traceback": "".join(traceback.format_tb(error.__traceback__)) if error.__traceback__ else ""
+    }
+    
+    if isinstance(error, requests.exceptions.RequestException):
+        response = getattr(error, "response", None)
+        request = getattr(error, "request", None)
+        if response is not None:
+            details["status_code"] = response.status_code
+        if request is not None:
+            details["url"] = request.url
+    
+    return details
 
 class WeatherError(GolfCalError):
     """Base class for weather service errors."""
-    def __init__(self, message: str, error_code: ErrorCode = ErrorCode.WEATHER_ERROR, 
-                 traceback: Optional[str] = None) -> None:
-        """Initialize weather error."""
-        super().__init__(message, error_code, traceback)
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, code=ErrorCode.WEATHER_ERROR, details=details)
 
 class WeatherServiceError(WeatherError):
-    """Error raised when weather service fails."""
-    def __init__(self, message: str, traceback: Optional[str] = None) -> None:
-        """Initialize weather service error."""
-        super().__init__(message, ErrorCode.WEATHER_SERVICE_ERROR, traceback)
+    """Error in weather service operation."""
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
 
 class WeatherParseError(WeatherError):
-    """Error raised when parsing weather data fails."""
-    def __init__(self, message: str, traceback: Optional[str] = None) -> None:
-        """Initialize weather parse error."""
-        super().__init__(message, ErrorCode.WEATHER_PARSE_ERROR, traceback)
+    """Error parsing weather data."""
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
+
+class WeatherValidationError(WeatherError):
+    """Error validating weather data."""
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
+
+class WeatherServiceUnavailable(WeatherError):
+    """Error raised when weather service is unavailable."""
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
+
+class WeatherServiceTimeout(WeatherError):
+    """Error raised when weather service times out."""
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
+
+class WeatherServiceRateLimited(WeatherError):
+    """Error raised when weather service rate limit is exceeded."""
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
+
+class WeatherServiceInvalidResponse(WeatherError):
+    """Error raised when weather service returns invalid response."""
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
 
 class WeatherRequestError(WeatherError):
     """Error raised when weather request fails."""
-    def __init__(self, message: str, traceback: Optional[str] = None) -> None:
-        """Initialize weather request error."""
-        super().__init__(message, ErrorCode.WEATHER_REQUEST_ERROR, traceback)
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
 
 class WeatherTimeoutError(WeatherError):
     """Error raised when weather request times out."""
-    def __init__(self, message: str, traceback: Optional[str] = None) -> None:
-        """Initialize weather timeout error."""
-        super().__init__(message, ErrorCode.WEATHER_TIMEOUT_ERROR, traceback)
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
 
 class WeatherAuthError(WeatherError):
     """Error raised when weather service authentication fails."""
-    def __init__(self, message: str, traceback: Optional[str] = None) -> None:
-        """Initialize weather auth error."""
-        super().__init__(message, ErrorCode.WEATHER_AUTH_ERROR, traceback)
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
 
 class WeatherLocationError(WeatherError):
     """Error raised when location data is invalid or missing."""
-    def __init__(self, message: str, traceback: Optional[str] = None) -> None:
-        """Initialize weather location error."""
-        super().__init__(message, ErrorCode.WEATHER_LOCATION_ERROR, traceback)
+    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+        details = details or {}
+        details.update({
+            "service": service,
+            "operation": operation
+        })
+        super().__init__(message=message, service=service, operation=operation, details=details)
 
 @handle_errors(GolfCalError, service="weather", operation="base")
 class WeatherService:
@@ -413,7 +544,7 @@ class WeatherService:
         Returns:
             WeatherResponse object containing the weather data.
         """
-        return WeatherResponse(data=data, elaboration_time=elaboration_time, expires=expires)
+        return WeatherResponse(data=data, elaboration_time=elaboration_time)
 
     def _handle_errors(self, error_code: ErrorCode, message: str, traceback: Optional[str] = None, recovery_func: Optional[Callable[[], Iterator[Any]]] = None) -> None:
         """Handle errors and attempt recovery if possible.
@@ -431,49 +562,28 @@ class WeatherService:
             message = f"{message} (Recovery failed: {str(e)})"
         aggregate_error(error_code, message, traceback)
 
+def handle_weather_error(error: Exception, service: str, operation: str) -> None:
+    """Handle weather service error."""
+    details = _handle_weather_error(error, service, operation)
+    if isinstance(error, WeatherError):
+        raise error
+    raise WeatherServiceError(str(error), service, operation, details)
+
 def handle_errors(
     error_class: type[GolfCalError],
-    service: str = "",
-    operation: str = "",
-    recovery_func: Optional[Callable[[], Iterator[Any]]] = None
-) -> Callable[[Any], Any]:
-    """Decorator for handling errors in weather services.
-    
-    Args:
-        error_class: The error class to use for the error.
-        service: The service name for error context.
-        operation: The operation name for error context.
-        recovery_func: Optional function to call for recovery.
-    
-    Returns:
-        Decorator function that handles errors.
-    """
+    service: str,
+    operation: str,
+    fallback: Optional[Callable[[], Any]] = None
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Decorator to handle errors in weather services."""
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
-            except error_class as e:
-                if recovery_func:
-                    try:
-                        return recovery_func()
-                    except Exception as recovery_error:
-                        aggregate_error(
-                            error_class,
-                            f"Recovery failed for {service}.{operation}",
-                            str(recovery_error)
-                        )
-                aggregate_error(
-                    error_class,
-                    f"Error in {service}.{operation}",
-                    str(e)
-                )
-                return None
             except Exception as e:
-                aggregate_error(
-                    error_class,
-                    f"Unexpected error in {service}.{operation}",
-                    str(e)
-                )
-                return None
+                details = _handle_weather_error(e, service, operation)
+                if fallback:
+                    return fallback()
+                raise error_class(str(e), code=ErrorCode.WEATHER_ERROR, details=details)
         return wrapper
     return decorator 

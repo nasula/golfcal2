@@ -215,16 +215,26 @@ class OpenMeteoService(WeatherService):
             for i, time_str in enumerate(times):
                 try:
                     time = datetime.fromisoformat(time_str)
+                    
+                    # Convert values to float
+                    temperature = float(hourly['temperature_2m'][i])
+                    precipitation = float(hourly['precipitation'][i])
+                    precipitation_probability = float(hourly['precipitation_probability'][i])
+                    wind_speed = float(hourly['windspeed_10m'][i])
+                    wind_direction = float(hourly['winddirection_10m'][i])
+                    weather_code = self._map_wmo_code(int(hourly['weathercode'][i]), time.hour)
+                    thunder_probability = self._get_thunder_probability(int(hourly['weathercode'][i]))
+                    
                     weather_data.append(WeatherData(
-                        elaboration_time=time,
-                        temperature=hourly['temperature_2m'][i],
-                        precipitation=hourly['precipitation'][i],
-                        precipitation_probability=hourly['precipitation_probability'][i],
-                        wind_speed=hourly['windspeed_10m'][i],
-                        wind_direction=hourly['winddirection_10m'][i],
-                        weather_code=self._map_wmo_code(hourly['weathercode'][i], time.hour),
-                        symbol_time_range=f"{time.hour:02d}:00-{((time.hour + 1) % 24):02d}:00",
-                        thunder_probability=self._get_thunder_probability(hourly['weathercode'][i])
+                        temperature=temperature,
+                        precipitation=precipitation,
+                        precipitation_probability=precipitation_probability,
+                        wind_speed=wind_speed,
+                        wind_direction=wind_direction,
+                        weather_code=weather_code,
+                        time=time,
+                        thunder_probability=thunder_probability,
+                        block_duration=timedelta(hours=1)
                     ))
                 except (KeyError, IndexError, ValueError) as e:
                     self._handle_errors(

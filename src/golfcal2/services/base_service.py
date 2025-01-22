@@ -5,10 +5,14 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any, Union
 from zoneinfo import ZoneInfo
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin, log_execution
-from golfcal2.services.weather_types import WeatherData, WeatherResponse
+from golfcal2.services.weather_types import (
+    WeatherData, WeatherResponse, WeatherError, WeatherServiceUnavailable,
+    WeatherServiceInvalidResponse, WeatherServiceTimeout, WeatherServiceRateLimited,
+    WeatherAuthError, WeatherValidationError, WeatherServiceError, WeatherLocationError
+)
 from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.services.weather_location_cache import WeatherLocationCache
-from golfcal2.exceptions import WeatherError, ErrorCode
+from golfcal2.error_codes import ErrorCode
 
 class WeatherService(EnhancedLoggerMixin):
     """Base class for weather services."""
@@ -48,7 +52,20 @@ class WeatherService(EnhancedLoggerMixin):
             WeatherError: With the given error code and message
         """
         self.error(f"Weather service error: {message}", error_code=error_code)
-        raise WeatherError(error_code, message)
+        if error_code == ErrorCode.SERVICE_UNAVAILABLE:
+            raise WeatherServiceUnavailable(message, self.service_type)
+        elif error_code == ErrorCode.INVALID_RESPONSE:
+            raise WeatherServiceInvalidResponse(message, self.service_type)
+        elif error_code == ErrorCode.TIMEOUT:
+            raise WeatherServiceTimeout(message, self.service_type)
+        elif error_code == ErrorCode.RATE_LIMITED:
+            raise WeatherServiceRateLimited(message, self.service_type)
+        elif error_code == ErrorCode.AUTH_FAILED:
+            raise WeatherAuthError(message, self.service_type)
+        elif error_code == ErrorCode.VALIDATION_FAILED:
+            raise WeatherValidationError(message, self.service_type)
+        else:
+            raise WeatherServiceError(message, self.service_type)
     
     def get_expiry_time(self) -> datetime:
         """Get expiry time for current weather data.
@@ -70,113 +87,82 @@ class WeatherService(EnhancedLoggerMixin):
         end_time: datetime,
         club: Optional[str] = None
     ) -> Optional[WeatherResponse]:
-        """Get weather data for a location.
+        """Get weather data for a location and time range.
         
         Args:
             lat: Latitude
             lon: Longitude
             start_time: Start time for forecast
             end_time: End time for forecast
-            club: Optional club identifier for caching
+            club: Optional club name for caching
             
         Returns:
-            Optional[WeatherResponse]: Weather data if available
+            WeatherResponse object or None if no data available
         """
         try:
-            # Validate input
+            # Validate inputs
             if not (-90 <= lat <= 90):
-                raise ValueError(f"Invalid latitude: {lat}")
+                raise WeatherLocationError(f"Invalid latitude: {lat}", self.service_type)
             if not (-180 <= lon <= 180):
-                raise ValueError(f"Invalid longitude: {lon}")
-            
-            # Convert times to UTC
-            start_time = start_time.astimezone(self.utc_tz)
-            end_time = end_time.astimezone(self.utc_tz)
-            
-            # Validate time range
+                raise WeatherLocationError(f"Invalid longitude: {lon}", self.service_type)
             if start_time > end_time:
-                raise ValueError("Start time must be before end time")
+                raise WeatherValidationError("Start time must be before end time", self.service_type)
             
-            # Check if location is covered
-            if not self.covers_location(lat, lon):
-                self.warning(
-                    "Location not covered by service",
-                    latitude=lat,
-                    longitude=lon
-                )
-                return None
+            # Try to get from cache first
+            if self.cache is not None and club is not None:
+                cached = self.cache.get(club, lat, lon, start_time, end_time)
+                if cached is not None:
+                    return cached
             
-            # Get weather data
-            try:
-                response = self._get_weather(lat, lon, start_time, end_time, club)
-                if response and response.data:
-                    self.info(
-                        "Got weather data",
-                        coords=(lat, lon),
-                        time_range=f"{start_time.isoformat()} to {end_time.isoformat()}",
-                        forecast_count=len(response.data)
-                    )
-                    return response
-                
-                self.warning("No weather data found")
+            # Fetch and parse data
+            response_data = self._fetch_forecasts(lat, lon, start_time, end_time)
+            if response_data is None:
                 return None
                 
-            except Exception as e:
-                self.error("Failed to get weather data", exc_info=e)
-                return None
-                
+            weather_response = self._parse_response(response_data)
+            
+            # Cache the response if possible
+            if weather_response is not None and self.cache is not None and club is not None:
+                self.cache.set(club, lat, lon, start_time, end_time, weather_response)
+            
+            return weather_response
+            
+        except WeatherError:
+            raise
         except Exception as e:
             self.error("Error in get_weather", exc_info=e)
             return None
-
-    def _get_weather(
-        self,
-        lat: float,
-        lon: float,
-        start_time: datetime,
-        end_time: datetime,
-        club: Optional[str] = None
-    ) -> Optional[WeatherResponse]:
-        """Internal method to get weather data.
-        
-        This should be implemented by subclasses.
-        """
-        raise NotImplementedError
-
-    def _fetch_forecasts(
-        self,
-        lat: float,
-        lon: float,
-        start_time: datetime,
-        end_time: datetime
-    ) -> Optional[Dict[str, Any]]:
-        """Fetch forecast data from the weather service.
-        
-        This should be implemented by subclasses.
-        """
-        raise NotImplementedError
-
-    def _parse_response(
-        self,
-        response_data: Dict[str, Any],
-        start_time: datetime,
-        end_time: datetime,
-        interval: int
-    ) -> Optional[List[WeatherData]]:
-        """Parse response data into weather data objects.
-        
-        This should be implemented by subclasses.
+            
+    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
+        """Fetch forecasts from the weather service.
         
         Args:
-            response_data: Raw response data from weather service
+            lat: Latitude
+            lon: Longitude
             start_time: Start time for forecast
             end_time: End time for forecast
-            interval: Time interval in hours
             
         Returns:
-            Optional[List[WeatherData]]: List of weather data objects if parsing successful
+            Dictionary containing the forecast data or None if no data available
+            
+        Raises:
+            WeatherError: If there is an error fetching the forecasts
         """
-        raise NotImplementedError
+        raise NotImplementedError("Subclasses must implement _fetch_forecasts")
+        
+    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+        """Parse the response data into a WeatherResponse object.
+        
+        Args:
+            response_data: Dictionary containing the forecast data
+            
+        Returns:
+            WeatherResponse object or None if parsing fails
+            
+        Raises:
+            WeatherError: If there is an error parsing the response
+        """
+        raise NotImplementedError("Subclasses must implement _parse_response")
 
     def covers_location(self, lat: float, lon: float) -> bool:
         """Check if service covers given location.

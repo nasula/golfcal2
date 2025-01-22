@@ -1,7 +1,7 @@
 """Event builder classes for calendar events."""
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
 
@@ -12,6 +12,7 @@ from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.config.settings import AppConfig
 from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_types import Location, WeatherResponse
 
 class EventBuilder(ABC, LoggerMixin):
     """Base class for event builders."""
@@ -35,61 +36,27 @@ class EventBuilder(ABC, LoggerMixin):
         """Build an event."""
         pass
     
-    def _get_weather(self, coordinates: Dict[str, float], start_time: datetime, duration_minutes: int, club_name: str) -> Optional[str]:
-        """Get weather data if available.
-        
-        Args:
-            coordinates: Latitude and longitude
-            start_time: Event start time (in local timezone)
-            duration_minutes: Event duration in minutes
-            club_name: Name of the club/venue
-            
-        Returns:
-            Formatted weather string or None if weather data not available
-        """
+    def _get_weather(self, location: Location, start_time: datetime, end_time: datetime) -> Optional[WeatherResponse]:
         try:
-            # Ensure start time has timezone
-            if start_time.tzinfo is None:
-                start_time = start_time.replace(tzinfo=self.local_tz)
-            
-            # Keep times in local timezone for weather service
-            end_time = start_time + timedelta(minutes=duration_minutes)
-            
-            weather_data = self.weather_service.get_weather(
-                lat=coordinates['lat'],
-                lon=coordinates['lon'],
-                start_time=start_time,
-                end_time=end_time,
-                club=club_name
+            weather_response = self.weather_service.get_weather(
+                location.latitude, location.longitude, start_time, end_time
             )
-
-            if weather_data:
-                # Create a simple reservation just for formatting
-                from golfcal2.models.reservation import Reservation
-                
-                temp_reservation = Reservation(
-                    club=None,  # Not needed for weather formatting
-                    user=None,  # Not needed for weather formatting
-                    membership=None,  # Not needed for weather formatting
-                    start_time=start_time,
-                    end_time=start_time + timedelta(minutes=duration_minutes),
-                    players=[],
-                    raw_data={}
-                )
-                
-                # Convert forecast times back to local timezone
-                forecasts = weather_data if isinstance(weather_data, list) else weather_data.data
-                
-                if forecasts and all(hasattr(f, 'elaboration_time') for f in forecasts):
-                    for forecast in forecasts:
-                        if forecast.elaboration_time.tzinfo is None:
-                            forecast.elaboration_time = forecast.elaboration_time.replace(tzinfo=ZoneInfo('UTC'))
-                        forecast.elaboration_time = forecast.elaboration_time.astimezone(self.local_tz)
-                
-                return temp_reservation._format_weather_data(forecasts)
-            return None
+            
+            # Convert forecast times to local timezone
+            for forecast in weather_response.data:
+                if forecast.time.tzinfo is None:
+                    forecast.time = forecast.time.replace(tzinfo=timezone.utc)
+                forecast.time = forecast.time.astimezone(self.local_tz)
+            
+            # Convert elaboration time to local timezone
+            if weather_response.elaboration_time.tzinfo is None:
+                weather_response.elaboration_time = weather_response.elaboration_time.replace(tzinfo=timezone.utc)
+            weather_response.elaboration_time = weather_response.elaboration_time.astimezone(self.local_tz)
+            
+            return weather_response
+            
         except Exception as e:
-            self.logger.error(f"Failed to get weather data: {e}")
+            self.error("Failed to get weather data", exc_info=e)
             return None
 
 class ReservationEventBuilder(EventBuilder):
@@ -115,11 +82,17 @@ class ReservationEventBuilder(EventBuilder):
             weather_data = None
             if 'coordinates' in club_config:
                 duration_minutes = club_config.get('duration_minutes', 240)
+                coords = club_config['coordinates']
+                location = Location(
+                    id=str(coords['lat']) + ',' + str(coords['lon']),
+                    name=club_config.get('name', 'Golf Club'),
+                    latitude=coords['lat'],
+                    longitude=coords['lon']
+                )
                 weather_data = self._get_weather(
-                    club_config['coordinates'],
+                    location,
                     reservation.start_time,
-                    duration_minutes,
-                    reservation.membership.clubAbbreviation
+                    reservation.start_time + timedelta(minutes=duration_minutes)
                 )
             
             # Add description with player details and weather
@@ -168,14 +141,30 @@ class ExternalEventBuilder(EventBuilder):
             # Add weather if coordinates available
             if 'coordinates' in event_data:
                 duration_minutes = int((end - start).total_seconds() / 60)
+                coords = event_data['coordinates']
+                location = Location(
+                    id=str(coords['lat']) + ',' + str(coords['lon']),
+                    name=event_data.get('name', 'Golf Event'),
+                    latitude=coords['lat'],
+                    longitude=coords['lon']
+                )
                 weather_data = self._get_weather(
-                    event_data['coordinates'],
+                    location,
                     start,
-                    duration_minutes,
-                    event_data['name']  # Use event name directly instead of EXT_ prefix
+                    start + timedelta(minutes=duration_minutes)
                 )
                 if weather_data:
-                    description += f"\n\nWeather:\n{weather_data}"
+                    # Create a temporary reservation just for weather formatting
+                    temp_reservation = Reservation(
+                        club=None,  # Not needed for weather formatting
+                        user=None,  # Not needed for weather formatting
+                        membership=None,  # Not needed for weather formatting
+                        start_time=start,
+                        end_time=end,
+                        players=[],
+                        raw_data={}
+                    )
+                    description += "\n\nWeather:\n" + temp_reservation._format_weather_data(weather_data)
             
             event.add('description', vText(description))
             return event

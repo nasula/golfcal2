@@ -218,7 +218,7 @@ class PlayerFetchMixin(LoggerMixin):
     ) -> List[Dict[str, Any]]:
         """
         Fetch players from REST API.
-        
+
         Args:
             reservation: Reservation data
             membership: User's membership details
@@ -234,7 +234,7 @@ class PlayerFetchMixin(LoggerMixin):
             self.logger.debug(f"REST URL: {rest_url}")
             
             # Create API instance with REST URL
-            api = api_class(rest_url, self.auth_service, self.club_details, membership)
+            api = api_class(rest_url, self.auth_service, self.club_details, membership.__dict__)
             
             # Get the date from the reservation
             reservation_date = datetime.strptime(
@@ -421,135 +421,27 @@ class CalendarHandlerMixin:
         return calendar 
 
 class RequestHandlerMixin:
-    """Mixin for handling API requests with consistent retry, error handling, and logging."""
-
+    """Mixin for handling HTTP requests."""
+    
     def _make_request(
         self,
         method: str,
         endpoint: str,
-        params: Optional[Dict[str, str]] = None,
-        data: Optional[Dict[str, Any]] = None,
-        timeout: Optional[Tuple[int, int]] = (7, 20),
-        retry_count: int = 3,
-        retry_delay: int = 5,
-        verify_ssl: bool = True
-    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
-        """
-        Make an HTTP request with retry logic, error handling, and logging.
-        
-        Args:
-            method: HTTP method (GET, POST, etc.)
-            endpoint: API endpoint to request
-            params: Optional query parameters
-            data: Optional request data
-            timeout: Request timeout as (connect timeout, read timeout)
-            retry_count: Number of retries on failure
-            retry_delay: Delay between retries in seconds
-            verify_ssl: Whether to verify SSL certificates
-            
-        Returns:
-            Response data as dictionary or list
-            
-        Raises:
-            APITimeoutError: If request times out
-            APIResponseError: If request fails
-            APIValidationError: If response validation fails
-        """
-        start_time = time.time()
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        """Make HTTP request with error handling."""
         url = urljoin(self.base_url, endpoint)
-        
-        # Log request details at debug level
-        self.logger.debug(f"Making {method} request to {url}")
-        self.logger.debug(f"Headers: {dict(self.session.headers)}")
-        self.logger.debug(f"Params: {params}")
-        self.logger.debug(f"Data: {data}")
-        
-        for attempt in range(retry_count):
-            try:
-                # Make request with session
-                response = self.session.request(
-                    method=method,
-                    url=url,
-                    params=params,
-                    json=data,
-                    timeout=timeout,
-                    verify=verify_ssl
-                )
-                
-                # Handle common status codes
-                if response.status_code == 404:
-                    self.logger.error(f"Resource not found at {url}")
-                    return {}
-                
-                if response.status_code in (401, 403):
-                    self.logger.error(f"Authentication failed for {url}")
-                    raise APIAuthError("Authentication failed")
-                
-                response.raise_for_status()
-                
-                # Try to parse JSON response
-                try:
-                    response_data = response.json()
-                    
-                    # Log response at debug level
-                    self.logger.debug(f"Got response in {time.time() - start_time:.2f}s")
-                    self.logger.debug(f"Response data: {response_data}")
-                    
-                    return response_data
-                    
-                except ValueError as e:
-                    self.logger.error(f"Failed to parse JSON response: {response.text}")
-                    raise APIResponseError(f"Invalid JSON response: {str(e)}")
-                    
-            except requests.exceptions.Timeout as e:
-                if attempt < retry_count - 1:
-                    self.logger.warning(f"Request timed out (attempt {attempt + 1}/{retry_count}), retrying in {retry_delay}s")
-                    time.sleep(retry_delay)
-                    continue
-                elapsed = time.time() - start_time
-                self.logger.error(f"Request timed out after {elapsed:.2f}s")
-                raise APITimeoutError(f"Request timed out after {elapsed:.2f}s: {str(e)}")
-                
-            except requests.exceptions.RequestException as e:
-                if attempt < retry_count - 1:
-                    self.logger.warning(f"Request failed (attempt {attempt + 1}/{retry_count}), retrying in {retry_delay}s")
-                    time.sleep(retry_delay)
-                    continue
-                elapsed = time.time() - start_time
-                self.logger.error(f"Request failed after {elapsed:.2f}s: {str(e)}")
-                raise APIResponseError(f"Request failed after {elapsed:.2f}s: {str(e)}")
-                
-            except Exception as e:
-                elapsed = time.time() - start_time
-                self.logger.error(f"Unexpected error after {elapsed:.2f}s: {str(e)}")
-                raise APIError(f"Unexpected error after {elapsed:.2f}s: {str(e)}")
-
-    def _extract_data_from_response(
-        self,
-        response: Union[Dict[str, Any], List[Dict[str, Any]]],
-        data_keys: List[str] = ["rows", "reservations"]
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract data from API response with consistent handling of different formats.
-        
-        Args:
-            response: API response data
-            data_keys: List of keys to check for data in response
-            
-        Returns:
-            List of data items
-        """
-        if isinstance(response, list):
-            self.logger.debug(f"Found {len(response)} items in list response")
-            return response
-            
-        if isinstance(response, dict):
-            for key in data_keys:
-                if key in response:
-                    items = response[key]
-                    self.logger.debug(f"Found {len(items)} items in '{key}'")
-                    return items
-            
-            self.logger.warning(f"Response does not contain any of {data_keys}. Keys: {list(response.keys())}")
-            
-        return [] 
+        try:
+            response = self.session.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.Timeout as e:
+            raise APITimeoutError(f"Request timed out: {e}")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                raise APIAuthError(f"Authentication failed: {e}")
+            raise APIResponseError(f"HTTP error: {e}")
+        except requests.exceptions.RequestException as e:
+            raise APIError(f"Request failed: {e}")
+        except ValueError as e:
+            raise APIResponseError(f"Invalid JSON response: {e}") 

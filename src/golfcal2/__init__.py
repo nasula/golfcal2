@@ -13,10 +13,21 @@ from .exceptions import (
     AuthError,
     ConfigError,
     ValidationError,
-    WeatherError,
     CalendarError,
     CalendarWriteError,
     CalendarEventError
+)
+
+from .services.weather_types import (
+    WeatherError,
+    WeatherServiceError,
+    WeatherServiceUnavailable,
+    WeatherServiceTimeout,
+    WeatherServiceRateLimited,
+    WeatherServiceInvalidResponse,
+    WeatherAuthError,
+    WeatherValidationError,
+    WeatherLocationError
 )
 
 __all__ = [
@@ -29,6 +40,14 @@ __all__ = [
     'ConfigError',
     'ValidationError',
     'WeatherError',
+    'WeatherServiceError',
+    'WeatherServiceUnavailable',
+    'WeatherServiceTimeout',
+    'WeatherServiceRateLimited',
+    'WeatherServiceInvalidResponse',
+    'WeatherAuthError',
+    'WeatherValidationError',
+    'WeatherLocationError',
     'CalendarError',
     'CalendarWriteError',
     'CalendarEventError'

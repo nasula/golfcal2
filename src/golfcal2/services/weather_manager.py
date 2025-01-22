@@ -1,7 +1,59 @@
-from typing import List, Optional
-from datetime import datetime
+from typing import List, Optional, Dict, Any, Union
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-class WeatherManager:
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+from golfcal2.services.base_service import WeatherService
+from golfcal2.services.met_weather_service import MetWeatherService
+from golfcal2.services.open_meteo_service import OpenMeteoService
+from golfcal2.services.weather_types import (
+    WeatherResponse, WeatherError, WeatherServiceUnavailable,
+    WeatherServiceTimeout, WeatherServiceRateLimited
+)
+
+class WeatherManager(EnhancedLoggerMixin):
+    """Manager class for weather services."""
+
+    def __init__(
+        self,
+        local_tz: Union[str, ZoneInfo],
+        utc_tz: Union[str, ZoneInfo],
+        config: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Initialize weather manager.
+        
+        Args:
+            local_tz: Local timezone
+            utc_tz: UTC timezone
+            config: Optional configuration dictionary
+        """
+        super().__init__()
+        self.config = config or {}
+        self.local_tz = local_tz if isinstance(local_tz, ZoneInfo) else ZoneInfo(local_tz)
+        self.utc_tz = utc_tz if isinstance(utc_tz, ZoneInfo) else ZoneInfo(utc_tz)
+        
+        # Initialize services
+        self.services: List[WeatherService] = []
+        self._init_services()
+        
+    def _init_services(self) -> None:
+        """Initialize weather services based on configuration."""
+        # Initialize Met service if configured
+        if "met" in self.config:
+            try:
+                met_service = MetWeatherService(self.local_tz, self.utc_tz)
+                self.services.append(met_service)
+            except Exception as e:
+                self.error("Failed to initialize Met service", exc_info=e)
+        
+        # Initialize OpenMeteo service if configured
+        if "openmeteo" in self.config:
+            try:
+                openmeteo_service = OpenMeteoService(self.local_tz, self.utc_tz)
+                self.services.append(openmeteo_service)
+            except Exception as e:
+                self.error("Failed to initialize OpenMeteo service", exc_info=e)
+                
     def get_weather(
         self,
         lat: float,
@@ -10,76 +62,53 @@ class WeatherManager:
         end_time: datetime,
         club: Optional[str] = None
     ) -> Optional[WeatherResponse]:
-        """Get weather data for a location."""
-        try:
-            # Validate input
-            if not (-90 <= lat <= 90):
-                raise ValueError(f"Invalid latitude: {lat}")
-            if not (-180 <= lon <= 180):
-                raise ValueError(f"Invalid longitude: {lon}")
+        """Get weather data from available services.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            start_time: Start time for forecast
+            end_time: End time for forecast
+            club: Optional club name for caching
             
-            # Convert times to UTC
-            start_time = start_time.astimezone(self.utc_tz)
-            end_time = end_time.astimezone(self.utc_tz)
+        Returns:
+            WeatherResponse object or None if no data available
+        """
+        if not self.services:
+            self.error("No weather services configured")
+            return None
             
-            # Validate time range
-            if start_time > end_time:
-                raise ValueError("Start time must be before end time")
-            
-            # Get services that cover this location
-            services = self._get_services_for_location(lat, lon)
-            if not services:
-                self.warning(
-                    "No weather services available for location",
-                    latitude=lat,
-                    longitude=lon
-                )
-                return None
-            
-            # Try each service in order
-            for service in services:
-                try:
-                    self.debug(
-                        "Trying weather service",
-                        service=service.__class__.__name__,
-                        coords=(lat, lon),
-                        time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
-                    )
-                    
-                    response = service.get_weather(lat, lon, start_time, end_time, club)
-                    if response and response.data:
-                        self.info(
-                            "Got weather data",
-                            service=service.__class__.__name__,
-                            coords=(lat, lon),
-                            time_range=f"{start_time.isoformat()} to {end_time.isoformat()}",
-                            forecast_count=len(response.data)
-                        )
-                        return response
-                    
-                    self.debug(
-                        "Service returned no data",
-                        service=service.__class__.__name__
-                    )
-                    
-                except Exception as e:
-                    self.warning(
-                        "Weather service failed",
-                        exc_info=e,
-                        service=service.__class__.__name__
-                    )
-                    continue
-            
-            self.warning(
+        errors: List[Exception] = []
+        for service in self.services:
+            try:
+                response = service.get_weather(lat, lon, start_time, end_time, club)
+                if response is not None:
+                    return response
+            except WeatherServiceUnavailable as e:
+                self.warning(f"Service {service.service_type} unavailable", exc_info=e)
+                errors.append(e)
+            except WeatherServiceTimeout as e:
+                self.warning(f"Service {service.service_type} timeout", exc_info=e)
+                errors.append(e)
+            except WeatherServiceRateLimited as e:
+                self.warning(f"Service {service.service_type} rate limited", exc_info=e)
+                errors.append(e)
+            except WeatherError as e:
+                self.error(f"Service {service.service_type} error", exc_info=e)
+                errors.append(e)
+            except Exception as e:
+                self.error(f"Unexpected error in service {service.service_type}", exc_info=e)
+                errors.append(e)
+                
+        if errors:
+            self.error(
                 "All weather services failed",
+                error_count=len(errors),
                 coords=(lat, lon),
                 time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
             )
-            return None
             
-        except Exception as e:
-            self.error("Failed to get weather data", exc_info=e)
-            return None
+        return None
 
     def _get_services_for_location(
         self,

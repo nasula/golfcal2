@@ -12,7 +12,10 @@ import requests
 
 from golfcal2.exceptions import ErrorCode
 from golfcal2.services.base_service import WeatherService
-from golfcal2.services.weather_types import WeatherData, WeatherResponse, WeatherCode
+from golfcal2.services.weather_types import (
+    WeatherData, WeatherResponse, WeatherCode, WeatherError,
+    WeatherServiceUnavailable, WeatherServiceTimeout, WeatherServiceRateLimited
+)
 from golfcal2.utils.logging_utils import get_logger
 
 class MetWeatherService(WeatherService):
@@ -68,20 +71,13 @@ class MetWeatherService(WeatherService):
                     end_time=end_time.isoformat()
                 )
                 return None
-
-            # Determine forecast interval based on time range
-            interval = self.get_block_size(hours_ahead)
             
             # Fetch and parse forecast data
             response_data = self._fetch_forecasts(lat, lon, start_time, end_time)
             if not response_data:
                 return None
                 
-            weather_data = self._parse_response(response_data)
-            if not weather_data:
-                return None
-                
-            return weather_data  # Return the WeatherResponse directly
+            return self._parse_response(response_data)
             
         except Exception as e:
             self.error("Failed to get weather data from MET", exc_info=e)
@@ -108,75 +104,102 @@ class MetWeatherService(WeatherService):
             response = requests.get(url, headers=headers, params=params)
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.Timeout:
+            self._handle_errors(
+                ErrorCode.TIMEOUT,
+                "Request timed out"
+            )
+            return None
         except requests.exceptions.RequestException as e:
             self._handle_errors(
                 ErrorCode.WEATHER_REQUEST_ERROR,
-                f"Failed to fetch weather data: {str(e)}"
+                f"Request failed: {str(e)}"
             )
             return None
 
     def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
-        """Parse response from MET API."""
+        """Parse MET API response into WeatherData objects.
+        
+        Args:
+            response_data: Raw response data from MET API
+            
+        Returns:
+            List of WeatherData objects or None if parsing fails
+        """
         try:
-            if not isinstance(response_data, dict) or 'properties' not in response_data:
+            weather_data = []
+            now_utc = datetime.now(self.utc_tz)
+            
+            # Get forecast data
+            forecast = response_data.get('properties', {}).get('timeseries', [])
+            if not forecast:
                 self._handle_errors(
                     ErrorCode.WEATHER_PARSE_ERROR,
-                    "Invalid response format from MET API"
+                    "No forecast data in response"
                 )
                 return None
 
-            timeseries = response_data.get('properties', {}).get('timeseries', [])
-            if not timeseries:
-                return None
-
-            weather_data = []
-            for entry in timeseries:
+            # Parse each forecast entry
+            for i, entry in enumerate(forecast):
                 try:
+                    # Get time and data
                     time = datetime.fromisoformat(entry['time'].replace('Z', '+00:00'))
-                    instant = entry.get('data', {}).get('instant', {}).get('details', {})
-                    next_hour = entry.get('data', {}).get('next_1_hours', {})
-                    next_six_hours = entry.get('data', {}).get('next_6_hours', {})
-
-                    # Get precipitation and its probability
-                    precipitation = (
-                        next_hour.get('details', {}).get('precipitation_amount')
-                        or next_six_hours.get('details', {}).get('precipitation_amount')
-                        or 0.0
-                    )
-                    precipitation_probability = (
-                        next_hour.get('details', {}).get('probability_of_precipitation')
-                        or next_six_hours.get('details', {}).get('probability_of_precipitation')
+                    data = entry.get('data', {})
+                    instant = data.get('instant', {}).get('details', {})
+                    
+                    # Get block end time from next forecast's start time
+                    block_end = None
+                    if i < len(forecast) - 1:
+                        next_time = datetime.fromisoformat(forecast[i + 1]['time'].replace('Z', '+00:00'))
+                        block_end = next_time
+                    else:
+                        # For last entry, use same duration as previous block
+                        block_end = time + (time - prev_time if i > 0 else timedelta(hours=1))
+                    
+                    block_duration = block_end - time
+                    
+                    # Get appropriate forecast data block
+                    next_block = data.get('next_6_hours' if block_duration.total_seconds() > 3600 else 'next_1_hours', {})
+                    if not next_block:
+                        continue
+                    
+                    # Get values with defaults
+                    temperature = instant.get('air_temperature', 0.0)
+                    precipitation = next_block.get('details', {}).get('precipitation_amount', 0.0)
+                    precipitation_probability = next_block.get('details', {}).get('probability_of_precipitation', 0.0)
+                    wind_speed = instant.get('wind_speed', 0.0)
+                    wind_direction = instant.get('wind_from_direction', 0.0)
+                    symbol = next_block.get('summary', {}).get('symbol_code', 'unknown')
+                    
+                    # Calculate thunder probability based on weather code
+                    thunder_probability = 0.0
+                    if 'thunder' in symbol.lower():
+                        thunder_probability = 50.0  # Default probability for thunder conditions
+                    
+                    # Convert time to local timezone
+                    local_time = time.astimezone(self.local_tz)
+                    
+                    self.debug(
+                        "Processing forecast entry",
+                        time=time.isoformat(),
+                        block_end=block_end.isoformat(),
+                        block_duration=block_duration.total_seconds() / 3600,
+                        block_type="hourly" if block_duration.total_seconds() <= 3600 else "6-hour"
                     )
                     
-                    # Get thunder probability
-                    thunder_probability = (
-                        next_hour.get('details', {}).get('probability_of_thunder')
-                        or next_six_hours.get('details', {}).get('probability_of_thunder')
-                    )
-
-                    # Get symbol code from next_1_hours if available, otherwise from next_6_hours
-                    symbol = (
-                        next_hour.get('summary', {}).get('symbol_code')
-                        or next_six_hours.get('summary', {}).get('symbol_code')
-                        or 'cloudy'
-                    )
-
-                    # Determine interval based on which forecast is available
-                    interval = 1 if 'next_1_hours' in entry.get('data', {}) else 6
-
-                    # Convert time to local timezone for symbol_time_range
-                    local_time = time.astimezone(self.local_tz)
                     weather_data.append(WeatherData(
-                        elaboration_time=time,
-                        temperature=instant.get('air_temperature'),
+                        temperature=temperature,
                         precipitation=precipitation,
                         precipitation_probability=precipitation_probability,
+                        wind_speed=wind_speed,
+                        wind_direction=wind_direction,
+                        weather_code=WeatherCode(self._map_met_code(symbol)),
+                        time=local_time,
                         thunder_probability=thunder_probability,
-                        wind_speed=instant.get('wind_speed'),
-                        wind_direction=instant.get('wind_from_direction'),
-                        weather_code=self._map_met_code(symbol),
-                        symbol_time_range=f"{local_time.hour:02d}:00-{((local_time.hour + interval) % 24):02d}:00"
+                        block_duration=block_duration
                     ))
+                    
+                    prev_time = time
                 except (KeyError, ValueError) as e:
                     self._handle_errors(
                         ErrorCode.WEATHER_PARSE_ERROR,
@@ -248,3 +271,19 @@ class MetWeatherService(WeatherService):
         elif base_code == 'thunder':
             return WeatherCode.THUNDER.value
         return WeatherCode.UNKNOWN.value
+
+    def _handle_errors(self, error_code: ErrorCode, message: str) -> None:
+        """Handle errors by raising appropriate exceptions.
+        
+        Args:
+            error_code: Error code
+            message: Error message
+        """
+        if error_code == ErrorCode.TIMEOUT:
+            raise WeatherServiceTimeout(message)
+        elif error_code == ErrorCode.RATE_LIMITED:
+            raise WeatherServiceRateLimited(message)
+        elif error_code == ErrorCode.SERVICE_UNAVAILABLE:
+            raise WeatherServiceUnavailable(message)
+        else:
+            raise WeatherError(message, error_code)

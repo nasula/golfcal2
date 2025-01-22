@@ -1,23 +1,26 @@
 import unittest
 from unittest.mock import patch
-from exceptions import (
+from golfcal2.exceptions import (
     GolfCalError,
     APIError,
     LegacyAPIError,
     APITimeoutError,
     APIRateLimitError,
     APIResponseError,
+    APIValidationError,
     AuthError,
     ConfigError,
     ValidationError,
-    WeatherError,
-    WeatherServiceUnavailable,
-    WeatherDataError,
     CalendarError,
     CalendarWriteError,
     CalendarEventError,
     ErrorCode,
     handle_errors
+)
+from golfcal2.services.weather_types import (
+    WeatherError,
+    WeatherServiceError,
+    WeatherServiceUnavailable
 )
 import requests
 from typing import Optional
@@ -99,24 +102,32 @@ class TestExceptions(unittest.TestCase):
 
     def test_weather_error(self):
         details = {"provider": "test"}
-        error = WeatherError("Weather service error", ErrorCode.SERVICE_ERROR, details)
+        error = WeatherError("Weather service error", service="test_service", operation="test_op", details=details)
         self.assertEqual(error.message, "Weather service error")
-        self.assertEqual(error.code, ErrorCode.SERVICE_ERROR)
-        self.assertEqual(error.details, details)
+        self.assertEqual(error.code, ErrorCode.WEATHER_ERROR)
+        self.assertEqual(error.details["service"], "test_service")
+        self.assertEqual(error.details["operation"], "test_op")
+        self.assertEqual(error.details["provider"], "test")
 
     def test_weather_service_unavailable(self):
         details = {"provider": "test", "status": "down"}
-        error = WeatherServiceUnavailable("Service unavailable", details)
+        error = WeatherServiceUnavailable("Service unavailable", service="test_service", operation="test_op", details=details)
         self.assertEqual(error.message, "Service unavailable")
-        self.assertEqual(error.code, ErrorCode.SERVICE_UNAVAILABLE)
-        self.assertEqual(error.details, details)
+        self.assertEqual(error.code, ErrorCode.WEATHER_ERROR)
+        self.assertEqual(error.details["service"], "test_service")
+        self.assertEqual(error.details["operation"], "test_op")
+        self.assertEqual(error.details["provider"], "test")
+        self.assertEqual(error.details["status"], "down")
 
     def test_weather_data_error(self):
         details = {"field": "temperature", "reason": "missing"}
-        error = WeatherDataError("Invalid weather data", details)
+        error = WeatherServiceError("Invalid weather data", service="test_service", operation="test_op", details=details)
         self.assertEqual(error.message, "Invalid weather data")
-        self.assertEqual(error.code, ErrorCode.INVALID_RESPONSE)
-        self.assertEqual(error.details, details)
+        self.assertEqual(error.code, ErrorCode.WEATHER_ERROR)
+        self.assertEqual(error.details["service"], "test_service")
+        self.assertEqual(error.details["operation"], "test_op")
+        self.assertEqual(error.details["field"], "temperature")
+        self.assertEqual(error.details["reason"], "missing")
 
     def test_calendar_error(self):
         details = {"calendar_id": "test"}

@@ -3,7 +3,7 @@ WiseGolf API client for golf calendar application.
 """
 
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 from urllib.parse import urljoin
 import time
 import requests
@@ -33,32 +33,28 @@ class WiseGolfAPI(BaseAPI, RequestHandlerMixin):
     - Getting player details
     """
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Dict[str, Any]):
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any]):
         """Initialize WiseGolf API client.
         
         Args:
             base_url: Base URL for the API
             auth_service: Authentication service instance
             club_details: Club configuration details
-            membership: User's membership details
+            membership: User's membership details (can be a dict or an object)
             
         Raises:
             WiseGolfAuthError: If authentication fails
         """
         try:
+            # Initialize base API first
+            super().__init__(base_url, auth_service, club_details, membership)
+            
             # Debug logging
             self.logger.debug("WiseGolfAPI initialization:")
             self.logger.debug(f"Base URL: {base_url}")
             self.logger.debug(f"Club details: {club_details}")
-            self.logger.debug(f"Membership auth details: {membership.get('auth_details', {})}")
             
-            super().__init__(base_url, auth_service, club_details, membership)
-            
-            # Debug logging after initialization
-            self.logger.debug("WiseGolfAPI headers after initialization:")
-            self.logger.debug(f"Headers: {dict(self.session.headers)}")
-            self.logger.debug(f"Final base URL: {self.base_url}")
-            
+            # Update session headers
             self.session.headers.update({
                 "x-session-type": "wisegolf",
                 "Accept": "application/json, text/plain, */*"
@@ -67,6 +63,7 @@ class WiseGolfAPI(BaseAPI, RequestHandlerMixin):
             # Debug logging after header update
             self.logger.debug("WiseGolfAPI final headers:")
             self.logger.debug(f"Final headers: {dict(self.session.headers)}")
+            
         except Exception as e:
             self.logger.error(f"Failed to initialize WiseGolf API: {str(e)}")
             raise WiseGolfAuthError(f"Failed to initialize WiseGolf API: {str(e)}")
@@ -121,36 +118,48 @@ class WiseGolfAPI(BaseAPI, RequestHandlerMixin):
             raise WiseGolfResponseError(f"Unexpected error fetching players: {str(e)}")
 
 class WiseGolf0API(BaseAPI, RequestHandlerMixin):
-    """WiseGolf0 API client."""
+    """WiseGolf0 API client implementation.
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Dict[str, Any]):
-        """Initialize WiseGolf0 API client."""
-        init_start_time = time.time()
-        super().__init__(base_url, auth_service, club_details, membership)
+    This class handles communication with the WiseGolf0 API, including:
+    - User authentication
+    - Fetching reservations
+    - Getting player details
+    """
+    
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any]):
+        """Initialize WiseGolf0 API client.
         
-        # Extract auth details from membership
-        self.auth_details = getattr(membership, 'auth_details', {})
-        
-        # Get the REST URL for player details
-        self.rest_url = club_details.get('restUrl')
-        if not self.rest_url:
-            self.logger.error("No restUrl found in club_details")
-        
-        self.session.headers.update({
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Priority": "u=3, i",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1.1 Safari/605.1.15"
-        })
-        
-        # Log configuration
-        self.logger.debug(f"WiseGolf0API initialized with:")
-        self.logger.debug(f"Base URL: {self.base_url}")
-        self.logger.debug(f"Headers: {dict(self.session.headers)}")
+        Args:
+            base_url: Base URL for the API
+            auth_service: Authentication service instance
+            club_details: Club configuration details
+            membership: User's membership details (can be a dict or an object)
+            
+        Raises:
+            WiseGolfAuthError: If authentication fails
+        """
+        try:
+            # Initialize base API first
+            super().__init__(base_url, auth_service, club_details, membership)
+            
+            # Debug logging
+            self.logger.debug("WiseGolf0API initialization:")
+            self.logger.debug(f"Base URL: {base_url}")
+            self.logger.debug(f"Club details: {club_details}")
+            
+            # Update session headers
+            self.session.headers.update({
+                "x-session-type": "wisegolf0",
+                "Accept": "application/json, text/plain, */*"
+            })
+            
+            # Debug logging after header update
+            self.logger.debug("WiseGolf0API final headers:")
+            self.logger.debug(f"Final headers: {dict(self.session.headers)}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize WiseGolf0 API: {str(e)}")
+            raise WiseGolfAuthError(f"Failed to initialize WiseGolf0 API: {str(e)}")
     
     def get_reservations(self) -> List[Dict[str, Any]]:
         """Get user's reservations."""

@@ -24,7 +24,7 @@ class GolfClub(ABC, LoggerMixin):
     url: str
     address: str = "Unknown"
     timezone: str = "UTC"
-    coordinates: Dict[str, float] = None
+    coordinates: Optional[Dict[str, float]] = None
     variant: Optional[str] = None
     product: Optional[str] = None
     auth_service: Optional[AuthService] = None
@@ -46,6 +46,10 @@ class GolfClub(ABC, LoggerMixin):
         # Initialize timezone manager with club's timezone
         if self._tz_manager is None:
             self._tz_manager = TimezoneManager(self.timezone)
+            
+        # Initialize coordinates if not set
+        if self.coordinates is None:
+            self.coordinates = {}
 
     @abstractmethod
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
@@ -112,11 +116,11 @@ class GolfClub(ABC, LoggerMixin):
         Returns:
             End time as datetime
         """
-        hours = duration["hours"] if "hours" in duration else 0
-        minutes = duration["minutes"] if "minutes" in duration else 0
+        hours = duration.get("hours", 0)
+        minutes = duration.get("minutes", 0)
         end_time = start_time + timedelta(hours=hours, minutes=minutes)
         # Ensure end_time has the same timezone as start_time
-        if start_time.tzinfo and not end_time.tzinfo:
+        if start_time.tzinfo and not end_time.tzinfo and self._tz_manager is not None:
             end_time = self._tz_manager.localize_datetime(end_time)
         return end_time
 
@@ -127,7 +131,20 @@ class WiseGolfClub(GolfClub, PlayerFetchMixin):
         """Fetch reservations from WiseGolf API."""
         from golfcal2.api.wise_golf import WiseGolfAPI
         
-        api = WiseGolfAPI(self.url, self.auth_service, self.club_details, membership)
+        if self.auth_service is None:
+            self.logger.error("No auth service available")
+            return []
+            
+        if self.club_details is None:
+            self.logger.error("No club details available")
+            return []
+            
+        api = WiseGolfAPI(
+            self.url,
+            self.auth_service,
+            self.club_details,
+            membership.__dict__  # Use __dict__ instead of to_dict()
+        )
         return api.get_reservations()
 
     def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
@@ -143,7 +160,7 @@ class WiseGolfClub(GolfClub, PlayerFetchMixin):
     
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""
-        start_time_str = reservation["dateTimeStart"]
+        start_time_str = reservation.get("dateTimeStart")
         if not start_time_str:
             raise ValueError("No start time in reservation")
         
@@ -151,7 +168,27 @@ class WiseGolfClub(GolfClub, PlayerFetchMixin):
             start_time_str,
             "%Y-%m-%d %H:%M:%S"
         )
-        return self._tz_manager.localize_datetime(start_time)
+        if self._tz_manager is not None:
+            return self._tz_manager.localize_datetime(start_time)
+        return start_time.replace(tzinfo=ZoneInfo(self.timezone))
+
+    def fetch_players_from_rest(self, reservation: Dict[str, Any], membership: Membership, api_class, rest_url: str) -> List[Dict[str, Any]]:
+        """
+        Fetch players from REST API.
+        
+        Args:
+            reservation: Reservation data
+            membership: User's membership details
+            
+        Returns:
+            List of player dictionaries
+        """
+        try:
+            api = api_class(rest_url, membership.__dict__)
+            return api.get_players(reservation)
+        except Exception as e:
+            self.logger.error(f"Failed to fetch players from REST API: {e}", exc_info=True)
+            return []
 
 class WiseGolf0Club(GolfClub, PlayerFetchMixin):
     """WiseGolf0 golf club implementation."""
@@ -162,14 +199,29 @@ class WiseGolf0Club(GolfClub, PlayerFetchMixin):
         
         # Initialize coordinates from club details if available
         if self.club_details and 'coordinates' in self.club_details:
-            self.coordinates = self.club_details['coordinates']
+            coords = self.club_details['coordinates']
+            if isinstance(coords, dict) and all(isinstance(v, float) for v in coords.values()):
+                self.coordinates = coords
 
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from WiseGolf0 API."""
         from golfcal2.api.wise_golf import WiseGolf0API
         
+        if self.auth_service is None:
+            self.logger.error("No auth service available")
+            return []
+            
+        if self.club_details is None:
+            self.logger.error("No club details available")
+            return []
+            
         self.logger.debug(f"Creating WiseGolf0API instance with URL: {self.url}")
-        api = WiseGolf0API(self.url, self.auth_service, self.club_details, membership)
+        api = WiseGolf0API(
+            self.url,
+            self.auth_service,
+            self.club_details,
+            membership.__dict__  # Use __dict__ instead of to_dict()
+        )
         self.logger.debug("Fetching reservations")
         reservations = api.get_reservations()
         self.logger.debug(f"Got {len(reservations)} reservations")
@@ -192,7 +244,7 @@ class WiseGolf0Club(GolfClub, PlayerFetchMixin):
     
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf0 reservation."""
-        start_time_str = reservation["dateTimeStart"]
+        start_time_str = reservation.get("dateTimeStart")
         if not start_time_str:
             raise ValueError("No start time in reservation")
         
@@ -200,7 +252,9 @@ class WiseGolf0Club(GolfClub, PlayerFetchMixin):
             start_time_str,
             "%Y-%m-%d %H:%M:%S"
         )
-        return self._tz_manager.localize_datetime(start_time)
+        if self._tz_manager is not None:
+            return self._tz_manager.localize_datetime(start_time)
+        return start_time.replace(tzinfo=ZoneInfo(self.timezone))
 
 class NexGolfClub(GolfClub):
     """NexGolf golf club implementation."""
@@ -269,7 +323,7 @@ class ExternalGolfClub(GolfClub):
     url: str
     address: str = "Unknown"
     timezone: str = "UTC"
-    coordinates: Dict[str, float] = None
+    coordinates: Optional[Dict[str, float]] = None  # Make coordinates optional
     variant: Optional[str] = None
     product: Optional[str] = None
     auth_service: Optional[AuthService] = None
@@ -283,7 +337,7 @@ class ExternalGolfClub(GolfClub):
         """Get formatted location string."""
         return self.address
 
-    def get_event_summary(self) -> str:
+    def get_event_summary(self, reservation: Optional[Dict[str, Any]] = None) -> str:
         """Get event summary."""
         return f"Golf: {self.name}"
 
@@ -364,7 +418,7 @@ class GolfClubFactory:
             "config": config
         }
 
-        club = None
+        club: Optional[GolfClub] = None
         if club_type == "wisegolf":
             club = WiseGolfClub(**common_args)
         elif club_type == "wisegolf0":
@@ -374,7 +428,7 @@ class GolfClubFactory:
         elif club_type == "teetime":
             club = TeeTimeClub(**common_args)
         
-        if club:
+        if club is not None:
             cls._clubs[club_name] = club
         
         return club

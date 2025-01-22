@@ -7,9 +7,13 @@ from typing import Dict, Any, List, Optional
 from math import radians, sin, cos, sqrt, atan2
 import json
 import requests
+import logging
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
+from golfcal2.exceptions import handle_errors
+from golfcal2.services.weather_types import WeatherError, WeatherResponse
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
-from golfcal2.exceptions import WeatherError, handle_errors
 
 class WeatherLocationCache(EnhancedLoggerMixin):
     """Cache for weather service location data."""

@@ -90,3 +90,28 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
         except APIError as e:
             self.logger.error(f"API error: {e}")
             return []
+            
+    def _extract_data_from_response(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract reservation data from API response.
+        
+        Args:
+            response: API response data
+            
+        Returns:
+            List of reservation dictionaries
+        """
+        if not response:
+            self.logger.error("Empty response from API")
+            return []
+            
+        # Check if response is a list first since that's the expected type
+        if isinstance(response, list):
+            return response
+            
+        # If not a list, check if it's a dict with reservations
+        if isinstance(response, dict) and 'reservations' in response:
+            return response['reservations']
+            
+        # Log error for invalid response type
+        self.logger.error(f"Invalid response type: {type(response)}")
+        return []

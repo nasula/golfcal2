@@ -1,14 +1,16 @@
 """Configuration type definitions."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any, Optional, TypedDict, List, Union
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 class WeatherApiConfig(TypedDict):
     """Weather API configuration."""
-    aemet: str
-    openweather: str
+    met: str
+    openmeteo: str
 
 class ApiKeysConfig(TypedDict):
     """API keys configuration."""
@@ -78,6 +80,67 @@ class ClubConfig(TypedDict):
     coordinates: Optional[Coordinates]
 
 @dataclass
+class WeatherConfig:
+    """Weather service configuration."""
+    met: str
+    openmeteo: str
+
+@dataclass
+class APIKeys:
+    """API key configuration."""
+    weather: WeatherConfig
+
+@dataclass
+class GlobalConfig:
+    """Global configuration."""
+    api_keys: APIKeys
+    timezone: str = "Europe/Oslo"
+    utc_timezone: str = "UTC"
+    log_level: str = "INFO"
+    log_file: str = "golfcal2.log"
+    log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    log_date_format: str = "%Y-%m-%d %H:%M:%S"
+    log_max_bytes: int = 10485760  # 10MB
+    log_backup_count: int = 5
+    log_to_console: bool = True
+    log_to_file: bool = True
+    log_to_syslog: bool = False
+    log_syslog_address: str = "/dev/log"
+    log_syslog_facility: str = "local0"
+    log_syslog_format: str = "%(name)s: %(levelname)s %(message)s"
+    log_syslog_level: str = "INFO"
+    log_syslog_tag: str = "golfcal2"
+    log_syslog_enabled: bool = False
+    log_syslog_host: str = "localhost"
+    log_syslog_port: int = 514
+    log_syslog_socket: str = "UDP"
+    log_syslog_tls: bool = False
+    log_syslog_tls_verify: bool = True
+    log_syslog_tls_ca_cert: str = ""
+    log_syslog_tls_cert: str = ""
+    log_syslog_tls_key: str = ""
+    log_syslog_tls_password: str = ""
+    log_syslog_tls_keyfile: str = ""
+    log_syslog_tls_certfile: str = ""
+    log_syslog_tls_ca_certs: str = ""
+    log_syslog_tls_ciphers: str = ""
+    log_syslog_tls_version: str = ""
+    log_syslog_tls_verify_mode: str = ""
+    log_syslog_tls_verify_flags: str = ""
+    log_syslog_tls_verify_depth: int = 0
+    log_syslog_tls_verify_callback: str = ""
+    log_syslog_tls_verify_hostname: bool = True
+    log_syslog_tls_verify_cert: bool = True
+    log_syslog_tls_verify_key: bool = True
+    log_syslog_tls_verify_chain: bool = True
+    log_syslog_tls_verify_dates: bool = True
+    log_syslog_tls_verify_hostname_callback: str = ""
+    log_syslog_tls_verify_cert_callback: str = ""
+    log_syslog_tls_verify_key_callback: str = ""
+    log_syslog_tls_verify_chain_callback: str = ""
+    log_syslog_tls_verify_dates_callback: str = ""
+
+@dataclass
 class AppConfig:
     """Application configuration."""
     users: Dict[str, UserConfig]
@@ -94,19 +157,11 @@ class AppConfig:
     def __post_init__(self):
         """Initialize additional fields from global config."""
         if 'api_keys' not in self.__dict__ or not self.api_keys:
-            self.api_keys = self.global_config.get('api_keys', {'weather': {'aemet': '', 'openweather': ''}})
+            self.api_keys = self.global_config.get('api_keys', {'weather': {'met': '', 'openmeteo': ''}})
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get configuration value with default."""
+        """Get configuration value."""
         return getattr(self, key, default)
-
-    def __getitem__(self, key: str) -> Any:
-        """Support dictionary-style access."""
-        return getattr(self, key)
-
-    def __contains__(self, key: str) -> bool:
-        """Support 'in' operator."""
-        return hasattr(self, key)
 
     def get_ics_path(self, user_name: str) -> Optional[str]:
         """Get ICS file path for a user.

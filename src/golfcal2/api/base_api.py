@@ -7,6 +7,7 @@ import json
 import time
 from typing import Dict, Any, Optional, Tuple, Union, List
 from urllib.parse import urljoin
+from dataclasses import dataclass
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -27,37 +28,66 @@ class BaseAPI(LoggerMixin):
     DEFAULT_RETRY_BACKOFF_FACTOR = 0.5
     DEFAULT_RETRY_STATUS_FORCELIST = [408, 429, 500, 502, 503, 504]
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Dict[str, Any]):
-        """
-        Initialize base API client.
-        
+    def __init__(
+        self,
+        base_url: str,
+        auth_service: Optional[Any] = None,
+        club_details: Optional[Dict[str, Any]] = None,
+        membership: Optional[Union[Dict[str, Any], Any]] = None
+    ):
+        """Initialize API client.
+
         Args:
             base_url: Base URL for API
-            auth_service: Authentication service instance
-            club_details: Club configuration details
-            membership: User's membership details
+            auth_service: Optional authentication service
+            club_details: Optional club details dictionary
+            membership: Optional membership details (dict or object)
         """
         super().__init__()  # Initialize LoggerMixin
         
         init_start_time = time.time()
         self.base_url = base_url.rstrip("/")
         self.auth_service = auth_service
-        self.club_details = club_details
+        self.club_details = club_details or {}
         self.membership = membership
         
-        # Initialize session with retry strategy
+        # Get auth details from membership
+        self.auth_details = {}
+        if membership is not None:
+            if isinstance(membership, dict):
+                self.auth_details = membership.get('auth_details', {})
+            else:
+                self.auth_details = getattr(membership, 'auth_details', {})
+
+        # Create session with retry strategy
         self.session = self._create_session()
         
         # Get authentication strategy and create headers
-        auth_type = club_details.get('auth_type', 'token_appauth')
-        cookie_name = club_details.get('cookie_name', '')
-        self.headers = auth_service.create_headers(auth_type, cookie_name, membership['auth_details'])
-        self.session.headers.update(self.headers)
+        auth_type = self.club_details.get('auth_type', 'token_appauth')
+        cookie_name = self.club_details.get('cookie_name', '')
         
-        # Build full URL with authentication parameters
-        self.full_url = auth_service.build_full_url(auth_type, club_details, membership)
-        if self.full_url:
-            self.base_url = self.full_url
+        # Create headers using auth details
+        if auth_service:
+            self.headers = auth_service.create_headers(auth_type, cookie_name, self.auth_details)
+            self.session.headers.update(self.headers)
+            
+            # Build full URL with authentication parameters
+            if membership is not None:
+                # Convert dict to Membership object if needed
+                from golfcal2.models.user import Membership
+                if isinstance(membership, dict):
+                    membership_obj = Membership(
+                        club=membership.get('club', ''),
+                        clubAbbreviation=membership.get('clubAbbreviation', ''),
+                        duration=membership.get('duration', {'hours': 4}),
+                        auth_details=membership.get('auth_details', {})
+                    )
+                else:
+                    membership_obj = membership
+                
+                self.full_url = auth_service.build_full_url(auth_type, self.club_details, membership_obj)
+                if self.full_url:
+                    self.base_url = self.full_url
         
         init_end_time = time.time()
         self.logger.debug(f"BaseAPI: Total initialization took {init_end_time - init_start_time:.2f} seconds")
