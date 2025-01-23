@@ -124,40 +124,56 @@ class GolfClub(ABC, LoggerMixin):
             end_time = self._tz_manager.localize_datetime(end_time)
         return end_time
 
-class WiseGolfClub(GolfClub, PlayerFetchMixin):
-    """WiseGolf golf club implementation."""
+class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
+    """Base class for WiseGolf implementations."""
     
-    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
-        """Fetch reservations from WiseGolf API."""
-        from golfcal2.api.wise_golf import WiseGolfAPI
+    def __post_init__(self):
+        """Initialize after dataclass initialization."""
+        super().__post_init__()
         
-        if self.auth_service is None:
-            self.logger.error("No auth service available")
-            return []
-            
-        if self.club_details is None:
-            self.logger.error("No club details available")
-            return []
-            
-        api = WiseGolfAPI(
-            self.url,
-            self.auth_service,
-            self.club_details,
-            membership.__dict__  # Use __dict__ instead of to_dict()
-        )
-        return api.get_reservations()
+        # Initialize coordinates from club details if available
+        if self.club_details and 'coordinates' in self.club_details:
+            coords = self.club_details['coordinates']
+            if isinstance(coords, dict) and all(isinstance(v, float) for v in coords.values()):
+                self.coordinates = coords
 
-    def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
-        """Fetch players for a reservation from WiseGolf REST API."""
-        from golfcal2.api.wise_golf import WiseGolfAPI
+    def fetch_players_from_rest(self, reservation: Dict[str, Any], membership: Membership, api_class, rest_url: str) -> List[Dict[str, Any]]:
+        """
+        Base implementation for fetching players from REST API.
         
-        # Get the REST URL from the club's configuration
-        rest_url = self.url.replace("ajax.", "api.")  # Convert ajax URL to REST API URL
-        if not rest_url.endswith("/api/1.0"):
-            rest_url += "/api/1.0"
-        
-        return self.fetch_players_from_rest(reservation, membership, WiseGolfAPI, rest_url)
-    
+        Args:
+            reservation: Reservation data
+            membership: User's membership details
+            api_class: API class to use
+            rest_url: REST API URL
+            
+        Returns:
+            List of player dictionaries
+        """
+        try:
+            api = api_class(
+                rest_url,
+                self.auth_service,
+                self.club_details,
+                membership.__dict__
+            )
+            
+            # Extract required fields for player fetch
+            start_time = reservation.get('dateTimeStart', '')
+            date = start_time.split()[0] if start_time else ''  # Get YYYY-MM-DD part
+            
+            player_request = {
+                'productId': str(reservation.get('productId', '')),
+                'date': date,
+                'orderId': str(reservation.get('orderId', ''))
+            }
+            
+            self.logger.debug(f"Fetching players with request: {player_request}")
+            return api.get_players(player_request)
+        except Exception as e:
+            self.logger.error(f"Failed to fetch players from REST API: {e}", exc_info=True)
+            return []
+
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""
         start_time_str = reservation.get("dateTimeStart")
@@ -172,36 +188,46 @@ class WiseGolfClub(GolfClub, PlayerFetchMixin):
             return self._tz_manager.localize_datetime(start_time)
         return start_time.replace(tzinfo=ZoneInfo(self.timezone))
 
-    def fetch_players_from_rest(self, reservation: Dict[str, Any], membership: Membership, api_class, rest_url: str) -> List[Dict[str, Any]]:
-        """
-        Fetch players from REST API.
-        
-        Args:
-            reservation: Reservation data
-            membership: User's membership details
-            
-        Returns:
-            List of player dictionaries
-        """
-        try:
-            api = api_class(rest_url, membership.__dict__)
-            return api.get_players(reservation)
-        except Exception as e:
-            self.logger.error(f"Failed to fetch players from REST API: {e}", exc_info=True)
-            return []
-
-class WiseGolf0Club(GolfClub, PlayerFetchMixin):
-    """WiseGolf0 golf club implementation."""
+class WiseGolfClub(BaseWiseGolfClub):
+    """WiseGolf club implementation."""
     
-    def __post_init__(self):
-        """Initialize after dataclass initialization."""
-        super().__post_init__()
+    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
+        """Fetch reservations from WiseGolf API."""
+        from golfcal2.api.wise_golf import WiseGolfAPI
         
-        # Initialize coordinates from club details if available
-        if self.club_details and 'coordinates' in self.club_details:
-            coords = self.club_details['coordinates']
-            if isinstance(coords, dict) and all(isinstance(v, float) for v in coords.values()):
-                self.coordinates = coords
+        if self.auth_service is None:
+            self.logger.error("No auth service available")
+            return []
+            
+        if self.club_details is None:
+            self.logger.error("No club details available")
+            return []
+            
+        self.logger.debug(f"Creating WiseGolfAPI instance with URL: {self.url}")
+        api = WiseGolfAPI(
+            self.url,
+            self.auth_service,
+            self.club_details,
+            membership.__dict__
+        )
+        self.logger.debug("Fetching reservations")
+        reservations = api.get_reservations()
+        self.logger.debug(f"Got {len(reservations)} reservations")
+        return reservations
+    
+    def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
+        """Fetch players for a reservation."""
+        from golfcal2.api.wise_golf import WiseGolfAPI
+        
+        rest_url = self.club_details.get('restUrl')
+        if not rest_url:
+            self.logger.error("No restUrl found in club_details")
+            return []
+            
+        return self.fetch_players_from_rest(reservation, membership, WiseGolfAPI, rest_url)
+
+class WiseGolf0Club(BaseWiseGolfClub):
+    """WiseGolf0 golf club implementation."""
 
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from WiseGolf0 API."""
@@ -220,7 +246,7 @@ class WiseGolf0Club(GolfClub, PlayerFetchMixin):
             self.url,
             self.auth_service,
             self.club_details,
-            membership.__dict__  # Use __dict__ instead of to_dict()
+            membership.__dict__
         )
         self.logger.debug("Fetching reservations")
         reservations = api.get_reservations()
@@ -232,29 +258,59 @@ class WiseGolf0Club(GolfClub, PlayerFetchMixin):
         from golfcal2.api.wise_golf import WiseGolf0API
         
         # Get the REST URL from the club's configuration
-        rest_url = self.club_details.get('restUrl')  # Use restUrl directly from club_details
+        rest_url = self.club_details.get('restUrl')
         if not rest_url:
             self.logger.error("No restUrl found in club_details")
             return []
         
         self.logger.debug(f"Creating WiseGolf0API instance with REST URL: {rest_url}")
         self.logger.debug(f"Club details: {self.club_details}")
+        self.logger.debug(f"Fetching players for reservation: {reservation}")
         
-        return self.fetch_players_from_rest(reservation, membership, WiseGolf0API, rest_url)
-    
-    def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
-        """Parse start time from WiseGolf0 reservation."""
-        start_time_str = reservation.get("dateTimeStart")
+        # Extract productId and date from reservation
+        product_id = reservation.get('productId')
+        if not product_id:
+            self.logger.error("No productId found in reservation")
+            return []
+            
+        # Extract date from dateTimeStart
+        start_time_str = reservation.get('dateTimeStart')
         if not start_time_str:
-            raise ValueError("No start time in reservation")
+            self.logger.error("No dateTimeStart found in reservation")
+            return []
+            
+        date = start_time_str.split()[0]  # Get YYYY-MM-DD part
+        order_id = reservation.get('orderId')  # Get orderId if available
+        reservation_time_id = reservation.get('reservationTimeId')  # Get reservationTimeId
         
-        start_time = datetime.strptime(
-            start_time_str,
-            "%Y-%m-%d %H:%M:%S"
-        )
-        if self._tz_manager is not None:
-            return self._tz_manager.localize_datetime(start_time)
-        return start_time.replace(tzinfo=ZoneInfo(self.timezone))
+        try:
+            api = WiseGolf0API(
+                rest_url,
+                self.auth_service,
+                self.club_details,
+                membership.__dict__
+            )
+            
+            player_request = {
+                'productId': str(product_id),
+                'date': date,
+                'orderId': str(order_id) if order_id else None
+            }
+            
+            self.logger.debug(f"Fetching players with request: {player_request}")
+            response = api.get_players(player_request)
+            self.logger.debug(f"Got player response: {response}")
+            
+            # Filter players by reservationTimeId
+            all_players = response.get('reservationsGolfPlayers', [])
+            players = [p for p in all_players if str(p.get('reservationTimeId')) == str(reservation_time_id)]
+            self.logger.debug(f"Filtered {len(players)} players for reservationTimeId {reservation_time_id}")
+            
+            return players
+            
+        except Exception as e:
+            self.logger.error(f"Failed to fetch players from REST API: {e}", exc_info=True)
+            return []
 
 class NexGolfClub(GolfClub):
     """NexGolf golf club implementation."""

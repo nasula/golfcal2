@@ -2,10 +2,11 @@
 Calendar builder for golf calendar application.
 """
 
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 from datetime import datetime
 
+import icalendar  # type: ignore
 from icalendar import Calendar, vText
 from zoneinfo import ZoneInfo
 

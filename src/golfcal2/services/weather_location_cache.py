@@ -3,21 +3,31 @@
 import json
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 import math
+import logging
+from pathlib import Path
 
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+from golfcal2.services.weather_types import Location
 
 class WeatherLocationCache(EnhancedLoggerMixin):
     """Cache for weather service location data (municipalities, grid points, city IDs, etc.)."""
     
-    def __init__(self, db_path: str = 'weather_locations.db'):
-        """Initialize the cache."""
+    def __init__(self, db_path: str = 'weather_locations.db', cache_duration: timedelta = timedelta(days=7)) -> None:
+        """Initialize the cache.
+        
+        Args:
+            db_path: Path to the SQLite database
+            cache_duration: How long to keep cached locations
+        """
         super().__init__()
         self.db_path = db_path
         self.set_log_context(service="weather_location_cache")
         self._init_db()
+        self.cache_duration = cache_duration
+        self._cache: Dict[str, Tuple[datetime, Location]] = {}
     
     def _init_db(self):
         """Initialize the database schema."""
@@ -284,5 +294,78 @@ class WeatherLocationCache(EnhancedLoggerMixin):
         c = 2 * math.asin(math.sqrt(a))
         r = 6371  # Radius of earth in kilometers
         return c * r 
+    
+    def get_location(self, key: str) -> Optional[Location]:
+        """Get cached location if available and not expired.
+        
+        Args:
+            key: Cache key for location
+            
+        Returns:
+            Location object or None if not found/expired
+        """
+        try:
+            if key not in self._cache:
+                return None
+                
+            timestamp, location = self._cache[key]
+            if datetime.now() - timestamp > self.cache_duration:
+                self.logger.debug("Location cache expired for key: %s", key)
+                del self._cache[key]
+                return None
+                
+            return location
+            
+        except Exception as e:
+            self.logger.error("Failed to get cached location: %s", str(e))
+            return None
+    
+    def store_location(self, key: str, location: Location) -> None:
+        """Store location in cache.
+        
+        Args:
+            key: Cache key for location
+            location: Location object to cache
+        """
+        try:
+            self._cache[key] = (datetime.now(), location)
+        except Exception as e:
+            self.logger.error("Failed to store location: %s", str(e))
+    
+    def clear_expired(self) -> None:
+        """Remove expired entries from cache."""
+        try:
+            now = datetime.now()
+            expired = [
+                key for key, (timestamp, _) in self._cache.items()
+                if now - timestamp > self.cache_duration
+            ]
+            for key in expired:
+                del self._cache[key]
+        except Exception as e:
+            self.logger.error("Failed to clear expired locations: %s", str(e))
+    
+    def clear_all(self) -> None:
+        """Clear all entries from cache."""
+        try:
+            self._cache.clear()
+        except Exception as e:
+            self.logger.error("Failed to clear location cache: %s", str(e))
+    
+    def get_all_locations(self) -> List[Location]:
+        """Get all non-expired locations.
+        
+        Returns:
+            List of cached Location objects
+        """
+        try:
+            now = datetime.now()
+            return [
+                location for timestamp, location in self._cache.values()
+                if now - timestamp <= self.cache_duration
+            ]
+        except Exception as e:
+            self.logger.error("Failed to get all locations: %s", str(e))
+            return []
     
    

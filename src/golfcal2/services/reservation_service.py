@@ -3,7 +3,6 @@ Reservation service for golf calendar application.
 """
 
 import os
-import pytz
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple, Set
 from zoneinfo import ZoneInfo
@@ -16,9 +15,8 @@ from golfcal2.models.user import User, Membership
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.config.settings import AppConfig
 from golfcal2.services.auth_service import AuthService
-from golfcal2.services.weather_service import WeatherManager
-from golfcal2.models.mixins import ReservationHandlerMixin, CalendarHandlerMixin
-from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
+from golfcal2.models.mixins import ReservationHandlerMixin
+from golfcal2.services.mixins import CalendarHandlerMixin
 from golfcal2.exceptions import (
     APIError,
     APITimeoutError,
@@ -29,6 +27,9 @@ from golfcal2.exceptions import (
 )
 from golfcal2.config.error_aggregator import aggregate_error
 
+# Lazy load weather service
+_weather_manager = None
+
 class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
     """Service for handling reservations."""
     
@@ -37,7 +38,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         # Initialize all parent classes
         EnhancedLoggerMixin.__init__(self)
         ReservationHandlerMixin.__init__(self)
-        CalendarHandlerMixin.__init__(self)
+        CalendarHandlerMixin.__init__(self, config)
         
         self.user_name = user_name
         self.config = config
@@ -50,11 +51,19 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         
         # Initialize services
         self.auth_service = AuthService()
-        self.weather_service = WeatherManager(self.local_tz, self.utc_tz, config)
         
         # Configure logger
         self.set_log_context(service="reservation")
-        
+    
+    @property
+    def weather_service(self):
+        """Lazy load weather service."""
+        global _weather_manager
+        if _weather_manager is None:
+            from golfcal2.services.weather_service import WeatherManager
+            _weather_manager = WeatherManager(self.local_tz, self.utc_tz, self.config)
+        return _weather_manager
+
     def check_config(self) -> bool:
         """Check if the service configuration is valid.
         
@@ -452,7 +461,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         # Add weather for all clubs that have coordinates
         club_config = self.config.clubs.get(reservation.membership.club)
         if club_config and 'coordinates' in club_config:
-            self._add_weather_to_event(event, reservation.membership.clubAbbreviation, reservation.start_time, self.weather_service)
+            self._add_weather_to_event(event, reservation.membership.club, reservation.start_time, self.weather_service)
         
         self._add_event_to_calendar(event, cal)
 

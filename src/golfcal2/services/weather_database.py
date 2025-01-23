@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 import json
 import logging
@@ -10,8 +10,12 @@ import logging
 class WeatherResponseCache:
     """Cache for weather service responses."""
     
-    def __init__(self, db_path: str):
-        """Initialize cache with database path."""
+    def __init__(self, db_path: str) -> None:
+        """Initialize cache with database path.
+        
+        Args:
+            db_path: Path to SQLite database file
+        """
         self.db_path = db_path
         self.logger = logging.getLogger(__name__)
         
@@ -21,29 +25,22 @@ class WeatherResponseCache:
         # Initialize database
         self._init_db()
     
-    def _init_db(self):
-        """Initialize database tables."""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS weather_responses (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        service_type TEXT NOT NULL,
-                        latitude REAL NOT NULL,
-                        longitude REAL NOT NULL,
-                        response_data TEXT NOT NULL,
-                        forecast_start TEXT NOT NULL,
-                        forecast_end TEXT NOT NULL,
-                        expires TEXT NOT NULL,
-                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(service_type, latitude, longitude, forecast_start, forecast_end)
-                    )
-                """)
-                conn.commit()
-        except sqlite3.Error as e:
-            self.logger.error("Failed to initialize database: %s", str(e))
-            raise
+    def _init_db(self) -> None:
+        """Initialize database schema."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS weather_responses (
+                    service_type TEXT,
+                    latitude REAL,
+                    longitude REAL,
+                    forecast_start TEXT,
+                    forecast_end TEXT,
+                    response TEXT,
+                    expires TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (service_type, latitude, longitude, forecast_start, forecast_end)
+                )
+            """)
     
     def get_response(
         self,
@@ -53,47 +50,62 @@ class WeatherResponseCache:
         start_time: datetime,
         end_time: datetime
     ) -> Optional[Dict[str, Any]]:
-        """Get cached response if available and not expired."""
+        """Get cached response if available and not expired.
+        
+        Args:
+            service_type: Type of weather service
+            latitude: Location latitude
+            longitude: Location longitude
+            start_time: Forecast start time
+            end_time: Forecast end time
+            
+        Returns:
+            Cached response data or None if not found/expired
+        """
         try:
             with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT response_data, expires
-                    FROM weather_responses
+                cursor = conn.execute(
+                    """
+                    SELECT response, expires FROM weather_responses
                     WHERE service_type = ? 
                     AND latitude = ?
                     AND longitude = ?
-                    AND forecast_start <= ?
-                    AND forecast_end >= ?
-                    AND expires > ?
-                """, (
-                    service_type,
-                    latitude,
-                    longitude,
-                    start_time.isoformat(),
-                    end_time.isoformat(),
-                    datetime.now().isoformat()
-                ))
+                    AND forecast_start = ?
+                    AND forecast_end = ?
+                    """,
+                    (
+                        service_type,
+                        latitude,
+                        longitude,
+                        start_time.isoformat(),
+                        end_time.isoformat()
+                    )
+                )
                 row = cursor.fetchone()
-                
-                if row:
-                    response_data = json.loads(row[0])
-                    expires = datetime.fromisoformat(row[1])
+                if not row:
+                    return None
                     
-                    # Return response with metadata
-                    return {
-                        'response': response_data,
-                        'location': f"{latitude},{longitude}",
-                        'expires': expires
-                    }
+                response_str, expires_str = row
+                expires = datetime.fromisoformat(expires_str)
                 
-                return None
+                # Convert current time to UTC for comparison
+                now = datetime.now(expires.tzinfo if expires.tzinfo else timezone.utc)
                 
-        except sqlite3.Error as e:
-            self.logger.error("Database error while getting response: %s", str(e))
-            return None
+                # Check if expired
+                if expires < now:
+                    self.logger.debug("Cached response expired")
+                    return None
+                    
+                # Parse the response string directly into a dictionary
+                response_data = json.loads(response_str)
+                if not isinstance(response_data, dict):
+                    self.logger.error("Invalid response data format")
+                    return None
+                    
+                return response_data
+                
         except Exception as e:
-            self.logger.error("Error getting response: %s", str(e))
+            self.logger.error("Failed to get cached response: %s", str(e))
             return None
     
     def store_response(
@@ -101,74 +113,71 @@ class WeatherResponseCache:
         service_type: str,
         latitude: float,
         longitude: float,
-        response_data: Dict[str, Any],
         forecast_start: datetime,
         forecast_end: datetime,
+        response_data: Dict[str, Any],
         expires: datetime
-    ) -> bool:
-        """Store response in cache."""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR REPLACE INTO weather_responses (
-                        service_type,
-                        latitude,
-                        longitude,
-                        response_data,
-                        forecast_start,
-                        forecast_end,
-                        expires
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    service_type,
-                    latitude,
-                    longitude,
-                    json.dumps(response_data),
-                    forecast_start.isoformat(),
-                    forecast_end.isoformat(),
-                    expires.isoformat()
-                ))
-                conn.commit()
-                return True
-                
-        except sqlite3.Error as e:
-            self.logger.error("Database error while storing response: %s", str(e))
-            return False
-        except Exception as e:
-            self.logger.error("Error storing response: %s", str(e))
-            return False
-    
-    def cleanup_expired(self) -> int:
-        """Remove expired entries from cache.
+    ) -> None:
+        """Store response in cache.
         
-        Returns:
-            Number of entries removed
+        Args:
+            service_type: Type of weather service
+            latitude: Location latitude
+            longitude: Location longitude
+            forecast_start: Forecast start time
+            forecast_end: Forecast end time
+            response_data: Response data to cache
+            expires: When the cached data expires
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    DELETE FROM weather_responses
-                    WHERE expires < ?
-                """, (datetime.now().isoformat(),))
-                deleted = cursor.rowcount
-                conn.commit()
-                return deleted
-                
-        except sqlite3.Error as e:
-            self.logger.error("Database error while cleaning up: %s", str(e))
-            return 0
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO weather_responses
+                    (service_type, latitude, longitude, forecast_start, forecast_end, response, expires)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        service_type,
+                        latitude,
+                        longitude,
+                        forecast_start.isoformat(),
+                        forecast_end.isoformat(),
+                        json.dumps(response_data),
+                        expires.isoformat()
+                    )
+                )
         except Exception as e:
-            self.logger.error("Error cleaning up cache: %s", str(e))
-            return 0
+            self.logger.error("Failed to store response in cache: %s", str(e))
     
-    def list_entries(self) -> List[Dict[str, Any]]:
-        """List all cache entries."""
+    def clear_expired(self) -> None:
+        """Remove expired entries from cache."""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
+                conn.execute(
+                    "DELETE FROM weather_responses WHERE expires < ?",
+                    (datetime.now().isoformat(),)
+                )
+        except Exception as e:
+            self.logger.error("Failed to clear expired entries: %s", str(e))
+    
+    def clear_all(self) -> None:
+        """Clear all entries from cache."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("DELETE FROM weather_responses")
+        except Exception as e:
+            self.logger.error("Failed to clear cache: %s", str(e))
+    
+    def list_entries(self) -> List[Dict[str, Any]]:
+        """List all cache entries.
+        
+        Returns:
+            List of dictionaries containing cache entry details
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
                     SELECT 
                         service_type,
                         latitude,
@@ -185,11 +194,10 @@ class WeatherResponseCache:
                 for row in cursor.fetchall():
                     entries.append({
                         'service': row[0],
-                        'location': f"{row[1]},{row[2]}",
-                        'start_time': row[3],
-                        'end_time': row[4],
+                        'location': f"{row[1]:.4f},{row[2]:.4f}",
+                        'forecast_period': f"{row[3]} to {row[4]}",
                         'expires': row[5],
-                        'created_at': row[6]
+                        'created': row[6]
                     })
                 
                 return entries

@@ -47,7 +47,7 @@ class User:
         
         Args:
             name: User name
-            config: User configuration dictionary
+            config: User configuration dictionary or User instance
             
         Returns:
             User instance
@@ -60,6 +60,24 @@ class User:
         logger.debug(f"Creating user {name} from config")
         logger.debug(f"Config: {config}")
         
+        # If config is already a User instance, extract its memberships data
+        if isinstance(config, User):
+            config = {
+                'email': config.email,
+                'phone': config.phone,
+                'handicap': config.handicap,
+                'memberships': config.memberships.get('memberships', []) if isinstance(config.memberships, dict) else []
+            }
+            
+        # Handle nested memberships structure
+        if isinstance(config, dict) and isinstance(config.get('memberships'), dict):
+            memberships_data = config['memberships']
+            config = {
+                'email': memberships_data.get('email'),
+                'phone': memberships_data.get('phone'),
+                'memberships': memberships_data.get('memberships', [])
+            }
+        
         if not isinstance(config, dict):
             raise ValueError(f"Invalid user configuration for {name}")
         
@@ -67,7 +85,7 @@ class User:
             raise ValueError(f"No memberships specified for user {name}")
         
         memberships = []
-        for membership_config in config.get("memberships", []):
+        for membership_config in config["memberships"]:
             logger.debug(f"Processing membership config: {membership_config}")
             try:
                 club = membership_config["club"]

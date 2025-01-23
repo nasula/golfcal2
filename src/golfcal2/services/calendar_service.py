@@ -3,17 +3,20 @@ Calendar service for golf calendar application.
 """
 
 import os
-from datetime import datetime
-from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional, Tuple, Set
+from zoneinfo import ZoneInfo
 from pathlib import Path
+import requests
+from icalendar import Event, Calendar
 
-from icalendar import Calendar, Event
-from dateutil.tz import UTC
-
+from golfcal2.models.golf_club import GolfClubFactory
+from golfcal2.models.reservation import Reservation
+from golfcal2.models.user import User, Membership
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.config.settings import AppConfig
-from golfcal2.models.reservation import Reservation
-from golfcal2.models.user import User
+from golfcal2.services.auth_service import AuthService
+from golfcal2.services.mixins import CalendarHandlerMixin
 from golfcal2.services.weather_service import WeatherManager
 from golfcal2.services.external_event_service import ExternalEventService
 from golfcal2.services.calendar.builders import (
@@ -21,8 +24,11 @@ from golfcal2.services.calendar.builders import (
     ReservationEventBuilder,
     ExternalEventBuilder
 )
-from golfcal2.models.mixins import CalendarHandlerMixin
 from golfcal2.exceptions import (
+    APIError,
+    APITimeoutError,
+    APIRateLimitError,
+    APIResponseError,
     CalendarError,
     CalendarWriteError,
     CalendarEventError,
@@ -47,7 +53,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         self.dev_mode = dev_mode
         
         # Initialize timezone settings - use cached objects if available
-        self.utc_tz = getattr(config, 'utc_tz', UTC)
+        self.utc_tz = ZoneInfo('UTC')
         self.local_tz = getattr(config, 'local_tz', config.timezone)
         
         # Initialize seen UIDs set

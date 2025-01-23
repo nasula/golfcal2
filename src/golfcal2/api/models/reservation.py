@@ -6,20 +6,20 @@ from typing import List, Optional
 class Player:
     first_name: str
     family_name: str
-    handicap: Optional[float] = None
-    club_abbreviation: Optional[str] = None
+    handicap: float
+    club_abbreviation: str = ''
 
 @dataclass
 class CourseInfo:
     name: str
     holes: int = 18
-    par: Optional[int] = None
-    slope: Optional[float] = None
+    par: int = 72
 
 @dataclass
 class Reservation:
     datetime_start: datetime
     players: List[Player]
-    course_info: Optional[CourseInfo] = None
+    id: Optional[str] = None
     booking_reference: Optional[str] = None
-    status: Optional[str] = None 
+    status: Optional[str] = None
+    course_info: Optional[CourseInfo] = None 

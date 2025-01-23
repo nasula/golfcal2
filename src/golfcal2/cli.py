@@ -9,6 +9,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 import os
 from pathlib import Path
+import json
 
 from golfcal2.config.settings import ConfigurationManager
 from golfcal2.utils.logging_utils import get_logger
@@ -276,15 +277,13 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: Confi
         
         if args.list_type == 'weather-cache':
             logger.info("Listing weather cache contents")
-            import json
-            from datetime import datetime, timedelta
             import sqlite3
-            import os
+            from datetime import datetime, timedelta
             
-            # Initialize cache with proper path
-            data_dir = os.path.join(os.path.dirname(__file__), 'data')
-            os.makedirs(data_dir, exist_ok=True)
-            cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+            # Initialize cache with proper path from config
+            cache_dir = os.path.expanduser('~/.cache/golfcal2')
+            os.makedirs(cache_dir, exist_ok=True)
+            cache = WeatherResponseCache(os.path.join(cache_dir, 'weather_responses.db'))
             
             # Handle clear command
             if args.clear:
@@ -304,7 +303,7 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: Confi
                 with sqlite3.connect(cache.db_path) as conn:
                     conn.row_factory = sqlite3.Row
                     cursor = conn.execute("""
-                        SELECT service_type, latitude, longitude, forecast_start, forecast_end, expires 
+                        SELECT service_type, latitude, longitude, forecast_start, forecast_end, expires, response 
                         FROM weather_responses 
                         WHERE expires > ? 
                         ORDER BY expires DESC
@@ -312,13 +311,15 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: Confi
                     
                     entries = []
                     for row in cursor:
-                        entries.append({
+                        entry = {
                             'service': row['service_type'],
                             'location': f"{row['latitude']}, {row['longitude']}",
                             'start_time': row['forecast_start'],
                             'end_time': row['forecast_end'],
-                            'expires': row['expires']
-                        })
+                            'expires': row['expires'],
+                            'forecast': json.loads(row['response']) if row['response'] else None
+                        }
+                        entries.append(entry)
                 
                 if not entries:
                     logger.info("Weather cache is empty")
@@ -334,6 +335,18 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: Confi
                         print(f"Location: {entry['location']}")
                         print(f"Time Range: {entry['start_time']} to {entry['end_time']}")
                         print(f"Expires: {entry['expires']}")
+                        if entry['forecast']:
+                            print("\nForecast:")
+                            if isinstance(entry['forecast'].get('data'), list):
+                                for item in entry['forecast']['data']:
+                                    print(f"  - Time: {item.get('time')}")
+                                    print(f"    Temperature: {item.get('temperature')}°C")
+                                    print(f"    Weather: {item.get('symbol_code', 'Unknown')}")
+                            else:
+                                item = entry['forecast'].get('data', {})
+                                print(f"  - Time: {item.get('time')}")
+                                print(f"    Temperature: {item.get('temperature')}°C")
+                                print(f"    Weather: {item.get('symbol_code', 'Unknown')}")
                         print("-" * 40)
                 
                 return 0
@@ -414,7 +427,6 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: Confi
                         continue
                     
                     if args.format == 'json':
-                        import json
                         # Convert reservations to JSON-serializable format
                         data = {
                             username: {
@@ -451,8 +463,7 @@ def list_command(args: argparse.Namespace, logger: logging.Logger, config: Confi
                                             lat=reservation.club.club_details['coordinates']['lat'],
                                             lon=reservation.club.club_details['coordinates']['lon'],
                                             start_time=reservation.start_time,
-                                            end_time=reservation.end_time,
-                                            club=reservation.club.name
+                                            end_time=reservation.end_time
                                         )
                                         if weather_response:
                                             weather_data = weather_response.data
@@ -714,7 +725,6 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config: Config
                     return 1
                 
                 if args.format == 'json':
-                    import json
                     print(json.dumps({
                         'data': [w.to_dict() for w in response.data],
                         'expires': response.expires.isoformat() if response.expires else None

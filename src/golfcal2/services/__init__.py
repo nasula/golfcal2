@@ -6,6 +6,7 @@ from .external_event_service import ExternalEventService
 from .met_weather_service import MetWeatherService
 from .open_meteo_service import OpenMeteoService
 from .weather_service import WeatherManager
+from .mixins import CalendarHandlerMixin
 
 __all__ = [
     'WeatherService',
@@ -13,5 +14,6 @@ __all__ = [
     'ExternalEventService',
     'MetWeatherService',
     'OpenMeteoService',
-    'WeatherManager'
+    'WeatherManager',
+    'CalendarHandlerMixin'
 ] 

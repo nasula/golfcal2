@@ -1,77 +1,104 @@
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional
-from datetime import datetime
-import requests
+import logging
 
-from api.interfaces import CRMInterface
-from api.models.reservation import Reservation, Player, CourseInfo
-from models.mixins import APIError, APITimeoutError, APIResponseError, APIAuthError
+from golfcal2.api.interfaces import CRMInterface
+from golfcal2.api.models.reservation import Reservation, Player, CourseInfo
+from golfcal2.models.mixins import (
+    APIError, APITimeoutError, APIResponseError, APIAuthError, RequestHandlerMixin
+)
 
-class BaseCRMImplementation(CRMInterface):
-    """Enhanced base class for CRM implementations with common functionality"""
+class BaseCRM(ABC, RequestHandlerMixin):
+    """Base class for CRM implementations."""
     
-    def __init__(self, url: str, auth_details: Dict[str, Any]):
-        self.url = url.rstrip('/')
+    def __init__(self, base_url: str, auth_details: Dict[str, Any]) -> None:
+        """Initialize CRM client.
+        
+        Args:
+            base_url: Base URL for API requests
+            auth_details: Authentication details (varies by implementation)
+        """
+        self.base_url = base_url
         self.auth_details = auth_details
-        self.session: Optional[requests.Session] = None
-        self.timeout = 30
-        self._retry_count = 3
+        self.logger = logging.getLogger(__name__)
         
     @abstractmethod
     def authenticate(self) -> None:
-        """Each CRM must implement its own authentication"""
+        """Authenticate with the CRM API."""
         pass
-    
-    def get_reservations(self) -> List[Reservation]:
-        """Template method that handles retries and conversion to standard model"""
-        if not self.session:
-            self.authenticate()
         
-        for attempt in range(self._retry_count):
-            try:
-                raw_reservations = self._fetch_reservations()
-                return [self.parse_reservation(res) for res in raw_reservations]
-            except requests.Timeout as e:
-                if attempt == self._retry_count - 1:
-                    raise APITimeoutError(f"Timeout fetching reservations: {str(e)}")
-            except requests.RequestException as e:
-                if attempt == self._retry_count - 1:
-                    raise APIError(f"Error fetching reservations: {str(e)}")
-    
-    def _make_request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
-        """Enhanced request helper with better error handling"""
-        if not self.session:
-            self.authenticate()
-            
-        kwargs.setdefault('timeout', self.timeout)
-        
-        try:
-            response = self.session.request(
-                method,
-                f"{self.url}/{endpoint.lstrip('/')}",
-                **kwargs
-            )
-            response.raise_for_status()
-            return response
-        except requests.HTTPError as e:
-            if e.response.status_code == 401:
-                # Try to reauthenticate once
-                self.authenticate()
-                response = self.session.request(
-                    method,
-                    f"{self.url}/{endpoint.lstrip('/')}",
-                    **kwargs
-                )
-                response.raise_for_status()
-                return response
-            raise APIResponseError(f"HTTP error: {str(e)}")
-    
     @abstractmethod
+    def get_reservations(self) -> List[Reservation]:
+        """Get list of reservations.
+        
+        Returns:
+            List of Reservation objects
+        """
+        pass
+        
+    @abstractmethod
+    def get_players(self, reservation: Reservation) -> List[Dict[str, Any]]:
+        """Get players for a reservation.
+        
+        Args:
+            reservation: Reservation to get players for
+            
+        Returns:
+            List of player data dictionaries
+        """
+        pass
+        
+    def _make_request(self, method: str, endpoint: str, **kwargs) -> Optional[Dict[str, Any]]:
+        """Make HTTP request to CRM API.
+        
+        Args:
+            method: HTTP method
+            endpoint: API endpoint
+            **kwargs: Additional request arguments
+            
+        Returns:
+            Response data as dictionary if successful, None otherwise
+            
+        Raises:
+            APIError: On request failure
+            APITimeoutError: On request timeout
+            APIResponseError: On invalid response
+            APIAuthError: On authentication failure
+        """
+        try:
+            response = super()._make_request(method, endpoint, **kwargs)
+            if not response:
+                self.logger.error("Request failed: %s %s", method, endpoint)
+                return None
+                
+            return response.json() if response.content else {}
+            
+        except Exception as e:
+            self.logger.error("Request error: %s", str(e))
+            return None
+            
+    def _get_json(self, endpoint: str, **kwargs) -> Dict[str, Any]:
+        """Get JSON response from API endpoint.
+        
+        Args:
+            endpoint: API endpoint
+            **kwargs: Additional request arguments
+            
+        Returns:
+            Response data as dictionary
+            
+        Raises:
+            APIError: On request failure
+        """
+        response = self._make_request('GET', endpoint, **kwargs)
+        if not response:
+            raise APIError(f"Failed to get data from {endpoint}")
+        return response
+    
     def _fetch_reservations(self) -> List[Dict[str, Any]]:
         """Each CRM must implement its own reservation fetching logic"""
         pass
     
-    @abstractmethod
     def parse_reservation(self, raw_reservation: Dict[str, Any]) -> Reservation:
         """Convert raw reservation to standard Reservation model"""
         pass

@@ -2,14 +2,15 @@ from typing import Dict, List, Any
 import requests
 from datetime import datetime
 
-from api.crm.base import BaseCRMImplementation
-from api.models.reservation import Reservation, Player, CourseInfo
-from models.mixins import APIAuthError
+from golfcal2.api.crm.base import BaseCRM
+from golfcal2.api.models.reservation import Reservation, Player, CourseInfo
+from golfcal2.models.mixins import APIAuthError
 
-class WiseGolfImplementation(BaseCRMImplementation):
+class WiseGolfCRM(BaseCRM):
     """WiseGolf CRM implementation"""
     
     def authenticate(self) -> None:
+        """Authenticate with WiseGolf API."""
         self.session = requests.Session()
         
         auth_response = self._make_request(
@@ -21,7 +22,10 @@ class WiseGolfImplementation(BaseCRMImplementation):
             }
         )
         
-        token = auth_response.json().get('token')
+        if not auth_response:
+            raise APIAuthError("Authentication request failed")
+            
+        token = auth_response.get('token')
         if not token:
             raise APIAuthError("No token in authentication response")
             
@@ -29,11 +33,26 @@ class WiseGolfImplementation(BaseCRMImplementation):
             'Authorization': f'Bearer {token}'
         })
     
+    def get_reservations(self) -> List[Reservation]:
+        """Get list of reservations."""
+        raw_reservations = self._fetch_reservations()
+        return [self.parse_reservation(res) for res in raw_reservations]
+    
+    def get_players(self, reservation: Reservation) -> List[Dict[str, Any]]:
+        """Get players for a reservation."""
+        response = self._make_request(
+            'GET', 
+            f'/reservations/{reservation.id}/players'
+        )
+        return response.get('players', []) if response else []
+    
     def _fetch_reservations(self) -> List[Dict[str, Any]]:
+        """Fetch raw reservations from API."""
         response = self._make_request('GET', '/reservations/my')
-        return response.json()['reservations']
+        return response.get('reservations', []) if response else []
     
     def parse_reservation(self, raw_reservation: Dict[str, Any]) -> Reservation:
+        """Parse raw reservation data into Reservation model."""
         return Reservation(
             datetime_start=self._parse_datetime(
                 raw_reservation["teeTime"], 
@@ -44,17 +63,19 @@ class WiseGolfImplementation(BaseCRMImplementation):
         )
     
     def _parse_players(self, raw_reservation: Dict[str, Any]) -> List[Player]:
+        """Parse player data from reservation."""
         return [
             Player(
                 first_name=player.get('firstName', ''),
                 family_name=player.get('lastName', ''),
-                handicap=player.get('handicap'),
+                handicap=float(player.get('handicap', 0)),
                 club_abbreviation=player.get('homeClub', {}).get('abbreviation', '')
             )
             for player in raw_reservation.get('players', [])
         ]
     
     def _parse_course_info(self, raw_reservation: Dict[str, Any]) -> CourseInfo:
+        """Parse course info from reservation."""
         course = raw_reservation.get('course', {})
         return CourseInfo(
             name=course.get('name', ''),

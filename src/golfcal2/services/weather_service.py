@@ -64,16 +64,38 @@ class WeatherManager(EnhancedLoggerMixin):
         # Initialize services dict
         self._services: Dict[str, Optional[WeatherService]] = {}
         
-        # Get cache directory from config or use default
-        cache_dir = self._service_config.get('directories', {}).get('cache', os.path.expanduser('~/.cache/golfcal2'))
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        # Initialize caches
-        self._response_cache = WeatherResponseCache(os.path.join(cache_dir, 'weather_responses.db'))
-        self._location_cache = WeatherLocationCache()
+        # Initialize cache paths
+        self._cache_dir = self._service_config.get('directories', {}).get('cache', os.path.expanduser('~/.cache/golfcal2'))
+        os.makedirs(self._cache_dir, exist_ok=True)
         
         # Set up logging
         self.set_log_context(service="weather_manager")
+        
+        # Initialize caches
+        self._response_cache: Optional[WeatherResponseCache] = None
+        self._location_cache: Optional[WeatherLocationCache] = None
+
+    @property
+    def response_cache(self) -> WeatherResponseCache:
+        """Get response cache, initializing if needed.
+        
+        Returns:
+            WeatherResponseCache instance
+        """
+        if self._response_cache is None:
+            self._response_cache = WeatherResponseCache(os.path.join(self._cache_dir, 'weather_responses.db'))
+        return self._response_cache
+
+    @property
+    def location_cache(self) -> WeatherLocationCache:
+        """Get location cache, initializing if needed.
+        
+        Returns:
+            WeatherLocationCache instance
+        """
+        if self._location_cache is None:
+            self._location_cache = WeatherLocationCache()
+        return self._location_cache
 
     def _create_service(self, service_name: str) -> Optional[WeatherService]:
         """Create a weather service instance.
@@ -109,6 +131,29 @@ class WeatherManager(EnhancedLoggerMixin):
             return self._create_service(service_name)
         return self._services[service_name]
 
+    def _select_service_for_location(self, lat: float, lon: float) -> str:
+        """Select appropriate weather service based on coordinates.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            
+        Returns:
+            Name of the most appropriate weather service
+        """
+        # Nordic countries (roughly)
+        if 55 <= lat <= 71 and 4 <= lon <= 32:
+            # Finland, Sweden, Norway, Denmark
+            return 'met'
+            
+        # Baltic countries (roughly)
+        if 53 <= lat <= 59 and 21 <= lon <= 28:
+            # Estonia, Latvia, Lithuania
+            return 'met'
+            
+        # Default to OpenMeteo for all other locations
+        return 'openmeteo'
+
     def get_weather(
         self,
         lat: float,
@@ -128,28 +173,42 @@ class WeatherManager(EnhancedLoggerMixin):
             
         Returns:
             Weather response or None if no data available
+            
+        Raises:
+            WeatherError: If weather service fails
         """
         # Try to get from cache first
         cache_key = f"{lat:.4f}_{lon:.4f}_{start_time.isoformat()}_{end_time.isoformat()}"
-        primary_service = service_name or 'met'
-        cached = self._response_cache.get_response(
-            service_type=primary_service,
-            latitude=lat,
-            longitude=lon,
-            start_time=start_time,
-            end_time=end_time
-        )
-        if cached:
-            return WeatherResponse.from_dict(cached['response'])
+        
+        # Select appropriate service based on location unless explicitly specified
+        primary_service = service_name or self._select_service_for_location(lat, lon)
+        self.debug(f"Selected weather service: {primary_service} for location ({lat}, {lon})")
+        
+        try:
+            cached = self.response_cache.get_response(
+                service_type=primary_service,
+                latitude=lat,
+                longitude=lon,
+                start_time=start_time,
+                end_time=end_time
+            )
+            if cached:
+                return WeatherResponse.from_dict(cached)
+        except Exception as e:
+            self.error("Failed to get cached response", exc_info=e)
 
         # Try primary service first
         service = self.get_service(primary_service)
+        if not service:
+            self.error(f"Failed to get primary service {primary_service}")
+            return None
         
-        if service:
-            try:
-                response = service.get_weather(lat, lon, start_time, end_time)
-                if response:
-                    self._response_cache.store_response(
+        try:
+            response = service.get_weather(lat, lon, start_time, end_time)
+            if response:
+                # Store in cache
+                try:
+                    self.response_cache.store_response(
                         service_type=primary_service,
                         latitude=lat,
                         longitude=lon,
@@ -158,29 +217,36 @@ class WeatherManager(EnhancedLoggerMixin):
                         response_data=response.to_dict(),
                         expires=service.get_expiry_time()
                     )
-                    return response
-            except WeatherError as e:
-                self.error(f"Primary service {primary_service} failed", exc_info=e)
-                aggregate_error(str(e), "weather_manager", e.__traceback__)
+                except Exception as e:
+                    self.error("Failed to store response in cache", exc_info=e)
+                return response
+        except WeatherError as e:
+            self.error(f"Primary service {primary_service} failed", exc_info=e)
+            aggregate_error(str(e), "weather_manager", str(e.__traceback__))
 
         # Try OpenMeteo as fallback if not already using it
         if primary_service != 'openmeteo':
-            fallback = self._create_service('openmeteo')
+            fallback = self.get_service('openmeteo')
             if fallback:
                 try:
                     response = fallback.get_weather(lat, lon, start_time, end_time)
                     if response:
-                        self._response_cache.store_response(
-                            service_type='openmeteo',
-                            latitude=lat,
-                            longitude=lon,
-                            forecast_start=start_time,
-                            forecast_end=end_time,
-                            response_data=response.to_dict(),
-                            expires=fallback.get_expiry_time()
-                        )
+                        # Store in cache
+                        try:
+                            self.response_cache.store_response(
+                                service_type='openmeteo',
+                                latitude=lat,
+                                longitude=lon,
+                                forecast_start=start_time,
+                                forecast_end=end_time,
+                                response_data=response.to_dict(),
+                                expires=fallback.get_expiry_time()
+                            )
+                        except Exception as e:
+                            self.error("Failed to store fallback response in cache", exc_info=e)
                         return response
-                except WeatherError as e2:
-                    aggregate_error(str(e2), "weather_manager", e2.__traceback__)
+                except WeatherError as e:
+                    self.error("Fallback service failed", exc_info=e)
+                    aggregate_error(str(e), "weather_manager", str(e.__traceback__))
         
         return None

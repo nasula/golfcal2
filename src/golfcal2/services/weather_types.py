@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from zoneinfo import ZoneInfo
 import requests
 import traceback
+from abc import ABC, abstractmethod
 
 from golfcal2.error_codes import ErrorCode
 from golfcal2.exceptions import GolfCalError, handle_errors
@@ -280,15 +281,27 @@ class WeatherResponse:
     """Weather response data class."""
     data: List[WeatherData]
     elaboration_time: datetime
+    expires: Optional[datetime] = None
 
     def __post_init__(self) -> None:
         """Validate the response data."""
-        if not isinstance(self.data, list):
-            self.data = [self.data] if self.data is not None else []
-        if not isinstance(self.elaboration_time, datetime):
-            raise ValueError("elaboration_time must be a datetime object")
+        # Convert single WeatherData to list
+        if isinstance(self.data, WeatherData):
+            self.data = [self.data]
+        elif not isinstance(self.data, list):
+            raise ValueError("data must be WeatherData or List[WeatherData]")
+            
+        # Validate all items are WeatherData
         if not all(isinstance(item, WeatherData) for item in self.data):
             raise ValueError("All items in data must be WeatherData objects")
+            
+        # Validate elaboration_time
+        if not isinstance(self.elaboration_time, datetime):
+            raise ValueError("elaboration_time must be a datetime object")
+            
+        # Validate expires if provided
+        if self.expires is not None and not isinstance(self.expires, datetime):
+            raise ValueError("expires must be a datetime object if provided")
 
     def __len__(self) -> int:
         return len(self.data)
@@ -300,9 +313,11 @@ class WeatherResponse:
         return self.data[idx]
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
         return {
             'data': [d.to_dict() for d in self.data],
-            'elaboration_time': self.elaboration_time.isoformat()
+            'elaboration_time': self.elaboration_time.isoformat(),
+            'expires': self.expires.isoformat() if self.expires else None
         }
 
     @classmethod
@@ -330,14 +345,23 @@ class WeatherResponse:
                 wind_direction=item['wind_direction'],
                 weather_code=WeatherCode(item['weather_code']),
                 time=time,
-                thunder_probability=item['thunder_probability'],
+                thunder_probability=item.get('thunder_probability', 0.0),
                 block_duration=block_duration
             ))
         
         # Parse elaboration_time from ISO format
         elaboration_time = datetime.fromisoformat(data['elaboration_time'])
         
-        return cls(data=weather_data, elaboration_time=elaboration_time)
+        # Parse expires if present
+        expires = None
+        if data.get('expires'):
+            expires = datetime.fromisoformat(data['expires'])
+        
+        return cls(
+            data=weather_data,
+            elaboration_time=elaboration_time,
+            expires=expires
+        )
 
     def __str__(self) -> str:
         return f"WeatherResponse(data={self.data}, elaboration_time={self.elaboration_time})"
@@ -482,22 +506,35 @@ class WeatherLocationError(WeatherError):
         super().__init__(message=message, service=service, operation=operation, details=details)
 
 @handle_errors(GolfCalError, service="weather", operation="base")
-class WeatherService:
+class WeatherService(ABC):
     """Base class for weather services."""
-    utc: ZoneInfo = field(default_factory=lambda: ZoneInfo('UTC'))
-    config: Dict[str, Any] = field(default_factory=dict)
+    
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Optional[Dict[str, Any]] = None) -> None:
+        """Initialize weather service.
+        
+        Args:
+            local_tz: Local timezone
+            utc_tz: UTC timezone
+            config: Optional configuration dictionary
+        """
+        self.local_tz = local_tz
+        self.utc_tz = utc_tz
+        self.config = config or {}
 
     def get_weather(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> Optional[WeatherResponse]:
         """Get weather data for a location and time range.
         
         Args:
-            latitude: The latitude of the location.
-            longitude: The longitude of the location.
-            start_time: The start time of the forecast.
-            end_time: The end time of the forecast.
+            latitude: The latitude of the location
+            longitude: The longitude of the location
+            start_time: The start time of the forecast
+            end_time: The end time of the forecast
         
         Returns:
-            WeatherResponse object containing the weather data, or None if no data is available.
+            WeatherResponse object containing the weather data, or None if no data is available
+            
+        Raises:
+            WeatherError: If weather service fails
         """
         try:
             response_data = self._fetch_forecasts(latitude, longitude, start_time, end_time)
@@ -508,59 +545,79 @@ class WeatherService:
             self._handle_errors(ErrorCode.WEATHER_ERROR, str(e))
             return None
 
+    @abstractmethod
     def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
         """Fetch forecasts from the weather service.
         
         Args:
-            latitude: The latitude of the location.
-            longitude: The longitude of the location.
-            start_time: The start time of the forecast.
-            end_time: The end time of the forecast.
+            latitude: The latitude of the location
+            longitude: The longitude of the location
+            start_time: The start time of the forecast
+            end_time: The end time of the forecast
         
         Returns:
-            Dictionary containing the forecast data, or None if no data is available.
+            Dictionary containing the forecast data, or None if no data is available
+            
+        Raises:
+            WeatherError: If weather service fails
         """
-        raise NotImplementedError("Subclasses must implement _fetch_forecasts")
+        pass
 
+    @abstractmethod
     def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
         """Parse the response from the weather service.
         
         Args:
-            response_data: The response data from the weather service.
+            response_data: The response data from the weather service
         
         Returns:
-            WeatherResponse object containing the weather data, or None if no data is available.
+            WeatherResponse object containing the weather data, or None if no data is available
+            
+        Raises:
+            WeatherParseError: If response parsing fails
         """
-        raise NotImplementedError("Subclasses must implement _parse_response")
+        pass
+
+    def get_expiry_time(self) -> datetime:
+        """Get expiry time for weather data.
+        
+        Returns:
+            Datetime when the weather data expires
+        """
+        return datetime.now(self.utc_tz) + timedelta(hours=1)
 
     def _create_response(self, data: Union[WeatherData, List[WeatherData]], elaboration_time: datetime, expires: Optional[datetime] = None) -> WeatherResponse:
         """Create a weather response object.
         
         Args:
-            data: The weather data to include in the response.
-            elaboration_time: The time the forecast was elaborated.
-            expires: Optional expiration time for the forecast.
+            data: The weather data to include in the response
+            elaboration_time: The time the forecast was elaborated
+            expires: Optional expiration time for the forecast
         
         Returns:
-            WeatherResponse object containing the weather data.
-        """
-        return WeatherResponse(data=data, elaboration_time=elaboration_time)
-
-    def _handle_errors(self, error_code: ErrorCode, message: str, traceback: Optional[str] = None, recovery_func: Optional[Callable[[], Iterator[Any]]] = None) -> None:
-        """Handle errors and attempt recovery if possible.
-        
-        Args:
-            error_code: The error code to use.
-            message: The error message.
-            traceback: Optional traceback information.
-            recovery_func: Optional function to call for recovery.
+            WeatherResponse object containing the weather data
+            
+        Raises:
+            WeatherValidationError: If data validation fails
         """
         try:
-            if recovery_func:
-                return next(recovery_func())
-        except Exception as e:
-            message = f"{message} (Recovery failed: {str(e)})"
-        aggregate_error(error_code, message, traceback)
+            return WeatherResponse(
+                data=data if isinstance(data, list) else [data],
+                elaboration_time=elaboration_time,
+                expires=expires or self.get_expiry_time()
+            )
+        except ValueError as e:
+            raise WeatherValidationError(str(e))
+
+    def _handle_errors(self, error_code: ErrorCode, message: str, traceback: Optional[str] = None) -> None:
+        """Handle errors in weather service.
+        
+        Args:
+            error_code: The error code to use
+            message: The error message
+            traceback: Optional traceback information
+        """
+        aggregate_error(str(error_code), message, traceback)
 
 def handle_weather_error(error: Exception, service: str, operation: str) -> None:
     """Handle weather service error."""
