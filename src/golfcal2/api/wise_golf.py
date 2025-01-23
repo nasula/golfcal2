@@ -179,7 +179,14 @@ class WiseGolf0API(BaseAPI, RequestHandlerMixin):
             # Make the request to the shop URL path
             endpoint = "/pd/simulaattorit/18/simulaattorit/"
             response = self._make_request("GET", endpoint, params=params)
-            return self._extract_data_from_response(response)
+            
+            # Debug log the response data
+            self.logger.debug(f"WiseGolf0API response data: {response}")
+            
+            # Extract and return data
+            extracted_data = self._extract_data_from_response(response)
+            self.logger.debug(f"WiseGolf0API extracted data: {extracted_data}")
+            return extracted_data
             
         except APIResponseError as e:
             raise WiseGolfResponseError(f"Request failed: {str(e)}")
@@ -263,3 +270,50 @@ class WiseGolf0API(BaseAPI, RequestHandlerMixin):
         if response.ok:
             return response.json()
         return []
+
+    def _extract_data_from_response(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract reservation data from API response.
+        
+        Args:
+            response: API response data
+            
+        Returns:
+            List of reservation dictionaries
+        """
+        if not isinstance(response, dict):
+            self.logger.error(f"Expected dict response, got {type(response)}")
+            return []
+            
+        if not response.get('success'):
+            self.logger.error("API response indicates failure")
+            return []
+            
+        rows = response.get('rows', [])
+        self.logger.debug(f"Found {len(rows)} items in 'rows'")
+        
+        # Convert each row into a reservation
+        reservations = []
+        for row in rows:
+            # Skip if missing required fields
+            if not all(key in row for key in ['dateTimeStart', 'dateTimeEnd']):
+                continue
+                
+            # Create reservation dict with required fields
+            reservation = {
+                'dateTimeStart': row['dateTimeStart'],
+                'dateTimeEnd': row['dateTimeEnd'],
+                'firstName': row.get('firstName', ''),
+                'familyName': row.get('familyName', ''),
+                'clubAbbreviation': row.get('clubAbbreviation', ''),
+                'handicapActive': row.get('handicapActive'),
+                'productName': row.get('productName', ''),
+                'variantName': row.get('variantName', ''),
+                'status': row.get('status'),
+                'inFuture': row.get('inFuture', 0),
+                'orderId': row.get('orderId'),
+                'reservationId': row.get('reservationId'),
+                'reservationTimeId': row.get('reservationTimeId')
+            }
+            reservations.append(reservation)
+            
+        return reservations

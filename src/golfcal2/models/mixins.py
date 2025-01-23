@@ -243,11 +243,23 @@ class PlayerFetchMixin(LoggerMixin):
             ).strftime("%Y-%m-%d")
             
             self.logger.debug(f"Fetching players for date: {reservation_date}")
-            self.logger.debug(f"Product ID: {reservation.get('productId')}")
+            
+            # Get product ID, falling back to resourceId if not available
+            product_id = reservation.get("productId")
+            if not product_id and 'resources' in reservation:
+                resources = reservation.get('resources', [{}])
+                if resources:
+                    product_id = resources[0].get('resourceId')
+            
+            if not product_id:
+                self.logger.warning("No product ID found in reservation")
+                return []
+            
+            self.logger.debug(f"Using product ID: {product_id}")
             
             # Fetch players from the REST API
             response = api.get_players(
-                product_id=reservation["productId"],
+                product_id=product_id,
                 date=reservation_date
             )
             
@@ -260,7 +272,7 @@ class PlayerFetchMixin(LoggerMixin):
             return players
             
         except Exception as e:
-            self.logger.error(f"Failed to fetch players from REST API: {e}", exc_info=True)
+            self.logger.error(f"Failed to fetch players from REST API: {e}")
             return []
 
 class ReservationHandlerMixin:
@@ -381,20 +393,56 @@ class CalendarHandlerMixin:
         start_datetime: datetime,
         weather_service: Any
     ) -> None:
-        """
-        Add weather information to calendar event.
-        
-        Args:
-            event: Calendar event to update
-            club_abbreviation: Club abbreviation for weather location
-            start_datetime: Event start time
-            weather_service: Service to fetch weather data
-        """
-        weather = weather_service.get_weather(club_abbreviation, start_datetime)
-        if weather:
-            description = event.get('description', '').decode('utf-8')
-            event['description'] = f"{description}\n\nWeather: {weather}"
-            self.logger.debug(f"Added weather to event: {event.decoded('summary')}")
+        """Add weather information to calendar event."""
+        try:
+            # Get club coordinates from config
+            club_config = self.config.clubs.get(club_abbreviation)
+            if not club_config or 'coordinates' not in club_config:
+                self.logger.warning(f"No coordinates found for club {club_abbreviation}")
+                return
+            
+            # Get end time from event
+            end_time = event.get('dtend').dt
+            if not end_time:
+                self.logger.warning(f"No end time found for event {event.get('uid')}")
+                return
+            
+            # Get weather data
+            weather_data = weather_service.get_weather(
+                lat=club_config['coordinates']['lat'],
+                lon=club_config['coordinates']['lon'],
+                start_time=start_datetime,
+                end_time=end_time,
+                club=club_abbreviation
+            )
+            
+            if not weather_data:
+                self.logger.warning(f"No weather data found for club {club_abbreviation}")
+                return
+            
+            # Update event description with weather data
+            description = event.get('description', '')
+            if description:
+                description = description + "\n\nWeather:\n"
+            else:
+                description = "Weather:\n"
+            
+            # Format weather data
+            for forecast in weather_data:
+                description += (
+                    f"{forecast.time.strftime('%H:%M')} - "
+                    f"{forecast.temperature}°C, "
+                    f"{forecast.wind_speed}m/s"
+                )
+                if forecast.precipitation_probability is not None:
+                    description += f", {forecast.precipitation_probability}% rain"
+                description += "\n"
+            
+            event['description'] = description
+            
+        except Exception as e:
+            self.logger.error(f"Failed to add weather to event: {e}")
+            return
     
     def build_base_calendar(
         self,

@@ -179,13 +179,13 @@ class MetWeatherService(WeatherService):
                     # Convert time to local timezone
                     local_time = time.astimezone(self.local_tz)
                     
-                    self.debug(
-                        "Processing forecast entry",
-                        time=time.isoformat(),
-                        block_end=block_end.isoformat(),
-                        block_duration=block_duration.total_seconds() / 3600,
-                        block_type="hourly" if block_duration.total_seconds() <= 3600 else "6-hour"
-                    )
+                  #  self.debug(
+                  #      "Processing forecast entry",
+                  #      time=time.isoformat(),
+                  #      block_end=block_end.isoformat(),
+                  #      block_duration=block_duration.total_seconds() / 3600,
+                  #      block_type="hourly" if block_duration.total_seconds() <= 3600 else "6-hour"
+                  #  )
                     
                     weather_data.append(WeatherData(
                         temperature=temperature,

@@ -34,7 +34,11 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
     
     def __init__(self, user_name: str, config: AppConfig):
         """Initialize service."""
-        super().__init__()
+        # Initialize all parent classes
+        EnhancedLoggerMixin.__init__(self)
+        ReservationHandlerMixin.__init__(self)
+        CalendarHandlerMixin.__init__(self)
+        
         self.user_name = user_name
         self.config = config
         
@@ -301,7 +305,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         all_reservations: List[Reservation]
     ) -> None:
         """Process a NexGolf reservation."""
-        self.debug(f"Processing NexGolf reservation: {raw_reservation}")
+     #   self.debug(f"Processing NexGolf reservation: {raw_reservation}")
         reservation = Reservation.from_nexgolf(raw_reservation, club, user, membership)
         
         # Skip if older than cutoff
@@ -440,6 +444,10 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         
         # Add description
         event.add('description', reservation.get_event_description())
+        
+        # Add duration
+        duration = reservation.end_time - reservation.start_time
+        event.add('duration', duration)
         
         # Add weather for all clubs that have coordinates
         club_config = self.config.clubs.get(reservation.membership.club)
