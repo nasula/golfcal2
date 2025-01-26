@@ -3,7 +3,7 @@ User model for golf calendar application.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union, cast
 import os
 import json
 import logging
@@ -19,7 +19,7 @@ def get_club_abbreviation(club_name: str) -> str:
     
     for abbr, club_info in clubs_config.items():
         if club_info.get('club', '') == club_name or abbr == club_name:
-            return club_info.get('clubAbbreviation', abbr)
+            return str(club_info.get('clubAbbreviation', abbr))
     
     return club_name  # Fallback to using the club name itself
 
@@ -41,7 +41,7 @@ class User:
     handicap: Optional[float] = None
 
     @classmethod
-    def from_config(cls, name: str, config: Dict[str, Any]) -> "User":
+    def from_config(cls, name: str, config: Union[Dict[str, Any], "User"]) -> "User":
         """
         Create User instance from configuration dictionary.
         
@@ -60,18 +60,27 @@ class User:
         logger.debug(f"Creating user {name} from config")
         logger.debug(f"Config: {config}")
         
-        # If config is already a User instance, extract its memberships data
+        # Convert config to dictionary if it's a User instance
         if isinstance(config, User):
-            config = {
+            config_dict = {
                 'email': config.email,
                 'phone': config.phone,
                 'handicap': config.handicap,
-                'memberships': config.memberships.get('memberships', []) if isinstance(config.memberships, dict) else []
+                'memberships': [
+                    {
+                        'club': m.club,
+                        'clubAbbreviation': m.clubAbbreviation,
+                        'duration': m.duration,
+                        'auth_details': m.auth_details
+                    }
+                    for m in config.memberships
+                ]
             }
-            
+            config = config_dict
+        
         # Handle nested memberships structure
         if isinstance(config, dict) and isinstance(config.get('memberships'), dict):
-            memberships_data = config['memberships']
+            memberships_data = cast(Dict[str, Any], config['memberships'])
             config = {
                 'email': memberships_data.get('email'),
                 'phone': memberships_data.get('phone'),
@@ -98,26 +107,18 @@ class User:
                     auth_details=membership_config.get("auth_details", {}),
                     duration=membership_config.get("duration", {"hours": 4})
                 )
-                logger.debug(f"Created membership: {membership.__dict__}")
                 memberships.append(membership)
-            except Exception as e:
-                logger.error(f"Failed to create membership from config: {e}", exc_info=True)
+            except KeyError as e:
+                logger.error(f"Missing required field in membership config: {e}")
+                continue
         
-        # Try to get handicap from config, default to 54 if not found
-        try:
-            handicap = float(config.get("handicap", 54))
-        except (ValueError, TypeError):
-            handicap = 54
-        
-        user = cls(
+        return cls(
             name=name,
-            email=config.get("email"),
-            phone=config.get("phone"),
-            handicap=handicap,
+            email=config.get('email'),
+            phone=config.get('phone'),
+            handicap=config.get('handicap'),
             memberships=memberships
         )
-        logger.debug(f"Created user: {user.__dict__}")
-        return user
     
     def get_membership(self, club: str) -> Membership:
         """
@@ -149,3 +150,15 @@ class User:
             True if user has membership for club, False otherwise
         """
         return any(m.club == club for m in self.memberships)
+
+    def get_service_name(self) -> str:
+        """Get service name."""
+        return str(self.__class__.__name__)
+
+    def get_service_version(self) -> str:
+        """Get service version."""
+        return "1.0.0"
+
+    def get_service_description(self) -> str:
+        """Get service description."""
+        return "Base service mixin"

@@ -81,6 +81,36 @@ class ResponseData:
         """
         return bool(self._data)
 
+    def is_dict(self) -> bool:
+        """
+        Return True if the underlying data is a dictionary.
+        """
+        return isinstance(self._data, dict)
+
+    def is_list(self) -> bool:
+        """
+        Return True if the underlying data is a list.
+        """
+        return isinstance(self._data, list)
+
+    def as_dict(self) -> Dict[str, Any]:
+        """
+        Return the underlying data as a dictionary.
+        Raises TypeError if the data is not a dictionary.
+        """
+        if not isinstance(self._data, dict):
+            raise TypeError("Data is not a dictionary")
+        return self._data
+
+    def as_list(self) -> List[Any]:
+        """
+        Return the underlying data as a list.
+        Raises TypeError if the data is not a list.
+        """
+        if not isinstance(self._data, list):
+            raise TypeError("Data is not a list")
+        return self._data
+
 
 class APIError(Exception):
     """Base API error."""
@@ -102,7 +132,7 @@ class PlayerFetchMixin(LoggerMixin):
     """Mixin for player fetching functionality."""
     
     auth_service: Any
-    club_details: Dict[str, Any]
+    club_details: Optional[Dict[str, Any]]
     
     def extract_players_from_response(
         self,
