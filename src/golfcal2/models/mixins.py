@@ -2,17 +2,85 @@
 Mixins for golf club models.
 """
 
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional, Tuple, Union, Protocol, cast, Type, TypeVar, Set, Iterator
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
+import logging
 
+# Ignore missing stubs for icalendar
 import icalendar  # type: ignore
+
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.models.user import Membership
 import requests
 import time
 from urllib.parse import urljoin
+
+# Type aliases for icalendar types
+ICalEvent = TypeVar('ICalEvent', bound=icalendar.Event)
+ICalCalendar = TypeVar('ICalCalendar', bound=icalendar.Calendar)
+ICalText = TypeVar('ICalText', bound=icalendar.vText)
+
+class ResponseData:
+    """
+    A unified container for data that can be accessed as either a dict or a list.
+    It uses runtime checks to validate whether the data is a dict or list before
+    calling dict- or list-specific methods.
+    """
+
+    def __init__(self, data: Union[Dict[str, Any], List[Any]]) -> None:
+        if not isinstance(data, (dict, list)):
+            raise TypeError(f"Data must be either dict or list, got {type(data)}")
+        self._data = data
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Retrieve a value by key if data is a dict; otherwise, return default.
+        """
+        if isinstance(self._data, dict):
+            return self._data.get(key, default)
+        return default
+
+    def __getitem__(self, key: Union[str, int]) -> Any:
+        """
+        Retrieve an item by string key if data is a dict, or integer index if data is a list.
+        """
+        if isinstance(self._data, dict):
+            if not isinstance(key, str):
+                raise TypeError("Cannot use a non-string key on a dict")
+            return self._data[key]
+        else:
+            if not isinstance(key, int):
+                raise TypeError("Cannot use a non-integer index on a list")
+            return self._data[key]
+
+    def append(self, item: Any) -> None:
+        """
+        Append an item if data is a list; otherwise, raise a TypeError.
+        """
+        if not isinstance(self._data, list):
+            raise TypeError("Cannot append to a dictionary")
+        self._data.append(item)
+
+    def __len__(self) -> int:
+        """
+        Return the length of the underlying container.
+        """
+        return len(self._data)
+
+    def __iter__(self) -> Iterator[Any]:
+        """
+        Iterate over keys if data is a dict, or items if data is a list.
+        """
+        return iter(self._data)
+
+    def __bool__(self) -> bool:
+        """
+        Return True if the container is non-empty; False otherwise.
+        """
+        return bool(self._data)
+
 
 class APIError(Exception):
     """Base API error."""
@@ -33,9 +101,12 @@ class APIAuthError(APIError):
 class PlayerFetchMixin(LoggerMixin):
     """Mixin for player fetching functionality."""
     
+    auth_service: Any
+    club_details: Dict[str, Any]
+    
     def extract_players_from_response(
         self,
-        response: Dict[str, Any],
+        response: Union[Dict[str, Any], List[Any]],
         reservation: Dict[str, Any],
         skip_empty: bool = True,
         skip_reserved: bool = True
@@ -53,24 +124,21 @@ class PlayerFetchMixin(LoggerMixin):
             List of player dictionaries
         """
         try:
-            self.logger.debug(f"Extracting players from response: {response}")
-            self.logger.debug(f"For reservation: {reservation}")
+            if not response:
+                return []
             
-            # Handle old format (wisegolf)
-            if response and 'rows' in response and 'reservationsGolfPlayers' in response:
-                return self._extract_players_wisegolf(response, reservation, skip_empty, skip_reserved)
+            resp_data = ResponseData(response)
             
-            # Handle new format (wisegolf0)
-            if response and 'reservationsGolfPlayers' in response:
-                return self._extract_players_wisegolf0(response, skip_empty, skip_reserved)
-            elif response and 'players' in response:
-                return self._extract_players_wisegolf0(response, skip_empty, skip_reserved)
+            if resp_data.is_dict():
+                data = resp_data.as_dict()
+                if 'rows' in data and 'reservationsGolfPlayers' in data:
+                    return self._extract_players_wisegolf(data, reservation, skip_empty, skip_reserved)
+                if 'reservationsGolfPlayers' in data:
+                    return self._extract_players_wisegolf0(data, skip_empty, skip_reserved)
             
-            # Handle direct player list format
-            if isinstance(response, list):
-                return self._extract_players_from_list(response, skip_empty, skip_reserved)
+            if resp_data.is_list():
+                return self._extract_players_from_list(resp_data.as_list(), skip_empty, skip_reserved)
             
-            self.logger.debug(f"No recognized response format found. Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
             return []
             
         except Exception as e:
@@ -144,18 +212,13 @@ class PlayerFetchMixin(LoggerMixin):
         self.logger.debug(f"Extracting players from WiseGolf0 response: {response}")
         
         # Get the list of players from the response
-        if isinstance(response, dict):
-            if 'reservationsGolfPlayers' in response:
-                players_list = response['reservationsGolfPlayers']
-                # Get the rows to match reservation times
-                rows = response.get('rows', [])
-                self.logger.debug(f"Found {len(players_list)} players and {len(rows)} rows")
-            else:
-                self.logger.debug(f"No reservationsGolfPlayers found in response. Keys: {list(response.keys())}")
-                return []
-        else:
-            self.logger.debug(f"Response is not a dict: {type(response)}")
+        if not isinstance(response, dict) or 'reservationsGolfPlayers' not in response:
+            self.logger.debug(f"Invalid response format: {type(response)}")
             return []
+            
+        players_list = response['reservationsGolfPlayers']
+        rows = response.get('rows', [])
+        self.logger.debug(f"Found {len(players_list)} players and {len(rows)} rows")
         
         players = []
         for player in players_list:
@@ -215,7 +278,7 @@ class PlayerFetchMixin(LoggerMixin):
         self,
         reservation: Dict[str, Any],
         membership: Membership,
-        api_class: Any,
+        api_class: Type[Any],
         rest_url: str
     ) -> List[Dict[str, Any]]:
         """
@@ -260,10 +323,10 @@ class PlayerFetchMixin(LoggerMixin):
             self.logger.debug(f"Using product ID: {product_id}")
             
             # Fetch players from the REST API
-            response = api.get_players(
-                product_id=product_id,
-                date=reservation_date
-            )
+            response = api.get_players({
+                'product_id': product_id,
+                'date': reservation_date
+            })
             
             self.logger.debug(f"Got player response type: {type(response)}")
             self.logger.debug(f"Got player response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
@@ -280,11 +343,14 @@ class PlayerFetchMixin(LoggerMixin):
 class ReservationHandlerMixin:
     """Mixin for handling reservations."""
     
+    _reservation_logger: Optional[logging.Logger] = None
+    
     @property
-    def logger(self):
+    def logger(self) -> logging.Logger:
         """Get logger for this mixin."""
-        if not hasattr(self, '_reservation_logger'):
-            self._reservation_logger = LoggerMixin().logger
+        if not hasattr(self, '_reservation_logger') or self._reservation_logger is None:
+            logger_mixin = LoggerMixin()  # type: ignore[no-untyped-call]  # LoggerMixin.__init__ is untyped
+            self._reservation_logger = logger_mixin.logger
         return self._reservation_logger
     
     def _should_include_reservation(
@@ -312,7 +378,7 @@ class ReservationHandlerMixin:
         
         # Include past reservations within past_days (24 hours)
         hours_old = (now - reservation.start_time).total_seconds() / 3600
-        return 0 <= hours_old <= 24 * past_days
+        return bool(0 <= hours_old <= 24 * past_days)
     
     def _is_active(
         self,
@@ -329,7 +395,7 @@ class ReservationHandlerMixin:
         Returns:
             True if reservation is active
         """
-        return reservation.start_time <= now <= reservation.end_time
+        return bool(reservation.start_time <= now <= reservation.end_time)
     
     def _is_upcoming(
         self,
@@ -349,10 +415,13 @@ class ReservationHandlerMixin:
             True if reservation is upcoming
         """
         future_limit = now + timedelta(days=days)
-        return now < reservation.start_time <= future_limit
+        return bool(now < reservation.start_time <= future_limit)
 
 class RequestHandlerMixin:
     """Mixin for handling HTTP requests."""
+    
+    base_url: str
+    session: requests.Session
     
     def _make_request(
         self,
@@ -365,7 +434,7 @@ class RequestHandlerMixin:
         try:
             response = self.session.request(method, url, **kwargs)
             response.raise_for_status()
-            return response.json()
+            return cast(Dict[str, Any], response.json())
         except requests.exceptions.Timeout as e:
             raise APITimeoutError(f"Request timed out: {e}")
         except requests.exceptions.HTTPError as e:
@@ -380,35 +449,36 @@ class RequestHandlerMixin:
 class CalendarMixin(LoggerMixin):
     """Mixin for calendar-related functionality."""
     
-    def __init__(self, config=None):
+    def __init__(self, config: Optional[Any] = None) -> None:
         """Initialize calendar mixin."""
-        super().__init__()
+        super().__init__()  # type: ignore[no-untyped-call]  # LoggerMixin.__init__ is untyped
         self._config = config
+        self.seen_uids: Set[str] = set()
         
     @property
-    def config(self):
+    def config(self) -> Optional[Any]:
         """Get config, either from instance or parent."""
         if hasattr(self, '_config') and self._config is not None:
             return self._config
         return getattr(super(), 'config', None)
     
     @config.setter
-    def config(self, value):
+    def config(self, value: Any) -> None:
         """Set config value."""
         self._config = value
     
     def _add_event_to_calendar(
         self,
-        event: icalendar.Event,
-        calendar: icalendar.Calendar
+        event: Any,
+        calendar: Any
     ) -> None:
         """Add an event to the calendar."""
         uid = event.get('uid')
-        if uid and hasattr(self, 'seen_uids') and uid in self.seen_uids:
+        if uid and uid in self.seen_uids:
             self.logger.debug(f"Skipping duplicate event with UID: {uid}")
             return
             
-        if uid and hasattr(self, 'seen_uids'):
+        if uid:
             self.seen_uids.add(uid)
         calendar.add_component(event)
         self.logger.debug(f"Added event to calendar: {event.decoded('summary')}")
@@ -417,7 +487,7 @@ class CalendarMixin(LoggerMixin):
         self,
         user_name: str,
         local_tz: ZoneInfo
-    ) -> icalendar.Calendar:
+    ) -> Any:
         """Create base calendar with metadata."""
         calendar = icalendar.Calendar()
         calendar.add('prodid', icalendar.vText('-//Golf Calendar//EN'))
