@@ -6,7 +6,7 @@ class Player:
     """Golf player."""
     name: str
     club: str
-    handicap: float
+    handicap: float = 0.0  # Default to 0.0 if not provided
 
     @classmethod
     def from_wisegolf(cls, data: Dict[str, Any]) -> "Player":

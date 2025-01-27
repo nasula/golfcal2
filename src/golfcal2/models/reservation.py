@@ -9,9 +9,9 @@ from zoneinfo import ZoneInfo
 
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.utils.timezone_utils import TimezoneManager
-from golfcal2.models.golf_club import GolfClub
+from golfcal2.models.golf_club import GolfClub, ExternalGolfClub
 from golfcal2.models.user import User, Membership
-from golfcal2.services.weather_types import WeatherData, get_weather_symbol
+from golfcal2.services.weather_types import WeatherData, WeatherResponse, get_weather_symbol
 
 class PlayerDataExtractor:
     """Helper class for extracting player data from different formats."""
@@ -159,6 +159,8 @@ class Reservation(LoggerMixin):
     def _fetch_players(self, start_time: datetime) -> List[Player]:
         """Fetch players for the reservation."""
         players = []
+        if self._tz_manager is None:
+            self._tz_manager = TimezoneManager()
         now = self._tz_manager.now()
         is_future_event = start_time > now
 
@@ -225,9 +227,14 @@ class Reservation(LoggerMixin):
         
         return summary
 
-    def _format_weather_data(self, weather_data: List[WeatherData]) -> str:
+    def _format_weather_data(self, weather_data: Union[WeatherResponse, List[WeatherData]]) -> str:
         """Format weather data into a human-readable string."""
-        if not weather_data:
+        if isinstance(weather_data, list):
+            data_list = weather_data
+        else:
+            data_list = weather_data.data if weather_data else []
+            
+        if not data_list:
             self.debug("No weather data provided")
             return "No forecast available"
         
@@ -235,14 +242,14 @@ class Reservation(LoggerMixin):
         event_tz = self.start_time.tzinfo
         self.debug(
             "Starting weather data formatting",
-            total_forecasts=len(weather_data),
+            total_forecasts=len(data_list),
             event_time_range=f"{self.start_time.isoformat()} to {self.end_time.isoformat()}",
             event_timezone=str(event_tz)
         )
         
         # Convert all forecasts to event timezone and sort by time
         normalized_data = []
-        for forecast in weather_data:
+        for forecast in data_list:
             if forecast.time.tzinfo != event_tz:
                 forecast.time = forecast.time.astimezone(event_tz)
             normalized_data.append(forecast)
@@ -363,7 +370,7 @@ class Reservation(LoggerMixin):
         """Format reservation for display in terminal."""
         # Get club configuration to check for coordinates
         from golfcal2.config.settings import AppConfig
-        config = AppConfig()
+        config = AppConfig(users={}, clubs={}, global_config={}, api_keys={})
         club_config = config.clubs.get(self.membership.club)
         self.debug(f"Club config for {self.membership.club}: {club_config}")
         
@@ -382,33 +389,36 @@ class Reservation(LoggerMixin):
             output.append(f"Total HCP: {self.total_handicap}")
         
         # Add weather data if coordinates are available
-        if club_config and 'coordinates' in club_config:
-            self.debug(f"Found coordinates for {self.membership.club}: {club_config['coordinates']}")
-            from golfcal2.services.weather_service import WeatherManager
-            from golfcal2.utils.timezone_utils import TimezoneManager
-            from zoneinfo import ZoneInfo
-            
-            tz_manager = TimezoneManager()
-            # Ensure we're using ZoneInfo objects
-            local_tz = ZoneInfo(tz_manager.timezone_name)
-            utc_tz = ZoneInfo('UTC')
-            
-            weather_manager = WeatherManager(local_tz, utc_tz, config)
-            
-            weather_data = weather_manager.get_weather(
-                lat=club_config['coordinates']['lat'],
-                lon=club_config['coordinates']['lon'],
-                start_time=self.start_time,
-                end_time=self.end_time,
-                club=self.membership.clubAbbreviation
-            )
-            
-            if weather_data:
-                self.debug(f"Got weather data for {self.membership.club}: {len(weather_data)} forecasts")
-                output.append("\nWeather:")
-                output.append(self._format_weather_data(weather_data))
+        if club_config and 'coordinates' in club_config and club_config['coordinates'] is not None:
+            coordinates = club_config['coordinates']
+            if 'lat' in coordinates and 'lon' in coordinates:
+                self.debug(f"Found coordinates for {self.membership.club}: {coordinates}")
+                from golfcal2.services.weather_service import WeatherManager
+                from golfcal2.utils.timezone_utils import TimezoneManager
+                from zoneinfo import ZoneInfo
+                
+                tz_manager = TimezoneManager()
+                # Ensure we're using ZoneInfo objects
+                local_tz = ZoneInfo(tz_manager.timezone_name)
+                utc_tz = ZoneInfo('UTC')
+                
+                weather_manager = WeatherManager(local_tz, utc_tz, None)
+                
+                weather_data = weather_manager.get_weather(
+                    lat=coordinates['lat'],
+                    lon=coordinates['lon'],
+                    start_time=self.start_time,
+                    end_time=self.end_time
+                )
+                
+                if weather_data:
+                    self.debug(f"Got weather data for {self.membership.club}: {len(weather_data)} forecasts")
+                    output.append("\nWeather:")
+                    output.append(self._format_weather_data(weather_data))
+                else:
+                    self.debug(f"No weather data returned for {self.membership.club}")
             else:
-                self.debug(f"No weather data returned for {self.membership.club}")
+                self.debug(f"Invalid coordinates format for {self.membership.club}")
         else:
             self.debug(f"No coordinates found for {self.membership.club}")
         
@@ -665,15 +675,13 @@ class Reservation(LoggerMixin):
     @classmethod
     def from_external_event(cls, event_data: Dict[str, Any], user: User) -> "Reservation":
         """Create reservation from external event data."""
-        from golfcal2.models.golf_club import ExternalGolfClub
-        
         # Create external golf club
         club = ExternalGolfClub(
             name=event_data["name"],
-            location=event_data["location"],
-            coordinates=event_data["coordinates"],
+            url="",  # External events don't have URLs
+            coordinates=event_data.get("coordinates"),
             timezone=event_data["timezone"],
-            address=event_data.get("address")
+            address=event_data.get("address", "Unknown")
         )
         
         # Create a pseudo-membership for the external event

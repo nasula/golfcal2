@@ -226,7 +226,7 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
         self.logger.debug("Fetching players")
         players = api.get_players(reservation)
         self.logger.debug(f"Got {len(players)} players")
-        return players
+        return players if isinstance(players, list) else []
 
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""

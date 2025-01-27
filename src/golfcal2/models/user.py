@@ -60,23 +60,14 @@ class User:
         logger.debug(f"Creating user {name} from config")
         logger.debug(f"Config: {config}")
         
-        # Convert config to dictionary if it's a User instance
+        # If config is already a User instance, convert it to a dict
         if isinstance(config, User):
-            config_dict = {
+            config = {
                 'email': config.email,
                 'phone': config.phone,
                 'handicap': config.handicap,
-                'memberships': [
-                    {
-                        'club': m.club,
-                        'clubAbbreviation': m.clubAbbreviation,
-                        'duration': m.duration,
-                        'auth_details': m.auth_details
-                    }
-                    for m in config.memberships
-                ]
+                'memberships': config.memberships  # Keep the original memberships list
             }
-            config = config_dict
         
         # Handle nested memberships structure
         if isinstance(config, dict) and isinstance(config.get('memberships'), dict):
@@ -97,6 +88,12 @@ class User:
         for membership_config in config["memberships"]:
             logger.debug(f"Processing membership config: {membership_config}")
             try:
+                # If it's already a Membership instance, use it directly
+                if isinstance(membership_config, Membership):
+                    memberships.append(membership_config)
+                    continue
+                
+                # Otherwise, create a new Membership instance from the config dict
                 club = membership_config["club"]
                 club_abbreviation = get_club_abbreviation(club)
                 logger.debug(f"Got club abbreviation for {club}: {club_abbreviation}")

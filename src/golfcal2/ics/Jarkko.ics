@@ -6,31 +6,42 @@ METHOD:PUBLISH
 X-WR-CALNAME:Golf Reservations - Jarkko
 X-WR-TIMEZONE:Europe/Helsinki
 BEGIN:VEVENT
+SUMMARY:Golf: Vantaankoski 11:00 - Simulaattori 3 (1 Players\, THCP: 23.8)
+DTSTART;TZID=Europe/Helsinki:20250202T110000
+DTEND;TZID=Europe/Helsinki:20250202T130000
+DTSTAMP;TZID=Europe/Helsinki:20250127T182719
+UID:Vantaankoski_20250202_1100_0_Jarkko
+DESCRIPTION:Teetime 2025-02-02 11:00:00\nJarkko Ahonen\, PGC\, HCP: 23.8\n
+ \nWeather:\n08:00-14:00 ☁️ -1.4°C 2.7m/s 💧6%
+LOCATION:Martinkyläntie 9\, 01770 Vantaa\, Finland
+END:VEVENT
+BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250129T180000
 DTEND;TZID=Africa/Blantyre:20250129T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250129_1800_60_Jarkko
-DESCRIPTION:External golf event at Golfluola\n\nWeather:\n14:00-20:00 ☁
- ️ 4.5°C 2.8m/s 💧47%\n20:00-02:00 ☁️ 5.0°C 3.5m/s 💧41%
+DESCRIPTION:External golf event at Golfluola\n\nWeather:\n18:00 🌧️ 3.
+ 6°C 3.7m/s 💧65% 0.1mm\n19:00 🌧️ 4.0°C 4.5m/s 💧62% 0.2mm\n20:0
+ 0 🌧️ 4.2°C 5.8m/s 💧63% 0.2mm\n21:00 🌧️ 4.4°C 6.4m/s 💧67%
+  0.4mm
 LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
 END:VEVENT
 BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250205T180000
 DTEND;TZID=Africa/Blantyre:20250205T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250205_1800_60_Jarkko
-DESCRIPTION:External golf event at Golfluola\n\nWeather:\n02:00-08:00 ☁
- ️ 0.1°C 3.2m/s 💧14%\n08:00-14:00 ☁️ -0.1°C 3.1m/s 💧10%\n14:0
- 0-20:00 ☁️ 2.3°C 3.8m/s 💧10%
+DESCRIPTION:External golf event at Golfluola\n\nWeather:\n14:00-20:00 🌨
+ ️ 1.8°C 4.4m/s 💧22% 2.8mm\n20:00-02:00 ☁️ 2.2°C 3.7m/s 💧14%
 LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
 END:VEVENT
 BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250212T180000
 DTEND;TZID=Africa/Blantyre:20250212T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250212_1800_60_Jarkko
 DESCRIPTION:External golf event at Golfluola\n\nWeather:\nNo forecast avai
  lable for this date
@@ -40,7 +51,7 @@ BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250219T180000
 DTEND;TZID=Africa/Blantyre:20250219T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250219_1800_60_Jarkko
 DESCRIPTION:External golf event at Golfluola\n\nWeather:\nNo forecast avai
  lable for this date
@@ -50,7 +61,7 @@ BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250226T180000
 DTEND;TZID=Africa/Blantyre:20250226T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250226_1800_60_Jarkko
 DESCRIPTION:External golf event at Golfluola\n\nWeather:\nNo forecast avai
  lable for this date
@@ -60,7 +71,7 @@ BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250305T180000
 DTEND;TZID=Africa/Blantyre:20250305T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250305_1800_60_Jarkko
 DESCRIPTION:External golf event at Golfluola\n\nWeather:\nNo forecast avai
  lable for this date
@@ -70,7 +81,7 @@ BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250312T180000
 DTEND;TZID=Africa/Blantyre:20250312T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250312_1800_60_Jarkko
 DESCRIPTION:External golf event at Golfluola\n\nWeather:\nNo forecast avai
  lable for this date
@@ -80,7 +91,7 @@ BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250319T180000
 DTEND;TZID=Africa/Blantyre:20250319T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250319_1800_60_Jarkko
 DESCRIPTION:External golf event at Golfluola\n\nWeather:\nNo forecast avai
  lable for this date
@@ -90,7 +101,7 @@ BEGIN:VEVENT
 SUMMARY:Golf: Winter Practice 50514#
 DTSTART;TZID=Africa/Blantyre:20250326T180000
 DTEND;TZID=Africa/Blantyre:20250326T210000
-DTSTAMP;VALUE=DATE-TIME:20250126T200204Z
+DTSTAMP;VALUE=DATE-TIME:20250127T162719Z
 UID:Winter_Practice_50514#_20250326_1800_60_Jarkko
 DESCRIPTION:External golf event at Golfluola\n\nWeather:\nNo forecast avai
  lable for this date
