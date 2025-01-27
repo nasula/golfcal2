@@ -132,7 +132,7 @@ class PlayerFetchMixin(LoggerMixin):
     """Mixin for player fetching functionality."""
     
     auth_service: Any
-    club_details: Optional[Dict[str, Any]]
+    club_details: Dict[str, Any]
     
     def extract_players_from_response(
         self,

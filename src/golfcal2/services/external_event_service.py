@@ -215,8 +215,8 @@ class ExternalEventService(EnhancedLoggerMixin):
             return event
             
         except Exception as e:
-            self.logger.error(f"Failed to create external event: {e}")
-            return None
+           self.logger.error(f"Failed to create external event: {e}", exc_info=True) 
+           return None
 
     def _parse_dynamic_time(self, time_str: str, timezone: ZoneInfo) -> datetime:
         """Parse a dynamic time string like 'tomorrow 10:00' or '3 days 09:30'."""
@@ -254,5 +254,5 @@ class ExternalEventService(EnhancedLoggerMixin):
             return result
             
         except Exception as e:
-            self.logger.error(f"Failed to parse dynamic time '{time_str}': {e}")
+            self.logger.error(f"Failed to parse dynamic time '{time_str}': {e}", exc_info=True)
             raise ValueError(f"Invalid time format: {time_str}") 

@@ -224,13 +224,9 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
         )
         
         self.logger.debug("Fetching players")
-        try:
-            response = api.get_players(reservation)
-            self.logger.debug(f"Got player response: {response}")
-            return self.extract_players_from_response(response, reservation)
-        except Exception as e:
-            self.logger.error(f"Failed to fetch players: {e}")
-            return []
+        players = api.get_players(reservation)
+        self.logger.debug(f"Got {len(players)} players")
+        return players
 
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""
