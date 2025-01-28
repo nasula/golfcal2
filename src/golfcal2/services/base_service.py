@@ -2,16 +2,18 @@
 
 import os
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any, Union
+from typing import Dict, Any, Optional
 from zoneinfo import ZoneInfo
-from golfcal2.utils.logging_utils import EnhancedLoggerMixin, log_execution
+
+import requests
+
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.services.weather_types import (
     WeatherData, WeatherResponse, WeatherError, WeatherServiceUnavailable,
     WeatherServiceInvalidResponse, WeatherServiceTimeout, WeatherServiceRateLimited,
     WeatherAuthError, WeatherValidationError, WeatherServiceError, WeatherLocationError
 )
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.services.weather_location_cache import WeatherLocationCache
 from golfcal2.error_codes import ErrorCode
 
 class WeatherService(EnhancedLoggerMixin):
@@ -21,25 +23,22 @@ class WeatherService(EnhancedLoggerMixin):
     HOURLY_RANGE: int = 48  # Default hourly forecast range in hours
     SIX_HOURLY_RANGE: int = 240  # Default 6-hourly forecast range in hours
     
-    def __init__(self, local_tz: Union[str, ZoneInfo], utc_tz: Union[str, ZoneInfo]) -> None:
-        """Initialize service.
-        
-        Args:
-            local_tz: Local timezone as string or ZoneInfo
-            utc_tz: UTC timezone as string or ZoneInfo
-        """
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+        """Initialize service."""
         super().__init__()
-        # Ensure we have proper ZoneInfo objects
-        if isinstance(local_tz, str):
-            local_tz = ZoneInfo(local_tz)
-        if isinstance(utc_tz, str):
-            utc_tz = ZoneInfo(utc_tz)
-        self.local_tz: ZoneInfo = local_tz
-        self.utc_tz: ZoneInfo = utc_tz
+        self.local_tz = local_tz
+        self.utc_tz = utc_tz
+        self.config = config
+        self.set_log_context(service=self.__class__.__name__.lower())
+        
+        # Initialize session
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'golfcal2/1.0.0'
+        })
         
         # Initialize caches as None - they will be set by the manager
         self.cache: Optional[WeatherResponseCache] = None
-        self.location_cache: Optional[WeatherLocationCache] = None
     
     def _handle_errors(self, error_code: ErrorCode, message: str) -> None:
         """Handle errors by logging and raising appropriate exceptions.
@@ -78,7 +77,6 @@ class WeatherService(EnhancedLoggerMixin):
         """
         return datetime.now(self.utc_tz) + timedelta(hours=1)
     
-    @log_execution(level='DEBUG')
     def get_weather(
         self,
         lat: float,

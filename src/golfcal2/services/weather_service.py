@@ -1,79 +1,51 @@
-"""Weather service base class and manager."""
+"""Weather service manager."""
 
-import logging
 import os
 from datetime import datetime, timedelta
-from functools import lru_cache
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, Any, Optional
 from zoneinfo import ZoneInfo
-from pathlib import Path
 
 from golfcal2.services.weather_types import (
-    WeatherData, WeatherResponse, WeatherError,
-    WeatherServiceUnavailable, WeatherServiceTimeout,
-    WeatherServiceRateLimited
+    WeatherResponse, WeatherError
 )
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.services.weather_location_cache import WeatherLocationCache
-from golfcal2.utils.logging_utils import EnhancedLoggerMixin, get_logger
-from golfcal2.exceptions import (
-    ErrorCode,
-    handle_errors
-)
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.config.error_aggregator import aggregate_error
 from golfcal2.services.base_service import WeatherService
 from golfcal2.services.met_weather_service import MetWeatherService
 from golfcal2.services.open_meteo_service import OpenMeteoService
-
-@lru_cache(maxsize=32)
-def get_timezone(tz_name: str) -> ZoneInfo:
-    """Get cached timezone instance using Python's lru_cache.
-    
-    Args:
-        tz_name: Name of the timezone
-        
-    Returns:
-        Cached ZoneInfo instance
-    """
-    return ZoneInfo(tz_name)
+from golfcal2.services.mock_weather_service import MockWeatherService
 
 class WeatherManager(EnhancedLoggerMixin):
-    """Manager for weather services with lazy loading."""
-
-    def __init__(self, local_tz: Union[str, ZoneInfo], utc_tz: Union[str, ZoneInfo], service_config: Optional[Dict[str, Any]] = None) -> None:
-        """Initialize weather manager.
-        
-        Args:
-            local_tz: Local timezone
-            utc_tz: UTC timezone
-            service_config: Optional service configuration
-        """
+    """Weather service manager."""
+    
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+        """Initialize manager."""
         super().__init__()
-        self._service_config = service_config or {}
+        self.local_tz = local_tz
+        self.utc_tz = utc_tz
+        self.config = config
+        self.set_log_context(service="weather_manager")
         
-        # Convert timezone strings to ZoneInfo objects
-        self.local_tz = get_timezone(local_tz) if isinstance(local_tz, str) else local_tz
-        self.utc_tz = get_timezone(utc_tz) if isinstance(utc_tz, str) else utc_tz
-        
-        # Initialize service factories
-        self._service_factories = {
-            'met': lambda: MetWeatherService(self.local_tz, self.utc_tz, self._service_config),
-            'openmeteo': lambda: OpenMeteoService(self.local_tz, self.utc_tz, self._service_config)
+        # Initialize services
+        self.services = {
+            'met': MetWeatherService(local_tz, utc_tz, config),
+            'mock': MockWeatherService(local_tz, utc_tz, config),
+            'openmeteo': OpenMeteoService(local_tz, utc_tz, config)
         }
         
-        # Initialize services dict
-        self._services: Dict[str, Optional[WeatherService]] = {}
+        # Set primary service
+        self.primary_service = self.services.get(
+            config.get('weather_service', 'met'),
+            self.services['met']
+        )
         
         # Initialize cache paths
-        self._cache_dir = self._service_config.get('directories', {}).get('cache', os.path.expanduser('~/.cache/golfcal2'))
+        self._cache_dir = config.get('directories', {}).get('cache', os.path.expanduser('~/.cache/golfcal2'))
         os.makedirs(self._cache_dir, exist_ok=True)
-        
-        # Set up logging
-        self.set_log_context(service="weather_manager")
         
         # Initialize caches
         self._response_cache: Optional[WeatherResponseCache] = None
-        self._location_cache: Optional[WeatherLocationCache] = None
 
     @property
     def response_cache(self) -> WeatherResponseCache:
@@ -86,17 +58,6 @@ class WeatherManager(EnhancedLoggerMixin):
             self._response_cache = WeatherResponseCache(os.path.join(self._cache_dir, 'weather_responses.db'))
         return self._response_cache
 
-    @property
-    def location_cache(self) -> WeatherLocationCache:
-        """Get location cache, initializing if needed.
-        
-        Returns:
-            WeatherLocationCache instance
-        """
-        if self._location_cache is None:
-            self._location_cache = WeatherLocationCache()
-        return self._location_cache
-
     def _create_service(self, service_name: str) -> Optional[WeatherService]:
         """Create a weather service instance.
         
@@ -106,16 +67,14 @@ class WeatherManager(EnhancedLoggerMixin):
         Returns:
             Weather service instance or None if creation fails
         """
-        if service_name not in self._service_factories:
+        if service_name not in self.services:
             return None
             
         try:
-            service = self._service_factories[service_name]()
-            self._services[service_name] = service
+            service = self.services[service_name]
             return service
         except Exception as e:
             self.error(f"Failed to create {service_name} service", exc_info=e)
-            self._services[service_name] = None
             return None
 
     def get_service(self, service_name: str) -> Optional[WeatherService]:
@@ -127,9 +86,9 @@ class WeatherManager(EnhancedLoggerMixin):
         Returns:
             Weather service instance or None if not available
         """
-        if service_name not in self._services:
+        if service_name not in self.services:
             return self._create_service(service_name)
-        return self._services[service_name]
+        return self.services[service_name]
 
     def _select_service_for_location(self, lat: float, lon: float) -> str:
         """Select appropriate weather service based on coordinates.

@@ -17,26 +17,27 @@ from golfcal2.services.weather_types import (
     WeatherServiceUnavailable, WeatherServiceTimeout, WeatherServiceRateLimited
 )
 from golfcal2.utils.logging_utils import get_logger
+from golfcal2.services.weather_database import WeatherResponseCache
 
 class MetWeatherService(WeatherService):
     """Weather service implementation for Norwegian Meteorological Institute (MET)."""
 
     service_type: str = "met"
-    HOURLY_RANGE: int = 168  # 7 days
-    SIX_HOURLY_RANGE: int = 216  # 9 days
+    HOURLY_RANGE: int = 48  # 2 days
+    SIX_HOURLY_RANGE: int = 240  # 10 days
     MAX_FORECAST_RANGE: int = 216  # 9 days
 
-    def __init__(self, local_tz: Union[str, ZoneInfo], utc_tz: Union[str, ZoneInfo], config: Optional[Dict[str, Any]] = None) -> None:
-        """Initialize the service.
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+        """Initialize service."""
+        super().__init__(local_tz, utc_tz, config)
         
-        Args:
-            local_tz: Local timezone
-            utc_tz: UTC timezone
-            config: Optional service configuration
-        """
-        super().__init__(local_tz, utc_tz)
-        self.config = config or {}
-        self.set_log_context(service="met_weather")
+        # Initialize database and cache
+        data_dir = config.get('directories', {}).get('data', 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+        
+        # Rate limiting configuration
+        self._last_request_time: float = 0.0
 
     def _get_weather(
         self,

@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import os
 
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.services.base_service import WeatherService
@@ -10,50 +11,89 @@ from golfcal2.services.weather_types import (
     WeatherResponse, WeatherError, WeatherServiceUnavailable,
     WeatherServiceTimeout, WeatherServiceRateLimited
 )
+from golfcal2.services.weather_database import WeatherResponseCache
+from golfcal2.config.error_aggregator import aggregate_error
+from golfcal2.services.mock_weather_service import MockWeatherService
 
 class WeatherManager(EnhancedLoggerMixin):
-    """Manager class for weather services."""
-
-    def __init__(
-        self,
-        local_tz: Union[str, ZoneInfo],
-        utc_tz: Union[str, ZoneInfo],
-        config: Optional[Dict[str, Any]] = None
-    ) -> None:
-        """Initialize weather manager.
-        
-        Args:
-            local_tz: Local timezone
-            utc_tz: UTC timezone
-            config: Optional configuration dictionary
-        """
+    """Weather service manager."""
+    
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+        """Initialize manager."""
         super().__init__()
-        self.config = config or {}
-        self.local_tz = local_tz if isinstance(local_tz, ZoneInfo) else ZoneInfo(local_tz)
-        self.utc_tz = utc_tz if isinstance(utc_tz, ZoneInfo) else ZoneInfo(utc_tz)
+        self.local_tz = local_tz
+        self.utc_tz = utc_tz
+        self.config = config
+        self.set_log_context(service="weather_manager")
         
         # Initialize services
-        self.services: List[WeatherService] = []
-        self._init_services()
+        self._service_factories = {
+            'met': lambda: MetWeatherService(self.local_tz, self.utc_tz, self.config),
+            'mock': lambda: MockWeatherService(self.local_tz, self.utc_tz, self.config),
+            'openmeteo': lambda: OpenMeteoService(self.local_tz, self.utc_tz, self.config)
+        }
         
-    def _init_services(self) -> None:
-        """Initialize weather services based on configuration."""
-        # Initialize Met service if configured
-        if "met" in self.config:
-            try:
-                met_service = MetWeatherService(self.local_tz, self.utc_tz)
-                self.services.append(met_service)
-            except Exception as e:
-                self.error("Failed to initialize Met service", exc_info=e)
+        # Initialize services dict
+        self.services: Dict[str, Optional[WeatherService]] = {}
         
-        # Initialize OpenMeteo service if configured
-        if "openmeteo" in self.config:
-            try:
-                openmeteo_service = OpenMeteoService(self.local_tz, self.utc_tz)
-                self.services.append(openmeteo_service)
-            except Exception as e:
-                self.error("Failed to initialize OpenMeteo service", exc_info=e)
-                
+        # Set primary service
+        primary_name = config.get('weather_service', 'met')
+        self.primary_service = self._create_service(primary_name)
+        if not self.primary_service:
+            self.primary_service = self._create_service('met')  # Fallback to MET
+        
+        # Initialize cache paths
+        self._cache_dir = config.get('directories', {}).get('cache', os.path.expanduser('~/.cache/golfcal2'))
+        os.makedirs(self._cache_dir, exist_ok=True)
+        
+        # Initialize caches
+        self._response_cache: Optional[WeatherResponseCache] = None
+
+    @property
+    def response_cache(self) -> WeatherResponseCache:
+        """Get response cache, initializing if needed.
+        
+        Returns:
+            WeatherResponseCache instance
+        """
+        if self._response_cache is None:
+            self._response_cache = WeatherResponseCache(os.path.join(self._cache_dir, 'weather_responses.db'))
+        return self._response_cache
+
+    def _create_service(self, service_name: str) -> Optional[WeatherService]:
+        """Create a weather service instance.
+        
+        Args:
+            service_name: Name of the service to create
+            
+        Returns:
+            Weather service instance or None if creation fails
+        """
+        if service_name not in self._service_factories:
+            return None
+            
+        try:
+            service = self._service_factories[service_name]()
+            self.services[service_name] = service
+            return service
+        except Exception as e:
+            self.error(f"Failed to create {service_name} service", exc_info=e)
+            self.services[service_name] = None
+            return None
+
+    def get_service(self, service_name: str) -> Optional[WeatherService]:
+        """Get a weather service instance.
+        
+        Args:
+            service_name: Name of the service to get
+            
+        Returns:
+            Weather service instance or None if not available
+        """
+        if service_name not in self.services:
+            return self._create_service(service_name)
+        return self.services[service_name]
+
     def get_weather(
         self,
         lat: float,
@@ -79,7 +119,9 @@ class WeatherManager(EnhancedLoggerMixin):
             return None
             
         errors: List[Exception] = []
-        for service in self.services:
+        for service in self.services.values():
+            if service is None:
+                continue
             try:
                 response = service.get_weather(lat, lon, start_time, end_time, club)
                 if response is not None:
@@ -118,7 +160,9 @@ class WeatherManager(EnhancedLoggerMixin):
         """Get list of weather services that cover a location."""
         try:
             services = []
-            for service in self.services:
+            for service in self.services.values():
+                if service is None:
+                    continue
                 try:
                     if service.covers_location(lat, lon):
                         services.append(service)

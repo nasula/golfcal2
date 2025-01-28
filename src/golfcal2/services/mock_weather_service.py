@@ -1,22 +1,34 @@
 """Mock weather service for testing."""
 
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, cast
 from zoneinfo import ZoneInfo
 
-from golfcal2.services.weather_service import WeatherService
+from golfcal2.services.base_service import WeatherService
 from golfcal2.services.weather_types import (
     WeatherResponse, WeatherData, WeatherCode
 )
+from golfcal2.services.weather_database import WeatherResponseCache
 
 class MockWeatherService(WeatherService):
     """Mock weather service for testing."""
     
-    def __init__(self, timezone: ZoneInfo, utc: ZoneInfo, config: Dict[str, Any]):
-        """Initialize mock weather service."""
-        super().__init__(timezone, utc)  # Don't pass config to base class
-        self.service_type = "mock"
-        self._cache: Dict[str, Dict[str, Any]] = {}  # Raw response data cache
+    service_type: str = "mock"
+    HOURLY_RANGE: int = 48  # 2 days
+    SIX_HOURLY_RANGE: int = 240  # 10 days
+    
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+        """Initialize service."""
+        super().__init__(local_tz, utc_tz, config)
+        
+        # Initialize database and cache
+        data_dir = config.get('directories', {}).get('data', 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
+        
+        # Initialize mock data
+        self._cache: Dict[str, Dict[str, Any]] = {}
         
     def get_weather(
         self,

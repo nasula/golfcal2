@@ -19,7 +19,6 @@ import requests
 from golfcal2.services.base_service import WeatherService
 from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse, WeatherError
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.services.weather_location_cache import WeatherLocationCache
 from golfcal2.utils.logging_utils import log_execution, EnhancedLoggerMixin, get_logger
 from golfcal2.exceptions import (
     GolfCalError,
@@ -46,42 +45,17 @@ class OpenMeteoService(WeatherService):
     SIX_HOURLY_RANGE: int = 216  # 9 days
     MAX_FORECAST_RANGE: int = 216  # 9 days
 
-    def __init__(self, local_tz: Union[str, ZoneInfo], utc_tz: Union[str, ZoneInfo], config: Optional[Dict[str, Any]] = None) -> None:
-        """Initialize service.
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+        """Initialize service."""
+        super().__init__(local_tz, utc_tz, config)
         
-        Args:
-            local_tz: Local timezone
-            utc_tz: UTC timezone
-            config: Optional service configuration
-        """
-        super().__init__(local_tz, utc_tz)
-        self.config = config or {}
-        self.set_log_context(service="open_meteo")
+        # Initialize database and cache
+        data_dir = config.get('directories', {}).get('data', 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
         
-        # Configure logger
-        for handler in self.logger.handlers:
-            handler.set_name('open_meteo')  # Ensure unique handler names
-        self.logger.propagate = True  # Allow logs to propagate to root logger
-        
-        # Test debug call to verify logger name mapping
-        self.debug(">>> TEST DEBUG: OpenMeteoService initialized", logger_name=self.logger.name)
-        
-        with handle_errors(WeatherError, "open_meteo", "initialize service"):
-            # Setup cache and retry mechanism
-            cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
-            retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
-            self.client = openmeteo_requests.Client(session=retry_session)
-            
-            # Initialize database and cache
-            data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
-            os.makedirs(data_dir, exist_ok=True)
-            self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
-            self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
-            
-            # Rate limiting configuration
-            self._last_api_call: Optional[datetime] = None
-            self._min_call_interval = timedelta(seconds=1)
-            self._last_request_time: float = 0.0
+        # Rate limiting configuration
+        self._last_request_time: float = 0.0
 
     def get_block_size(self, hours_ahead: float) -> int:
         """Get the block size in hours for grouping forecasts.
