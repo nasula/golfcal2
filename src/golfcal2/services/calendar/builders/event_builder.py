@@ -2,17 +2,18 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union, cast, Sequence
 from zoneinfo import ZoneInfo
 
-from icalendar import Event, vText, vDatetime
+from icalendar import Event, vText, vDatetime  # type: ignore[import]
 
 from golfcal2.models.reservation import Reservation
 from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.services.weather_service import WeatherService
+from golfcal2.services.weather_service import WeatherService, WeatherManager
 from golfcal2.config.settings import AppConfig
-from golfcal2.services.weather_service import WeatherManager
-from golfcal2.services.weather_types import Location, WeatherResponse
+from golfcal2.services.weather_types import (
+    WeatherResponse, WeatherData, Location, WeatherCode
+)
 
 class EventBuilder(ABC, LoggerMixin):
     """Base class for event builders."""
@@ -42,6 +43,9 @@ class EventBuilder(ABC, LoggerMixin):
                 location.latitude, location.longitude, start_time, end_time
             )
             
+            if weather_response is None:
+                return None
+                
             # Convert forecast times to local timezone
             for forecast in weather_response.data:
                 if forecast.time.tzinfo is None:
@@ -59,8 +63,26 @@ class EventBuilder(ABC, LoggerMixin):
             self.error("Failed to get weather data", exc_info=e)
             return None
 
+    def _format_weather_data(self, weather_data: Sequence[WeatherData]) -> str:
+        """Format weather data for event description."""
+        description = ""
+        for forecast in weather_data:
+            description += (
+                f"{forecast.time.strftime('%H:%M')} - "
+                f"{forecast.temperature}°C, "
+                f"{forecast.wind_speed}m/s"
+            )
+            if forecast.precipitation_probability > 0:
+                description += f", {forecast.precipitation_probability}% rain"
+            description += "\n"
+        return description
+
 class ReservationEventBuilder(EventBuilder):
     """Event builder for golf reservations."""
+    
+    def __init__(self, weather_service: WeatherManager, config: AppConfig):
+        """Initialize builder."""
+        super().__init__(weather_service, config)
     
     def build(self, reservation: Reservation, club_config: Dict[str, Any]) -> Optional[Event]:
         """Build an event from a reservation."""
@@ -70,7 +92,7 @@ class ReservationEventBuilder(EventBuilder):
             event.add('summary', reservation.get_event_summary())
             event.add('dtstart', vDatetime(reservation.start_time))
             event.add('dtend', vDatetime(reservation.end_time))
-            event.add('dtstamp', vDatetime(datetime.now(self.local_tz)))
+            event.add('dtstamp', vDatetime(datetime.now(timezone.utc)))
             event.add('uid', vText(reservation.uid))
             
             # Add location
@@ -89,11 +111,13 @@ class ReservationEventBuilder(EventBuilder):
                     latitude=coords['lat'],
                     longitude=coords['lon']
                 )
-                weather_data = self._get_weather(
+                weather_response = self._get_weather(
                     location,
                     reservation.start_time,
                     reservation.start_time + timedelta(minutes=duration_minutes)
                 )
+                if weather_response is not None:
+                    weather_data = weather_response.data
             
             # Add description with player details and weather
             event.add('description', vText(reservation.get_event_description(weather_data)))
@@ -101,7 +125,8 @@ class ReservationEventBuilder(EventBuilder):
             return event
             
         except Exception as e:
-            self.logger.error(f"Failed to build reservation event: {e}")
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Failed to build reservation event: {e}")
             return None
 
 class ExternalEventBuilder(EventBuilder):
@@ -125,7 +150,7 @@ class ExternalEventBuilder(EventBuilder):
             # Add times with original timezone
             event.add('dtstart', vDatetime(start))
             event.add('dtend', vDatetime(end))
-            event.add('dtstamp', vDatetime(datetime.now(ZoneInfo('UTC'))), parameters={'VALUE': ['DATE-TIME']})
+            event.add('dtstamp', vDatetime(datetime.now(timezone.utc)), parameters={'VALUE': ['DATE-TIME']})
             
             # Generate and add UID
             uid = self._generate_unique_id(event_data, start, person_name)
@@ -154,17 +179,7 @@ class ExternalEventBuilder(EventBuilder):
                     start + timedelta(minutes=duration_minutes)
                 )
                 if weather_data:
-                    # Create a temporary reservation just for weather formatting
-                    temp_reservation = Reservation(
-                        club=None,  # Not needed for weather formatting
-                        user=None,  # Not needed for weather formatting
-                        membership=None,  # Not needed for weather formatting
-                        start_time=start,
-                        end_time=end,
-                        players=[],
-                        raw_data={}
-                    )
-                    description += "\n\nWeather:\n" + temp_reservation._format_weather_data(weather_data)
+                    description += "\n\nWeather:\n" + self._format_weather_data(weather_data.data)
             
             event.add('description', vText(description))
             return event

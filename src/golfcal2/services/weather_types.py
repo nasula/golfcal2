@@ -230,6 +230,8 @@ class WeatherData:
     time: datetime  # UTC
     thunder_probability: float = 0.0  # 0-100%
     block_duration: timedelta = field(default_factory=lambda: timedelta(hours=1))  # Forecast block duration
+    humidity: float = 0.0  # 0-100%
+    cloud_cover: float = 0.0  # 0-100%
 
     def __post_init__(self) -> None:
         """Validate the weather data."""
@@ -247,6 +249,8 @@ class WeatherData:
         self.wind_speed = float(self.wind_speed)
         self.wind_direction = float(self.wind_direction)
         self.thunder_probability = float(self.thunder_probability)
+        self.humidity = float(self.humidity)
+        self.cloud_cover = float(self.cloud_cover)
 
         # Validate ranges
         if not (0 <= self.precipitation_probability <= 100):
@@ -255,6 +259,10 @@ class WeatherData:
             raise ValueError("thunder_probability must be between 0 and 100")
         if not (0 <= self.wind_direction <= 360):
             raise ValueError("wind_direction must be between 0 and 360")
+        if not (0 <= self.humidity <= 100):
+            raise ValueError("humidity must be between 0 and 100")
+        if not (0 <= self.cloud_cover <= 100):
+            raise ValueError("cloud_cover must be between 0 and 100")
         if self.wind_speed < 0:
             raise ValueError("wind_speed cannot be negative")
         if self.precipitation < 0:
@@ -271,7 +279,9 @@ class WeatherData:
             'weather_code': self.weather_code.value,
             'time': self.time.isoformat(),
             'thunder_probability': self.thunder_probability,
-            'block_duration': self.block_duration.total_seconds()
+            'block_duration': self.block_duration.total_seconds(),
+            'humidity': self.humidity,
+            'cloud_cover': self.cloud_cover
         }
 
 T = TypeVar('T', bound='WeatherData')
@@ -346,7 +356,9 @@ class WeatherResponse:
                 weather_code=WeatherCode(item['weather_code']),
                 time=time,
                 thunder_probability=item.get('thunder_probability', 0.0),
-                block_duration=block_duration
+                block_duration=block_duration,
+                humidity=item.get('humidity', 0.0),
+                cloud_cover=item.get('cloud_cover', 0.0)
             ))
         
         # Parse elaboration_time from ISO format
@@ -624,23 +636,4 @@ def handle_weather_error(error: Exception, service: str, operation: str) -> None
     details = _handle_weather_error(error, service, operation)
     if isinstance(error, WeatherError):
         raise error
-    raise WeatherServiceError(str(error), service, operation, details)
-
-def handle_errors(
-    error_class: type[GolfCalError],
-    service: str,
-    operation: str,
-    fallback: Optional[Callable[[], Any]] = None
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Decorator to handle errors in weather services."""
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                details = _handle_weather_error(e, service, operation)
-                if fallback:
-                    return fallback()
-                raise error_class(str(e), code=ErrorCode.WEATHER_ERROR, details=details)
-        return wrapper
-    return decorator 
+    raise WeatherServiceError(str(error), service, operation, details) 

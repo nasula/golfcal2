@@ -1,35 +1,40 @@
 """Mixins for service classes."""
 
 from datetime import datetime
-from typing import Optional, Any, Dict, Union, Set
+from typing import Optional, Any, Dict, Union, Set, cast
 from zoneinfo import ZoneInfo
-from icalendar import Event, Calendar, vText
+from icalendar import Event, Calendar, vText  # type: ignore[import]
 
 # Since icalendar doesn't have type stubs, we need to import it this way
 import icalendar  # type: ignore[import]
 from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.config.settings import AppConfig
+from golfcal2.services.weather_service import WeatherManager
+from golfcal2.models.reservation import Reservation
 
 class CalendarHandlerMixin:
     """Mixin for handling calendar operations."""
     
-    def __init__(self, config: Optional[Any] = None) -> None:
-        """Initialize the mixin.
+    def __init__(self, config: AppConfig) -> None:
+        """Initialize calendar handler."""
+        if not isinstance(config, AppConfig):
+            raise ValueError("Config must be an instance of AppConfig")
+            
+        self.config = config
         
-        Args:
-            config: Optional configuration object
-        """
+        # Initialize timezone settings
+        self.timezone = ZoneInfo(config.global_config.get('timezone', 'UTC'))
+        self.utc_tz = ZoneInfo('UTC')
+        
         self.seen_uids: Set[str] = set()
-        self._config: Optional[Any] = config
     
     @property
-    def config(self) -> Optional[Any]:
+    def config(self) -> AppConfig:
         """Get config, either from instance or parent."""
-        if hasattr(self, '_config') and self._config is not None:
-            return self._config
-        return getattr(super(), 'config', None)
+        return self._config
     
     @config.setter
-    def config(self, value: Any) -> None:
+    def config(self, value: AppConfig) -> None:
         """Set config value."""
         self._config = value
     
@@ -60,19 +65,22 @@ class CalendarHandlerMixin:
     def _add_weather_to_event(
         self,
         event: Event,
-        club: str,
+        club_id: str,
         start_time: datetime,
-        weather_service: Any
+        weather_service: Optional[WeatherManager] = None
     ) -> None:
-        """Add weather information to event description."""
-        try:
-            # Get club coordinates from config
-            club_config = self.config.clubs.get(club)
-            if not club_config or 'coordinates' not in club_config:
-                if hasattr(self, 'logger'):
-                    self.logger.warning(f"No coordinates found for club {club}")
-                return
+        """Add weather information to event."""
+        if not self.config or not hasattr(self.config, 'clubs'):
+            return
             
+        club_config = self.config.clubs.get(club_id)
+        if not club_config or 'coordinates' not in club_config:
+            return
+            
+        if weather_service is None:
+            return
+            
+        try:
             # Get end time from event
             end_time = event.get('dtend').dt
             if not end_time:
@@ -80,18 +88,21 @@ class CalendarHandlerMixin:
                     self.logger.warning(f"No end time found for event {event.get('uid')}")
                 return
             
-            # Get weather data - pass all required parameters including service_name
+            coords = club_config['coordinates']
+            if not coords or 'lat' not in coords or 'lon' not in coords:
+                return
+                
+            # Get weather data
             weather_data = weather_service.get_weather(
-                lat=club_config['coordinates']['lat'],
-                lon=club_config['coordinates']['lon'],
+                lat=coords['lat'],
+                lon=coords['lon'],
                 start_time=start_time,
-                end_time=end_time,
-                service_name='met'  # Use met service by default
+                end_time=end_time
             )
             
             if not weather_data:
                 if hasattr(self, 'logger'):
-                    self.logger.warning(f"No weather data found for club {club}")
+                    self.logger.warning(f"No weather data found for club {club_id}")
                 return
             
             # Update event description with weather data

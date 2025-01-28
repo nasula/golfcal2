@@ -111,12 +111,12 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 return False
                 
             # Check if user exists in config
-            if not self.username in cast(Dict[str, Any], self.config.users):
+            if not self.username in self.config.users:
                 self.error(f"User {self.username} not found in configuration")
                 return False
                 
             # Check if user has any memberships configured
-            user_config = cast(Dict[str, Any], self.config.users)[self.username]
+            user_config = self.config.users[self.username]
             if not user_config.get('memberships'):
                 self.error(f"No memberships configured for user {self.username}")
                 return False
@@ -379,7 +379,16 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
     ) -> None:
         """Process a TeeTime reservation."""
         self.debug(f"Processing TeeTime reservation: {raw_reservation}")
-        reservation = Reservation.from_teetime(raw_reservation, club, user, membership)
+        # Create reservation directly since from_teetime is not available
+        reservation = Reservation(
+            raw_data=raw_reservation,
+            club=club,
+            user=user,
+            membership=membership,
+            start_time=datetime.fromisoformat(raw_reservation['start_time']).replace(tzinfo=self.timezone),
+            end_time=datetime.fromisoformat(raw_reservation['end_time']).replace(tzinfo=self.timezone),
+            players=raw_reservation.get('players', [])  # Add players from raw data or empty list if not present
+        )
         
         # Skip if older than cutoff
         if reservation.start_time < cutoff_time:
@@ -416,11 +425,11 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             all_reservations: List[Reservation] = []
             now = datetime.now(self.timezone)
             
-            if self.username not in cast(Dict[str, Any], self.config.users):
+            if self.username not in self.config.users:
                 self.warning(f"User {self.username} not found in configuration")
                 return []
             
-            user_config = cast(Dict[str, Any], self.config.users)[self.username]
+            user_config = self.config.users[self.username]
             _, reservations = self.process_user(self.username, user_config, days)
             
             for reservation in reservations:
@@ -554,7 +563,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             APIError,
             "reservation",
             "list courses",
-            lambda: []  # Fallback to empty list
+            lambda: raise_error("Failed to list courses")
         ):
             if include_all:
                 return sorted(self.config.clubs.keys())

@@ -4,7 +4,7 @@ Weather service implementation for Norwegian Meteorological Institute (MET).
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Union, cast, Iterator
 from zoneinfo import ZoneInfo
 
@@ -127,101 +127,56 @@ class MetWeatherService(WeatherService):
             List of WeatherData objects or None if parsing fails
         """
         try:
-            weather_data = []
-            now_utc = datetime.now(self.utc_tz)
+            if not response_data or 'properties' not in response_data:
+                return None
+                
+            timeseries = response_data['properties']['timeseries']
+            if not timeseries:
+                return None
+                
+            weather_data: List[WeatherData] = []
+            prev_time: Optional[datetime] = None
             
-            # Get forecast data
-            forecast = response_data.get('properties', {}).get('timeseries', [])
-            if not forecast:
-                self._handle_errors(
-                    ErrorCode.WEATHER_PARSE_ERROR,
-                    "No forecast data in response"
-                )
-                return None
-
-            # Parse each forecast entry
-            for i, entry in enumerate(forecast):
+            for entry in timeseries:
+                # Handle 'Z' suffix in timestamp by replacing it with +00:00
+                time_str = entry['time'].replace('Z', '+00:00')
                 try:
-                    # Get time and data
-                    time = datetime.fromisoformat(entry['time'].replace('Z', '+00:00'))
-                    data = entry.get('data', {})
-                    instant = data.get('instant', {}).get('details', {})
+                    time = datetime.fromisoformat(time_str)
+                except ValueError:
+                    # If that fails, try parsing without timezone and assume UTC
+                    time = datetime.strptime(entry['time'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+                
+                if prev_time and time <= prev_time:
+                    continue
                     
-                    # Get block end time from next forecast's start time
-                    block_end = None
-                    if i < len(forecast) - 1:
-                        next_time = datetime.fromisoformat(forecast[i + 1]['time'].replace('Z', '+00:00'))
-                        block_end = next_time
-                    else:
-                        # For last entry, use same duration as previous block
-                        block_end = time + (time - prev_time if i > 0 else timedelta(hours=1))
-                    
-                    block_duration = block_end - time
-                    
-                    # Get appropriate forecast data block
-                    next_block = data.get('next_6_hours' if block_duration.total_seconds() > 3600 else 'next_1_hours', {})
-                    if not next_block:
-                        continue
-                    
-                    # Get values with defaults
-                    temperature = instant.get('air_temperature', 0.0)
-                    precipitation = next_block.get('details', {}).get('precipitation_amount', 0.0)
-                    precipitation_probability = next_block.get('details', {}).get('probability_of_precipitation', 0.0)
-                    wind_speed = instant.get('wind_speed', 0.0)
-                    wind_direction = instant.get('wind_from_direction', 0.0)
-                    symbol = next_block.get('summary', {}).get('symbol_code', 'unknown')
-                    
-                    # Calculate thunder probability based on weather code
-                    thunder_probability = 0.0
-                    if 'thunder' in symbol.lower():
-                        thunder_probability = 50.0  # Default probability for thunder conditions
-                    
-                    # Convert time to local timezone
-                    local_time = time.astimezone(self.local_tz)
-                    
-                  #  self.debug(
-                  #      "Processing forecast entry",
-                  #      time=time.isoformat(),
-                  #      block_end=block_end.isoformat(),
-                  #      block_duration=block_duration.total_seconds() / 3600,
-                  #      block_type="hourly" if block_duration.total_seconds() <= 3600 else "6-hour"
-                  #  )
-                    
-                    weather_data.append(WeatherData(
-                        temperature=temperature,
-                        precipitation=precipitation,
-                        precipitation_probability=precipitation_probability,
-                        wind_speed=wind_speed,
-                        wind_direction=wind_direction,
-                        weather_code=WeatherCode(self._map_met_code(symbol)),
-                        time=local_time,
-                        thunder_probability=thunder_probability,
-                        block_duration=block_duration
-                    ))
-                    
-                    prev_time = time
-                except (KeyError, ValueError) as e:
-                    self._handle_errors(
-                        ErrorCode.WEATHER_PARSE_ERROR,
-                        f"Failed to parse weather entry: {e}"
+                data = entry['data']['instant']['details']
+                weather_data.append(
+                    WeatherData(
+                        time=time,
+                        temperature=data.get('air_temperature', 0.0),
+                        precipitation=data.get('precipitation_amount', 0.0),
+                        precipitation_probability=0.0,  # MET doesn't provide this
+                        wind_speed=data.get('wind_speed', 0.0),
+                        wind_direction=data.get('wind_from_direction', 0.0),
+                        weather_code=WeatherCode(self._map_weather_code(data.get('symbol_code', ''))),
+                        humidity=data.get('relative_humidity', 0.0),
+                        cloud_cover=data.get('cloud_area_fraction', 0.0)
                     )
-
-            if not weather_data:
-                return None
-
+                )
+                prev_time = time
+                
             return WeatherResponse(
                 data=weather_data,
-                elaboration_time=datetime.now(self.utc_tz)
+                elaboration_time=datetime.now(timezone.utc)
             )
-
+            
         except Exception as e:
-            self._handle_errors(
-                ErrorCode.WEATHER_PARSE_ERROR,
-                f"Failed to parse weather data: {e}"
+            raise WeatherError(
+                f"Failed to parse Met weather response: {str(e)}",
+                str(ErrorCode.WEATHER_PARSE_ERROR)
             )
-            return None
 
-    def _map_met_code(self, code: str) -> str:
+    def _map_weather_code(self, code: str) -> str:
         """Map MET symbol code to internal weather code string."""
         # Extract base code without variants (_day, _night, _polartwilight)
         base_code = code.split('_')[0]
@@ -286,4 +241,4 @@ class MetWeatherService(WeatherService):
         elif error_code == ErrorCode.SERVICE_UNAVAILABLE:
             raise WeatherServiceUnavailable(message)
         else:
-            raise WeatherError(message, error_code)
+            raise WeatherError(message, str(error_code))

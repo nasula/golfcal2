@@ -107,7 +107,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             self.weather_service = weather_service or WeatherManager(
                 self.local_tz,
                 self.local_tz,
-                cast(Dict[str, Any], config.__dict__)
+                self.config.__dict__
             )
             
             # Initialize external event service
@@ -303,3 +303,17 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
     def raise_error(self, msg: str = "") -> NoReturn:
         """Raise a calendar error."""
         raise CalendarError(msg)
+
+    def _get_club_address(self, club_id: str) -> str:
+        """
+        Get club address from configuration.
+        
+        Args:
+            club_id: Club ID
+            
+        Returns:
+            Club address
+        """
+        if club_id in self.config.clubs:
+            return self.config.clubs[club_id].get('address') or ''
+        return ''

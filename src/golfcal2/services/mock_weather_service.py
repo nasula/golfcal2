@@ -4,8 +4,10 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, cast
 from zoneinfo import ZoneInfo
 
-from ..services.base_service import WeatherService
-from ..services.weather_types import WeatherData, WeatherResponse, WeatherCache
+from golfcal2.services.weather_service import WeatherService
+from golfcal2.services.weather_types import (
+    WeatherResponse, WeatherData, WeatherCode
+)
 
 class MockWeatherService(WeatherService):
     """Mock weather service for testing."""
@@ -14,7 +16,7 @@ class MockWeatherService(WeatherService):
         """Initialize mock weather service."""
         super().__init__(timezone, utc)  # Don't pass config to base class
         self.service_type = "mock"
-        self._cache: Dict[str, WeatherCache] = {}  # Raw response data cache
+        self._cache: Dict[str, Dict[str, Any]] = {}  # Raw response data cache
         
     def get_weather(
         self,
@@ -51,7 +53,7 @@ class MockWeatherService(WeatherService):
         # Get weather data
         response = self._fetch_forecasts(lat, lon, start_time, end_time)
         if response:
-            return self._parse_response(response, start_time, end_time)
+            return self._parse_response(response)
         
         self.warning("No weather data found")
         return None
@@ -101,37 +103,37 @@ class MockWeatherService(WeatherService):
             self.error("Failed to generate mock forecasts", exc_info=e)
             return None
             
-    def _parse_response(
-        self,
-        response_data: Dict[str, Any],
-        start_time: datetime,
-        end_time: datetime,
-        interval: int = 1
-    ) -> Optional[WeatherResponse]:
-        """Parse raw API response into WeatherData objects."""
+    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+        """Parse mock weather response."""
         try:
-            if not response_data or "forecasts" not in response_data:
-                return None
-                
-            weather_data = []
-            for forecast in response_data["forecasts"]:
-                data = WeatherData(
-                    time=datetime.fromisoformat(forecast["time"]),
-                    duration=forecast["duration"],
-                    temperature=forecast["temperature"],
-                    wind_speed=forecast["wind_speed"],
-                    wind_direction=forecast["wind_direction"],
-                    precipitation=forecast["precipitation"],
-                    weather_code=forecast["weather_code"]
+            start_time = datetime.fromisoformat(response_data['start_time'])
+            end_time = datetime.fromisoformat(response_data['end_time'])
+            interval = response_data.get('interval', 60)
+            
+            weather_data: List[WeatherData] = []
+            current_time = start_time
+            
+            while current_time <= end_time:
+                weather_data.append(
+                    WeatherData(
+                        time=current_time,
+                        temperature=20.0,
+                        precipitation=0.0,
+                        precipitation_probability=0.0,
+                        wind_speed=5.0,
+                        wind_direction=180.0,
+                        weather_code=WeatherCode.CLEARSKY_DAY,
+                        humidity=50.0,
+                        cloud_cover=0.0
+                    )
                 )
-                weather_data.append(data)
-                
+                current_time += timedelta(minutes=interval)
+            
             return WeatherResponse(
                 data=weather_data,
-                elaboration_time=start_time,
-                interval=interval
+                elaboration_time=datetime.now(ZoneInfo('UTC'))
             )
             
         except Exception as e:
-            self.error("Failed to parse mock response", exc_info=e)
+            self.logger.error(f"Failed to parse mock weather response: {e}")
             return None 
