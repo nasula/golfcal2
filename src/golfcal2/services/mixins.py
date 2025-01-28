@@ -1,38 +1,35 @@
 """Mixins for service classes."""
 
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Any, Dict, Union, Set
 from zoneinfo import ZoneInfo
 from icalendar import Event, Calendar, vText
 
-import icalendar  # type: ignore
+# Since icalendar doesn't have type stubs, we need to import it this way
+import icalendar  # type: ignore[import]
 from golfcal2.utils.logging_utils import LoggerMixin
 
 class CalendarHandlerMixin:
     """Mixin for handling calendar operations."""
     
-    def __init__(self, config=None):
-        """Initialize calendar handler."""
-        super().__init__()
-        self.seen_uids = set()
-        self._config = config
+    def __init__(self, config: Optional[Any] = None) -> None:
+        """Initialize the mixin.
+        
+        Args:
+            config: Optional configuration object
+        """
+        self.seen_uids: Set[str] = set()
+        self._config: Optional[Any] = config
     
     @property
-    def logger(self):
-        """Get logger for this mixin."""
-        if not hasattr(self, '_calendar_logger'):
-            self._calendar_logger = LoggerMixin().logger
-        return self._calendar_logger
-    
-    @property
-    def config(self):
+    def config(self) -> Optional[Any]:
         """Get config, either from instance or parent."""
         if hasattr(self, '_config') and self._config is not None:
             return self._config
         return getattr(super(), 'config', None)
     
     @config.setter
-    def config(self, value):
+    def config(self, value: Any) -> None:
         """Set config value."""
         self._config = value
     
@@ -50,13 +47,15 @@ class CalendarHandlerMixin:
         """
         uid = event.get('uid')
         if uid and uid in self.seen_uids:
-            self.logger.debug(f"Skipping duplicate event with UID: {uid}")
+            if hasattr(self, 'logger'):
+                self.logger.debug(f"Skipping duplicate event with UID: {uid}")
             return
             
         if uid:
             self.seen_uids.add(uid)
         calendar.add_component(event)
-        self.logger.debug(f"Added event to calendar: {event.decoded('summary')}")
+        if hasattr(self, 'logger'):
+            self.logger.debug(f"Added event to calendar: {event.decoded('summary')}")
     
     def _add_weather_to_event(
         self,
@@ -70,13 +69,15 @@ class CalendarHandlerMixin:
             # Get club coordinates from config
             club_config = self.config.clubs.get(club)
             if not club_config or 'coordinates' not in club_config:
-                self.logger.warning(f"No coordinates found for club {club}")
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"No coordinates found for club {club}")
                 return
             
             # Get end time from event
             end_time = event.get('dtend').dt
             if not end_time:
-                self.logger.warning(f"No end time found for event {event.get('uid')}")
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"No end time found for event {event.get('uid')}")
                 return
             
             # Get weather data - pass all required parameters including service_name
@@ -89,7 +90,8 @@ class CalendarHandlerMixin:
             )
             
             if not weather_data:
-                self.logger.warning(f"No weather data found for club {club}")
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"No weather data found for club {club}")
                 return
             
             # Update event description with weather data
@@ -113,29 +115,28 @@ class CalendarHandlerMixin:
             event['description'] = description
             
         except Exception as e:
-            self.logger.error(f"Failed to add weather to event: {e}")
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Failed to add weather to event: {e}")
             return
     
-    def build_base_calendar(
-        self,
-        user_name: str,
-        local_tz: ZoneInfo
-    ) -> Calendar:
-        """
-        Create base calendar with metadata.
-        
-        Args:
-            user_name: Name of the user
-            local_tz: Local timezone
-            
-        Returns:
-            Base calendar with metadata
-        """
+    def build_base_calendar(self, name: str, timezone: ZoneInfo) -> Calendar:
+        """Build a base calendar with common properties."""
         calendar = Calendar()
         calendar.add('prodid', vText('-//Golf Calendar//EN'))
         calendar.add('version', vText('2.0'))
         calendar.add('calscale', vText('GREGORIAN'))
         calendar.add('method', vText('PUBLISH'))
-        calendar.add('x-wr-calname', vText(f'Golf Reservations - {user_name}'))
-        calendar.add('x-wr-timezone', vText(str(local_tz)))
-        return calendar 
+        calendar.add('x-wr-calname', vText(name))
+        calendar.add('x-wr-timezone', vText(str(timezone)))
+        return calendar
+
+    def add_event_to_calendar(self, calendar: Calendar, event: Dict[str, Any]) -> None:
+        """Add an event to the calendar."""
+        calendar_event = Event()
+        for key, value in event.items():
+            calendar_event.add(key, value)
+        calendar.add_component(calendar_event)
+
+    def format_datetime(self, dt: datetime) -> str:
+        """Format datetime for calendar."""
+        return dt.strftime('%Y%m%dT%H%M%SZ') 

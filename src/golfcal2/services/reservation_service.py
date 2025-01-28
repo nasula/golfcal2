@@ -4,12 +4,13 @@ Reservation service for golf calendar application.
 
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional, Tuple, Set, NoReturn, cast, Protocol, runtime_checkable
+from typing_extensions import Never
 from zoneinfo import ZoneInfo
 import requests
-from icalendar import Event, Calendar
+from icalendar import Event, Calendar  # type: ignore
 
-from golfcal2.models.golf_club import GolfClubFactory
+from golfcal2.models.golf_club import GolfClubFactory, GolfClub, AppConfigProtocol as GolfClubConfigProtocol
 from golfcal2.models.reservation import Reservation
 from golfcal2.models.user import User, Membership
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
@@ -26,42 +27,76 @@ from golfcal2.exceptions import (
     handle_errors
 )
 from golfcal2.config.error_aggregator import aggregate_error
+from golfcal2.services.weather_service import WeatherManager
 
 # Lazy load weather service
-_weather_manager = None
+_weather_manager: Optional[WeatherManager] = None
+
+@runtime_checkable
+class AppConfigProtocol(GolfClubConfigProtocol, Protocol):
+    """Protocol for application configuration."""
+    users: Dict[str, Any]
+    clubs: Dict[str, Any]
+    global_config: Dict[str, Any]
+    api_keys: Dict[str, str]
+
+def raise_error(msg: str = "") -> Never:
+    """Helper function to raise an error and satisfy the Never type."""
+    raise APIError(msg)
 
 class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
     """Service for handling reservations."""
     
-    def __init__(self, user_name: str, config: AppConfig):
-        """Initialize service."""
-        # Initialize all parent classes
+    def __init__(self, username: str, config: AppConfig):
+        """Initialize reservation service.
+        
+        Args:
+            username: Name of the user to process
+            config: Application configuration
+        """
+        # Initialize logger first
         EnhancedLoggerMixin.__init__(self)
-        ReservationHandlerMixin.__init__(self)
+        # Then initialize calendar handler with config
         CalendarHandlerMixin.__init__(self, config)
         
-        self.user_name = user_name
-        self.config = config
+        # Validate config
+        if not isinstance(config, AppConfig):
+            raise ValueError("Config must be an instance of AppConfig")
         
-        # Get user's timezone from config, fallback to global timezone
-        user_config = config.users.get(user_name, {})
-        user_timezone = user_config.get('timezone', config.global_config.get('timezone', 'UTC'))
-        self.local_tz = ZoneInfo(user_timezone)
+        # Store username and config
+        self.username = username
+        self.config: AppConfigProtocol = config  # type: ignore
+        self.dev_mode = config.global_config.get('dev_mode', False)
+        
+        # Get user configuration
+        if not hasattr(config, 'users'):
+            raise ValueError("Config missing 'users' attribute")
+        
+        self.user_config = self.config.users.get(username)
+        if not self.user_config:
+            raise ValueError(f"No configuration found for user {username}")
+        
+        # Initialize timezone settings
+        if not hasattr(config, 'global_config'):
+            raise ValueError("Config missing 'global_config' attribute")
+            
+        self.timezone = ZoneInfo(config.global_config.get('timezone', 'UTC'))
         self.utc_tz = ZoneInfo('UTC')
         
         # Initialize services
-        self.auth_service = AuthService()
+        self.weather_manager = WeatherManager(self.timezone, self.utc_tz, config.__dict__)
+        self.auth_service = AuthService(self.user_config.get('auth_details', {}))
         
-        # Configure logger
-        self.set_log_context(service="reservation")
+        # Set logging context
+        self.set_log_context(user=username)
     
     @property
-    def weather_service(self):
+    def weather_service(self) -> WeatherManager:
         """Lazy load weather service."""
         global _weather_manager
         if _weather_manager is None:
             from golfcal2.services.weather_service import WeatherManager
-            _weather_manager = WeatherManager(self.local_tz, self.utc_tz, self.config)
+            _weather_manager = WeatherManager(self.timezone, self.utc_tz, cast(Dict[str, Any], self.config))
         return _weather_manager
 
     def check_config(self) -> bool:
@@ -71,28 +106,31 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             True if configuration is valid, False otherwise
         """
         try:
+            if not hasattr(self.config, 'users'):
+                self.error("Config missing 'users' attribute")
+                return False
+                
             # Check if user exists in config
-            if not self.user_name in self.config.users:
-                self.error(f"User {self.user_name} not found in configuration")
+            if not self.username in cast(Dict[str, Any], self.config.users):
+                self.error(f"User {self.username} not found in configuration")
                 return False
                 
             # Check if user has any memberships configured
-            user_config = self.config.users[self.user_name]
+            user_config = cast(Dict[str, Any], self.config.users)[self.username]
             if not user_config.get('memberships'):
-                self.error(f"No memberships configured for user {self.user_name}")
+                self.error(f"No memberships configured for user {self.username}")
                 return False
                 
             # All checks passed
-            self.info(f"Configuration valid for user {self.user_name}")
+            self.info(f"Configuration valid for user {self.username}")
             return True
             
         except Exception as e:
             self.error(f"Error checking configuration: {str(e)}")
             return False
 
-    def _make_api_request(self, method: str, url: str, headers: Dict[str, str] = None, data: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Make an API request with error handling.
+    def _make_api_request(self, method: str, url: str, headers: Optional[Dict[str, str]] = None, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make an API request with error handling.
         
         Args:
             method: HTTP method (GET, POST, etc.)
@@ -102,34 +140,36 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             
         Returns:
             Response data as dictionary
+            
+        Raises:
+            APIError: If request fails
         """
-        with handle_errors(APIError, "reservation", f"make {method} request to {url}"):
+        with handle_errors(
+            APIError,
+            "reservation",
+            f"make {method} request to {url}",
+            lambda: raise_error(f"Failed to {method} {url}")
+        ):
             try:
                 response = requests.request(method, url, headers=headers, json=data, timeout=30)
                 response.raise_for_status()
                 return response.json()
             except requests.exceptions.Timeout:
-                error = APITimeoutError(
+                raise APITimeoutError(
                     f"Request timed out: {method} {url}",
                     {"method": method, "url": url}
                 )
-                aggregate_error(str(error), "reservation", error.__traceback__)
-                raise error
             except requests.exceptions.TooManyRedirects:
-                error = APIError(
+                raise APIError(
                     f"Too many redirects: {method} {url}",
                     ErrorCode.REQUEST_FAILED,
                     {"method": method, "url": url}
                 )
-                aggregate_error(str(error), "reservation", error.__traceback__)
-                raise error
             except requests.exceptions.RequestException as e:
-                error = APIResponseError(
+                raise APIResponseError(
                     f"Request failed: {str(e)}",
                     response=getattr(e, 'response', None)
                 )
-                aggregate_error(str(error), "reservation", e.__traceback__)
-                raise error
 
     def process_user(
         self,
@@ -152,20 +192,20 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             APIError,
             "reservation",
             f"process user {user_name}",
-            lambda: (Calendar(), [])  # Fallback to empty calendar and reservations
+            lambda: raise_error(f"Failed to process user {user_name}")
         ):
             self.debug(f"Processing reservations for user {user_name}")
             self.debug(f"User config: {user_config}")
             
             user = User.from_config(user_name, user_config)
             self.debug(f"Created user with {len(user.memberships)} memberships")
-            all_reservations = []
+            all_reservations: List[Reservation] = []
             
             # Create calendar
-            cal = self.build_base_calendar(user_name, self.local_tz)
+            cal = self.build_base_calendar(user_name, self.timezone)
             
             # Calculate cutoff time (24 hours ago)
-            now = datetime.now(self.local_tz)
+            now = datetime.now(self.timezone)
             cutoff_time = now - timedelta(hours=24)
             self.debug(f"Using cutoff time: {cutoff_time}")
             
@@ -174,7 +214,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                     APIError,
                     "reservation",
                     f"process membership {membership.club} for user {user_name}",
-                    lambda: None
+                    lambda: raise_error(f"Failed to process membership {membership.club}")
                 ):
                     self.debug(f"Processing membership {membership.club} for user {user_name}")
                     self.debug(f"Membership details: {membership.__dict__}")
@@ -204,7 +244,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                     self.debug(f"Created club instance of type: {type(club).__name__}")
                     self.debug(f"Fetching reservations from {club.name}")
                     
-                    raw_reservations = club.fetch_reservations(membership)
+                    raw_reservations = club.fetch_reservations(membership)  # type: ignore
                     self.debug(f"Found {len(raw_reservations)} raw reservations for {club.name}")
                     
                     for raw_reservation in raw_reservations:
@@ -212,7 +252,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                             APIError,
                             "reservation",
                             f"process reservation for {club.name}",
-                            lambda: None
+                            lambda: raise_error(f"Failed to process reservation for {club.name}")
                         ):
                             if club_details["type"] == "wisegolf":
                                 self._process_wisegolf_reservation(
@@ -264,7 +304,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         """Process a WiseGolf reservation."""
         self.debug(f"Processing WiseGolf reservation: {raw_reservation}")
         start_time = datetime.strptime(raw_reservation['dateTimeStart'], '%Y-%m-%d %H:%M:%S')
-        start_time = start_time.replace(tzinfo=self.local_tz)
+        start_time = start_time.replace(tzinfo=self.timezone)
         
         # Skip if older than cutoff
         if start_time < cutoff_time:
@@ -272,7 +312,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             return
         
         reservation = Reservation.from_wisegolf(raw_reservation, club, user, membership)
-        if self._should_include_reservation(reservation, past_days, self.local_tz):
+        if self._should_include_reservation(reservation, past_days, self.timezone):
             all_reservations.append(reservation)
             self._add_reservation_to_calendar(reservation, cal)
 
@@ -290,7 +330,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         """Process a WiseGolf0 reservation."""
         self.debug(f"Processing WiseGolf0 reservation: {raw_reservation}")
         start_time = datetime.strptime(raw_reservation['dateTimeStart'], '%Y-%m-%d %H:%M:%S')
-        start_time = start_time.replace(tzinfo=self.local_tz)
+        start_time = start_time.replace(tzinfo=self.timezone)
         
         # Skip if older than cutoff
         if start_time < cutoff_time:
@@ -298,7 +338,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             return
         
         reservation = Reservation.from_wisegolf0(raw_reservation, club, user, membership)
-        if self._should_include_reservation(reservation, past_days, self.local_tz):
+        if self._should_include_reservation(reservation, past_days, self.timezone):
             all_reservations.append(reservation)
             self._add_reservation_to_calendar(reservation, cal)
 
@@ -322,7 +362,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             self.debug(f"Skipping old NexGolf reservation: {reservation.start_time}")
             return
         
-        if self._should_include_reservation(reservation, past_days, self.local_tz):
+        if self._should_include_reservation(reservation, past_days, self.timezone):
             all_reservations.append(reservation)
             self._add_reservation_to_calendar(reservation, cal)
 
@@ -346,7 +386,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             self.debug(f"Skipping old TeeTime reservation: {reservation.start_time}")
             return
         
-        if self._should_include_reservation(reservation, past_days, self.local_tz):
+        if self._should_include_reservation(reservation, past_days, self.timezone):
             all_reservations.append(reservation)
             self._add_reservation_to_calendar(reservation, cal)
 
@@ -371,17 +411,17 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             APIError,
             "reservation",
             "list reservations",
-            lambda: []  # Fallback to empty list
+            lambda: raise_error("Failed to list reservations")
         ):
-            all_reservations = []
-            now = datetime.now(self.local_tz)
+            all_reservations: List[Reservation] = []
+            now = datetime.now(self.timezone)
             
-            if self.user_name not in self.config.users:
-                self.warning(f"User {self.user_name} not found in configuration")
+            if self.username not in cast(Dict[str, Any], self.config.users):
+                self.warning(f"User {self.username} not found in configuration")
                 return []
             
-            user_config = self.config.users[self.user_name]
-            _, reservations = self.process_user(self.user_name, user_config, days)
+            user_config = cast(Dict[str, Any], self.config.users)[self.username]
+            _, reservations = self.process_user(self.username, user_config, days)
             
             for reservation in reservations:
                 if active_only and not self._is_active(reservation, now):
@@ -405,9 +445,9 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             APIError,
             "reservation",
             "check overlaps",
-            lambda: []  # Fallback to empty list
+            lambda: raise_error("Failed to check overlaps")
         ):
-            overlaps = []
+            overlaps: List[Tuple[Reservation, Reservation]] = []
             all_reservations = self.list_reservations()
             
             # Group reservations by user
@@ -426,6 +466,13 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                             overlaps.append((res1, res2))
             
             return overlaps
+
+    def _reservations_overlap(self, res1: Reservation, res2: Reservation) -> bool:
+        """Check if two reservations overlap."""
+        return (
+            res1.start_time < res2.end_time and
+            res2.start_time < res1.end_time
+        )
 
     def _add_reservation_to_calendar(self, reservation: Reservation, cal: Calendar) -> None:
         """
@@ -448,7 +495,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             if resources:
                 resource_id = resources[0].get('resourceId', '0')
         
-        event_uid = f"{reservation.membership.clubAbbreviation}_{reservation.start_time.strftime('%Y%m%d%H%M')}_{resource_id}_{self.user_name}"
+        event_uid = f"{reservation.membership.clubAbbreviation}_{reservation.start_time.strftime('%Y%m%d%H%M')}_{resource_id}_{self.username}"
         event.add('uid', event_uid)
         
         # Add description
@@ -513,12 +560,12 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 return sorted(self.config.clubs.keys())
             
             # Get user's memberships
-            if self.user_name not in self.config.users:
-                self.warning(f"User {self.user_name} not found in configuration")
+            if self.username not in self.config.users:
+                self.warning(f"User {self.username} not found in configuration")
                 return []
                 
-            user_config = self.config.users[self.user_name]
-            user = User.from_config(self.user_name, user_config)
+            user_config = self.config.users[self.username]
+            user = User.from_config(self.username, user_config)
             
             # Get unique clubs from user's memberships
             courses = {membership.club for membership in user.memberships}

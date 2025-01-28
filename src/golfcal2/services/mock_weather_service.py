@@ -1,9 +1,11 @@
+"""Mock weather service for testing."""
+
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, cast
 from zoneinfo import ZoneInfo
 
 from ..services.base_service import WeatherService
-from ..services.weather_types import WeatherData, WeatherResponse
+from ..services.weather_types import WeatherData, WeatherResponse, WeatherCache
 
 class MockWeatherService(WeatherService):
     """Mock weather service for testing."""
@@ -12,7 +14,7 @@ class MockWeatherService(WeatherService):
         """Initialize mock weather service."""
         super().__init__(timezone, utc)  # Don't pass config to base class
         self.service_type = "mock"
-        self._cache = {}  # Raw response data cache
+        self._cache: Dict[str, WeatherCache] = {}  # Raw response data cache
         
     def get_weather(
         self,
@@ -47,15 +49,9 @@ class MockWeatherService(WeatherService):
             return None
         
         # Get weather data
-        response = self._get_weather(lat, lon, start_time, end_time, club)
-        if response and response.data:
-            self.info(
-                "Got weather data",
-                coords=(lat, lon),
-                time_range=f"{start_time.isoformat()} to {end_time.isoformat()}",
-                forecast_count=len(response.data)
-            )
-            return response
+        response = self._fetch_forecasts(lat, lon, start_time, end_time)
+        if response:
+            return self._parse_response(response, start_time, end_time)
         
         self.warning("No weather data found")
         return None
@@ -88,12 +84,12 @@ class MockWeatherService(WeatherService):
                 block_duration = timedelta(hours=block_size)
                 
                 forecast = {
-                    "elaboration_time": current.isoformat(),
-                    "block_duration": block_duration,
+                    "time": current.isoformat(),
+                    "duration": block_duration.total_seconds() / 3600,  # Convert to hours
                     "temperature": 20.0,
                     "wind_speed": 10.0,
                     "wind_direction": 180.0,
-                    "precipitation_amount": 0.0,
+                    "precipitation": 0.0,
                     "weather_code": weather_code
                 }
                 forecasts.append(forecast)
@@ -110,7 +106,7 @@ class MockWeatherService(WeatherService):
         response_data: Dict[str, Any],
         start_time: datetime,
         end_time: datetime,
-        interval: int
+        interval: int = 1
     ) -> Optional[WeatherResponse]:
         """Parse raw API response into WeatherData objects."""
         try:
@@ -120,17 +116,21 @@ class MockWeatherService(WeatherService):
             weather_data = []
             for forecast in response_data["forecasts"]:
                 data = WeatherData(
-                    elaboration_time=datetime.fromisoformat(forecast["elaboration_time"]),
-                    block_duration=forecast["block_duration"],
+                    time=datetime.fromisoformat(forecast["time"]),
+                    duration=forecast["duration"],
                     temperature=forecast["temperature"],
                     wind_speed=forecast["wind_speed"],
                     wind_direction=forecast["wind_direction"],
-                    precipitation_amount=forecast["precipitation_amount"],
+                    precipitation=forecast["precipitation"],
                     weather_code=forecast["weather_code"]
                 )
                 weather_data.append(data)
                 
-            return WeatherResponse(data=weather_data)
+            return WeatherResponse(
+                data=weather_data,
+                elaboration_time=start_time,
+                interval=interval
+            )
             
         except Exception as e:
             self.error("Failed to parse mock response", exc_info=e)

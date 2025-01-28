@@ -4,11 +4,13 @@ Calendar service for golf calendar application.
 
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional, Tuple, Set, cast, NoReturn, Type, TypeVar, Protocol, runtime_checkable
+from typing_extensions import Never
 from zoneinfo import ZoneInfo
 from pathlib import Path
 import requests
-from icalendar import Event, Calendar
+from icalendar import Event, Calendar  # type: ignore
+from types import TracebackType
 
 from golfcal2.models.golf_club import GolfClubFactory
 from golfcal2.models.reservation import Reservation
@@ -37,8 +39,22 @@ from golfcal2.exceptions import (
 )
 from golfcal2.config.error_aggregator import aggregate_error
 
+T = TypeVar('T')
+
+@runtime_checkable
+class ConfigProtocol(Protocol):
+    """Protocol for configuration objects."""
+    ics_dir: str
+    clubs: Dict[str, Any]
+    timezone: str
+    global_config: Dict[str, Any]
+
+def raise_error(msg: str = "") -> Never:
+    """Helper function to raise an error and satisfy the Never type."""
+    raise CalendarError(msg, ErrorCode.SERVICE_ERROR)
+
 class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
-    """Service for handling calendar operations."""
+    """Service for managing calendar operations."""
     
     def __init__(self, config: AppConfig, weather_service: Optional[WeatherManager] = None, dev_mode: bool = False):
         """Initialize calendar service.
@@ -47,54 +63,74 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             config: Application configuration
             weather_service: Optional pre-initialized weather service
             dev_mode: Whether to run in development mode
+            
+        Raises:
+            CalendarError: If initialization fails
         """
         super().__init__()
+        if not isinstance(config, AppConfig):
+            raise CalendarError("Config must be an instance of AppConfig")
+        
+        # Validate required config attributes
+        if not hasattr(config, 'ics_dir'):
+            raise CalendarError("Config missing required attribute: ics_dir")
+        if not hasattr(config, 'clubs'):
+            raise CalendarError("Config missing required attribute: clubs")
+            
         self.config = config
         self.dev_mode = dev_mode
         
-        # Initialize timezone settings - use cached objects if available
-        self.utc_tz = ZoneInfo('UTC')
-        self.local_tz = getattr(config, 'local_tz', config.timezone)
+        # Initialize timezone settings
+        if hasattr(config, 'timezone'):
+            if isinstance(config.timezone, ZoneInfo):
+                self.local_tz: ZoneInfo = config.timezone
+            else:
+                try:
+                    self.local_tz = ZoneInfo(str(config.timezone))
+                except Exception as e:
+                    raise CalendarError(f"Invalid timezone {config.timezone}: {e}")
+        else:
+            self.logger.warning("No timezone configured, using UTC")
+            self.local_tz = ZoneInfo('UTC')
         
         # Initialize seen UIDs set
-        self.seen_uids = set()
+        self.seen_uids: Set[str] = set()
         
-        with handle_errors(CalendarError, "calendar", "initialize services"):
+        # Initialize services
+        with handle_errors(
+            CalendarError,
+            "calendar",
+            "initialize services",
+            lambda: raise_error("Failed to initialize calendar service")
+        ):
             # Use provided weather service or create new one
-            self.weather_service = weather_service or WeatherManager(self.local_tz, self.utc_tz, self.config)
+            self.weather_service = weather_service or WeatherManager(
+                self.local_tz,
+                self.local_tz,
+                cast(Dict[str, Any], config.__dict__)
+            )
             
-            # Initialize builders with shared dependencies
-            self.calendar_builder = CalendarBuilder(self.local_tz)
+            # Initialize external event service
+            self.external_event_service = ExternalEventService(
+                weather_service=self.weather_service,
+                config=config
+            )
             
-            # Share weather service instance across builders
-            builders_config = {
-                'weather_service': self.weather_service,
-                'config': self.config
-            }
-            self.external_event_service = ExternalEventService(**builders_config)
-            self.reservation_builder = ReservationEventBuilder(**builders_config)
-            self.external_builder = ExternalEventBuilder(**builders_config)
+            # Initialize builders with proper typing
+            self.calendar_builder = CalendarBuilder(local_tz=self.local_tz)
+            self.reservation_builder = ReservationEventBuilder(
+                weather_service=self.weather_service,
+                config=config
+            )
+            self.external_builder = ExternalEventBuilder(
+                weather_service=self.weather_service,
+                config=config
+            )
             
-            # Set up ICS directory
-            try:
-                if os.path.isabs(self.config.ics_dir):
-                    self.ics_dir = Path(self.config.ics_dir)
-                else:
-                    # Use workspace directory as base for relative paths
-                    workspace_dir = Path(__file__).parent.parent
-                    self.ics_dir = workspace_dir / self.config.ics_dir
-                
-                # Create output directory if it doesn't exist
-                self.ics_dir.mkdir(parents=True, exist_ok=True)
-                self.logger.info(f"Using ICS directory: {self.ics_dir}")
-            except Exception as e:
-                error = CalendarError(
-                    f"Failed to initialize calendar directory: {str(e)}",
-                    ErrorCode.CONFIG_INVALID,
-                    {"ics_dir": str(self.config.ics_dir)}
-                )
-                aggregate_error(str(error), "calendar", e.__traceback__)
-                raise error
+            # Setup ICS directory
+            self.ics_dir = Path(str(config.ics_dir))
+            self.ics_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Using ICS directory: {self.ics_dir}")
 
     def check_config(self) -> bool:
         """Check if the service configuration is valid.
@@ -104,12 +140,12 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         """
         try:
             # Check if ICS directory exists or can be created
-            if os.path.isabs(self.config.ics_dir):
-                ics_dir = Path(self.config.ics_dir)
+            if os.path.isabs(str(self.config.ics_dir)):
+                ics_dir = Path(str(self.config.ics_dir))
             else:
                 # Use workspace directory as base for relative paths
                 workspace_dir = Path(__file__).parent.parent
-                ics_dir = workspace_dir / self.config.ics_dir
+                ics_dir = workspace_dir / str(self.config.ics_dir)
                 
             if not ics_dir.exists():
                 try:
@@ -144,7 +180,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                 CalendarError,
                 "calendar",
                 f"process reservations for user {user.name}",
-                lambda: None
+                lambda: raise_error("Failed to process reservations")
             ):
                 # Add reservations
                 for reservation in reservations:
@@ -173,7 +209,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                     "operation": "process_user_reservations"
                 }
             )
-            aggregate_error(str(error), "calendar", e.__traceback__)
+            aggregate_error(str(error), "calendar", str(e.__traceback__))
             raise error
 
     def _process_reservation(self, reservation: Reservation, calendar: Calendar, user_name: str) -> None:
@@ -187,10 +223,11 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             CalendarEventError,
             "calendar",
             f"process reservation {reservation.uid}",
-            lambda: None
+            lambda: raise_error("Failed to process reservation")
         ):
             # Get club configuration
-            club_config = self.config.clubs.get(reservation.membership.club) or self.config.clubs.get(reservation.club.name)
+            club_config = cast(Dict[str, Any], self.config.clubs).get(reservation.membership.club) or \
+                         cast(Dict[str, Any], self.config.clubs).get(reservation.club.name)
             if not club_config:
                 self.warning(f"No club config found for {reservation.membership.club} or {reservation.club.name}")
                 club_config = {}
@@ -208,7 +245,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             CalendarEventError,
             "calendar",
             f"process external events for user {user_name}",
-            lambda: None
+            lambda: raise_error("Failed to process external events")
         ):
             # Process events first
             external_events = self.external_event_service.process_events(user_name, dev_mode=self.dev_mode)
@@ -224,7 +261,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             CalendarWriteError,
             "calendar",
             f"write calendar for user {user_name}",
-            lambda: None
+            lambda: raise_error("Failed to write calendar")
         ):
             self.calendar_builder.write_calendar(calendar, file_path, self.dev_mode)
 
@@ -232,3 +269,37 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         """Get calendar file path for user."""
         file_name = f"{user_name}.ics"
         return self.ics_dir / file_name
+
+    def _make_api_request(self, *args: Any, **kwargs: Any) -> Never:
+        """Make an API request with error handling."""
+        with handle_errors(
+            CalendarError,
+            "calendar",
+            "make api request",
+            lambda: raise_error("API request failed")
+        ):
+            raise NotImplementedError("_make_api_request not implemented")
+
+    def _process_calendar(self, calendar: Any, *args: Any, **kwargs: Any) -> Never:
+        """Process calendar with error handling."""
+        with handle_errors(
+            CalendarError,
+            "calendar",
+            "process calendar",
+            lambda: raise_error("Calendar processing failed")
+        ):
+            raise NotImplementedError("_process_calendar not implemented")
+
+    def _handle_event(self, event: Any, *args: Any, **kwargs: Any) -> Never:
+        """Handle event with error handling."""
+        with handle_errors(
+            CalendarError,
+            "calendar",
+            "handle event",
+            lambda: raise_error("Event handling failed")
+        ):
+            raise NotImplementedError("_handle_event not implemented")
+
+    def raise_error(self, msg: str = "") -> NoReturn:
+        """Raise a calendar error."""
+        raise CalendarError(msg)

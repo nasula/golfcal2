@@ -110,9 +110,15 @@ class WeatherService(EnhancedLoggerMixin):
             
             # Try to get from cache first
             if self.cache is not None and club is not None:
-                cached = self.cache.get(club, lat, lon, start_time, end_time)
-                if cached is not None:
-                    return cached
+                cached_response = self.cache.get_response(
+                    self.service_type,
+                    lat,
+                    lon,
+                    start_time,
+                    end_time
+                )
+                if cached_response is not None:
+                    return self._parse_response(cached_response)
             
             # Fetch and parse data
             response_data = self._fetch_forecasts(lat, lon, start_time, end_time)
@@ -123,7 +129,16 @@ class WeatherService(EnhancedLoggerMixin):
             
             # Cache the response if possible
             if weather_response is not None and self.cache is not None and club is not None:
-                self.cache.set(club, lat, lon, start_time, end_time, weather_response)
+                expiry_time = self.get_expiry_time()
+                self.cache.store_response(
+                    self.service_type,
+                    lat,
+                    lon,
+                    start_time,
+                    end_time,
+                    response_data,
+                    expiry_time
+                )
             
             return weather_response
             
