@@ -155,24 +155,46 @@ class PlayerFetchMixin(LoggerMixin):
         """
         try:
             if not response:
+                self.logger.debug("Empty response")
                 return []
+            
+            self.logger.debug(f"extract_players_from_response - Response type: {type(response)}")
+            self.logger.debug(f"extract_players_from_response - Response: {response}")
+            self.logger.debug(f"extract_players_from_response - Reservation: {reservation}")
             
             resp_data = ResponseData(response)
             
             if resp_data.is_dict():
                 data = resp_data.as_dict()
-                if 'rows' in data and 'reservationsGolfPlayers' in data:
-                    return self._extract_players_wisegolf(data, reservation, skip_empty, skip_reserved)
-                if 'reservationsGolfPlayers' in data:
-                    return self._extract_players_wisegolf0(data, skip_empty, skip_reserved)
+                self.logger.debug(f"extract_players_from_response - Response keys: {list(data.keys())}")
+                
+                # If response has reservationsGolfPlayers and rows, it's a WiseGolf0 response
+                if 'reservationsGolfPlayers' in data and 'rows' in data:
+                    self.logger.debug("extract_players_from_response - Processing as WiseGolf0 response")
+                    players = self._extract_players_wisegolf0(data, reservation, skip_empty, skip_reserved)
+                    self.logger.debug(f"extract_players_from_response - Extracted {len(players)} players from WiseGolf0 response")
+                    return players
+                    
+                # If response has only rows, it's a WiseGolf response
+                elif 'rows' in data:
+                    self.logger.debug("extract_players_from_response - Processing as WiseGolf response")
+                    players = self._extract_players_wisegolf(data, reservation, skip_empty, skip_reserved)
+                    self.logger.debug(f"extract_players_from_response - Extracted {len(players)} players from WiseGolf response")
+                    return players
             
             if resp_data.is_list():
-                return self._extract_players_from_list(resp_data.as_list(), skip_empty, skip_reserved)
+                self.logger.debug("extract_players_from_response - Processing as list response")
+                players = self._extract_players_from_list(resp_data.as_list(), skip_empty, skip_reserved)
+                self.logger.debug(f"extract_players_from_response - Extracted {len(players)} players from list response")
+                return players
             
+            self.logger.debug("extract_players_from_response - No matching response format found")
             return []
             
         except Exception as e:
             self.logger.error(f"Failed to extract players from response: {e}", exc_info=True)
+            self.logger.debug("Response:", exc_info=True)
+            self.logger.debug(response)
             return []
     
     def _extract_players_wisegolf(
@@ -183,81 +205,66 @@ class PlayerFetchMixin(LoggerMixin):
         skip_reserved: bool
     ) -> List[Dict[str, Any]]:
         """Extract players from WiseGolf format response."""
-        # Find our reservation's row to get start time and resource
-        our_row = next(
-            (row for row in response['rows'] 
-             if row.get('reservationTimeId') == reservation.get('reservationTimeId')),
-            None
-        )
-        if not our_row:
-            self.logger.debug("Reservation row not found in response")
-            return []
-        
-        # Get our start time and resource ID
-        our_start = our_row.get('start')
-        our_resource_id = our_row.get('resources', [{}])[0].get('resourceId')
-        
-        # Find all reservation time IDs that share our start time and resource
-        related_time_ids = {
-            row.get('reservationTimeId')
-            for row in response['rows']
-            if (row.get('start') == our_start and 
-                row.get('resources', [{}])[0].get('resourceId') == our_resource_id)
+        # Only include the player's own event
+        player_data = {
+            'firstName': reservation.get('firstName', ''),
+            'familyName': reservation.get('familyName', ''),
+            'name': f"{reservation.get('firstName', '')} {reservation.get('familyName', '')}".strip(),
+            'clubName': '',
+            'handicapActive': reservation.get('handicapActive'),
+            'clubAbbreviation': reservation.get('clubAbbreviation', '')
         }
         
-        # Get all players from these related reservations
-        players = []
-        for player in response['reservationsGolfPlayers']:
-            if player.get('reservationTimeId') not in related_time_ids:
-                continue
-            
-            # Skip empty players if requested
-            if skip_empty and not (player.get('firstName') or player.get('familyName')):
-                continue
-            
-            # Skip "Varattu" players if requested
-            if skip_reserved and player.get('name') == "Varattu":
-                continue
-            
-            # Extract player data
-            player_data = {
-                'firstName': player.get('firstName', ''),
-                'familyName': player.get('familyName', ''),
-                'name': player.get('name', ''),
-                'clubName': player.get('clubName', ''),
-                'handicapActive': player.get('handicapActive'),
-                'clubAbbreviation': player.get('clubAbbreviation', '')
-            }
-            players.append(player_data)
-        
-        return players
+        self.logger.debug(f"Including player's own event: {player_data['name']} ({player_data['clubAbbreviation']}, {player_data['handicapActive']})")
+        return [player_data]
     
     def _extract_players_wisegolf0(
         self,
         response: Dict[str, Any],
-        skip_empty: bool,
-        skip_reserved: bool
+        reservation: Dict[str, Any],
+        skip_empty: bool = True,
+        skip_reserved: bool = True
     ) -> List[Dict[str, Any]]:
         """Extract players from WiseGolf0 format response."""
-        self.logger.debug(f"Extracting players from WiseGolf0 response: {response}")
+        self.logger.debug(f"_extract_players_wisegolf0 - Starting extraction")
+        self.logger.debug(f"_extract_players_wisegolf0 - Reservation: {reservation}")
         
         # Get the list of players from the response
         if not isinstance(response, dict) or 'reservationsGolfPlayers' not in response:
-            self.logger.debug(f"Invalid response format: {type(response)}")
+            self.logger.debug(f"_extract_players_wisegolf0 - Invalid response format: {type(response)}")
             return []
             
-        players_list = response['reservationsGolfPlayers']
+        players_list = response.get('reservationsGolfPlayers', [])
         rows = response.get('rows', [])
-        self.logger.debug(f"Found {len(players_list)} players and {len(rows)} rows")
         
+        self.logger.debug(f"_extract_players_wisegolf0 - Found {len(players_list)} players in response")
+        self.logger.debug(f"_extract_players_wisegolf0 - Found {len(rows)} rows in response")
+        
+        # Get our reservation's time slot details
+        our_time_id = reservation.get('reservationTimeId')
+        our_order_id = reservation.get('orderId')
+        self.logger.debug(f"_extract_players_wisegolf0 - Our reservation time ID: {our_time_id}, order ID: {our_order_id}")
+        
+        # Find all players with our order ID
         players = []
         for player in players_list:
+            player_order_id = player.get('orderId')
+            player_time_id = player.get('reservationTimeId')
+            self.logger.debug(f"_extract_players_wisegolf0 - Processing player with time ID: {player_time_id}, order ID: {player_order_id}")
+            
+            # Skip players from different orders
+            if player_order_id != our_order_id:
+                self.logger.debug(f"_extract_players_wisegolf0 - Skipping player, order ID {player_order_id} != {our_order_id}")
+                continue
+                
             # Skip empty players if requested
             if skip_empty and not (player.get('firstName') or player.get('familyName')):
+                self.logger.debug(f"_extract_players_wisegolf0 - Skipping empty player")
                 continue
             
             # Skip "Varattu" players if requested
             if skip_reserved and player.get('name') == "Varattu":
+                self.logger.debug(f"_extract_players_wisegolf0 - Skipping reserved player")
                 continue
             
             # Extract player data
@@ -269,9 +276,10 @@ class PlayerFetchMixin(LoggerMixin):
                 'handicapActive': player.get('handicapActive'),
                 'clubAbbreviation': player.get('clubAbbreviation', '')
             }
+            self.logger.debug(f"_extract_players_wisegolf0 - Adding player: {player_data['name']} (time ID: {player_time_id})")
             players.append(player_data)
         
-        self.logger.debug(f"Extracted {len(players)} players")
+        self.logger.debug(f"_extract_players_wisegolf0 - Extracted {len(players)} players")
         return players
     
     def _extract_players_from_list(
@@ -324,50 +332,39 @@ class PlayerFetchMixin(LoggerMixin):
             List of player dictionaries
         """
         try:
-            self.logger.debug(f"Fetching players from REST API for reservation: {reservation}")
-            self.logger.debug(f"Using API class: {api_class.__name__}")
-            self.logger.debug(f"REST URL: {rest_url}")
+            self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Starting with reservation: {reservation}")
             
             # Create API instance with REST URL
+            self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Creating {api_class.__name__} instance with URL: {rest_url}")
             api = api_class(rest_url, self.auth_service, self.club_details, membership.__dict__)
             
-            # Get the date from the reservation
-            reservation_date = datetime.strptime(
-                reservation["dateTimeStart"],
-                "%Y-%m-%d %H:%M:%S"
-            ).strftime("%Y-%m-%d")
+            # Pass the full reservation data to get_players
+            self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Calling get_players with reservation data")
+            response = api.get_players(reservation)
+            self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Got response: {response}")
             
-            self.logger.debug(f"Fetching players for date: {reservation_date}")
-            
-            # Get product ID, falling back to resourceId if not available
-            product_id = reservation.get("productId")
-            if not product_id and 'resources' in reservation:
-                resources = reservation.get('resources', [{}])
-                if resources:
-                    product_id = resources[0].get('resourceId')
-            
-            if not product_id:
-                self.logger.warning("No product ID found in reservation")
-                return []
-            
-            self.logger.debug(f"Using product ID: {product_id}")
-            
-            # Fetch players from the REST API
-            response = api.get_players({
-                'product_id': product_id,
-                'date': reservation_date
-            })
-            
-            self.logger.debug(f"Got player response type: {type(response)}")
-            self.logger.debug(f"Got player response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
-            self.logger.debug(f"Got player response: {response}")
-            
+            # Extract players from response
+            self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Calling extract_players_from_response")
             players = self.extract_players_from_response(response, reservation)
-            self.logger.debug(f"Extracted {len(players)} players")
+            self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Extracted players: {players}")
+            
+            if not players:
+                self.logger.debug("PlayerFetchMixin.fetch_players_from_rest - No players found from REST API, using reservation data")
+                player_data = {
+                    'firstName': reservation.get('firstName', ''),
+                    'familyName': reservation.get('familyName', ''),
+                    'name': f"{reservation.get('firstName', '')} {reservation.get('familyName', '')}".strip(),
+                    'clubName': '',
+                    'handicapActive': reservation.get('handicapActive'),
+                    'clubAbbreviation': reservation.get('clubAbbreviation', '')
+                }
+                self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Added player from reservation data: {player_data['name']} ({player_data['clubAbbreviation']}, {player_data['handicapActive']})")
+                return [player_data]
+            
             return players
             
         except Exception as e:
-            self.logger.error(f"Failed to fetch players from REST API: {e}")
+            self.logger.error(f"Failed to fetch players from REST API: {e}", exc_info=True)
             return []
 
 class ReservationHandlerMixin:

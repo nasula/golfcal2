@@ -224,9 +224,11 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
         )
         
         self.logger.debug("Fetching players")
-        players = api.get_players(reservation)
-        self.logger.debug(f"Got {len(players)} players")
-        return players if isinstance(players, list) else []
+        response = api.get_players(reservation)
+        self.logger.debug(f"Got response: {response}")
+        
+        # Return the response directly without converting to list
+        return response
 
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""
@@ -271,7 +273,17 @@ class WiseGolfClub(BaseWiseGolfClub):
             self.logger.error("No restUrl found in club_details")
             return []
             
-        return self.fetch_players_from_rest(reservation, membership, WiseGolfAPI, rest_url)
+        self.logger.debug(f"WiseGolfClub.fetch_players - Calling fetch_players_from_rest with rest_url: {rest_url}")
+        response = self.fetch_players_from_rest(reservation, membership, WiseGolfAPI, rest_url)
+        self.logger.debug(f"WiseGolfClub.fetch_players - Got response: {response}")
+        
+        # Extract players from response if it's a dictionary with reservationsGolfPlayers
+        if isinstance(response, dict) and 'reservationsGolfPlayers' in response:
+            return response
+        
+        # Return empty list if response is not in expected format
+        self.logger.warning(f"Unexpected response format: {type(response)}")
+        return []
 
 class WiseGolf0Club(BaseWiseGolfClub):
     """WiseGolf0 golf club implementation."""
@@ -300,6 +312,8 @@ class WiseGolf0Club(BaseWiseGolfClub):
     
     def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
         """Fetch players for a reservation."""
+        self.logger.debug(f"WiseGolf0Club.fetch_players - Starting with reservation: {reservation}")
+        
         club_details = self._ensure_club_details()
             
         rest_url = club_details.get('restUrl')
@@ -307,7 +321,17 @@ class WiseGolf0Club(BaseWiseGolfClub):
             self.logger.error("No restUrl found in club_details")
             return []
             
-        return self.fetch_players_from_rest(reservation, membership, WiseGolf0API, rest_url)
+        self.logger.debug(f"WiseGolf0Club.fetch_players - Calling fetch_players_from_rest with rest_url: {rest_url}")
+        response = self.fetch_players_from_rest(reservation, membership, WiseGolf0API, rest_url)
+        self.logger.debug(f"WiseGolf0Club.fetch_players - Got response: {response}")
+        
+        # Extract players from response if it's a dictionary with reservationsGolfPlayers
+        if isinstance(response, dict) and 'reservationsGolfPlayers' in response:
+            return response
+        
+        # Return empty list if response is not in expected format
+        self.logger.warning(f"Unexpected response format: {type(response)}")
+        return []
 
 class NexGolfClub(GolfClub):
     """NexGolf golf club implementation."""

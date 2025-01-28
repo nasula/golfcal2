@@ -166,20 +166,68 @@ class Reservation(LoggerMixin):
 
         if is_future_event and hasattr(self.club, 'fetch_players'):
             try:
+                self.logger.debug(f"Calling club.fetch_players with raw_data: {self.raw_data}")
                 player_data_list = self.club.fetch_players(self.raw_data, self.membership)
-                # Use the appropriate player factory method based on club type
-                club_type = getattr(self.club, 'type', 'wisegolf')
-                for player_data in player_data_list:
-                    if club_type == 'nexgolf':
-                        players.append(Player.from_nexgolf(player_data))
-                    elif club_type in ('wisegolf', 'wisegolf0'):
-                        players.append(Player.from_wisegolf(player_data))
+                self.logger.debug(f"Got response from club.fetch_players: {player_data_list}")
+                
+                # Check if we got a dictionary with reservationsGolfPlayers and rows
+                if isinstance(player_data_list, dict) and 'reservationsGolfPlayers' in player_data_list and 'rows' in player_data_list:
+                    self.logger.debug("Found reservationsGolfPlayers and rows in response")
+                    
+                    # Get our reservation's details
+                    our_order_id = self.raw_data.get('orderId')
+                    our_start_time = self.raw_data.get('dateTimeStart')
+                    our_resource_id = None
+                    if 'resources' in self.raw_data and self.raw_data['resources']:
+                        our_resource_id = self.raw_data['resources'][0].get('resourceId')
+                    elif 'resourceId' in self.raw_data:
+                        our_resource_id = self.raw_data.get('resourceId')
+                    
+                    self.logger.debug(f"Looking for players with orderId: {our_order_id}, start_time: {our_start_time}, resource_id: {our_resource_id}")
+                    
+                    # First find our time slot from rows
+                    matching_rows = [
+                        row for row in player_data_list['rows']
+                        if (row.get('start') == our_start_time and
+                            any(r.get('resourceId') == our_resource_id for r in row.get('resources', []))
+                            if row.get('resources') else False)
+                    ]
+                    
+                    if matching_rows:
+                        matching_time_ids = [row.get('reservationTimeId') for row in matching_rows]
+                        self.logger.debug(f"Found matching time slots with IDs: {matching_time_ids}")
+                        
+                        # Then find players that match either our orderId or are in the same time slot
+                        matching_players = [
+                            player for player in player_data_list['reservationsGolfPlayers']
+                            if (player.get('orderId') == our_order_id or
+                                player.get('reservationTimeId') in matching_time_ids)
+                        ]
+                        
+                        self.logger.debug(f"Found {len(matching_players)} players for this time slot")
+                        
+                        # Convert each matching player to a Player object
+                        for player_data in matching_players:
+                            self.logger.debug(f"Processing player data: {player_data}")
+                            players.append(Player.from_wisegolf(player_data))
+                            self.logger.debug(f"Added player: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
                     else:
-                        self.logger.warning(f"Unknown club type {club_type}, using wisegolf format")
-                        players.append(Player.from_wisegolf(player_data))
+                        self.logger.warning("No matching time slots found in rows")
+                else:
+                    self.logger.warning(f"Unexpected response format from club.fetch_players: {type(player_data_list)}")
+                    
             except Exception as e:
-                self.logger.error(f"Failed to fetch players: {e}")
+                self.logger.error(f"Failed to fetch players: {e}", exc_info=True)
                 self.logger.debug(f"Player data that caused error: {player_data_list if 'player_data_list' in locals() else 'No data fetched'}")
+        
+        # If no players found, try using the raw data
+        if not players:
+            self.logger.debug("No players found from club.fetch_players, checking raw data")
+            if 'reservationsGolfPlayers' in self.raw_data:
+                for player_data in self.raw_data['reservationsGolfPlayers']:
+                    if player_data.get('reservationTimeId') == self.raw_data.get('reservationTimeId'):
+                        players.append(Player.from_wisegolf(player_data))
+                        self.logger.debug(f"Added player from raw data: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
         
         return players
 
@@ -588,70 +636,68 @@ class Reservation(LoggerMixin):
         now = tz_manager.now()
         is_future_event = start_time > now
         
-        # Try to fetch players from REST API if the club supports it and it's a future event
-        if is_future_event and hasattr(club, 'fetch_players'):
+        # Try to fetch players from REST API if it's a future event
+        if is_future_event:
             try:
                 temp_instance.logger.debug(f"Fetching players for reservation: {data}")
-                player_data_list = club.fetch_players(data, membership)
-                temp_instance.logger.debug(f"Got player data list: {player_data_list}")
                 
-                for player_data in player_data_list:
-                    # Skip empty or "Varattu" players
-                    if not player_data.get('name') and not (player_data.get('firstName') or player_data.get('familyName')):
-                        continue
-                    if player_data.get('name') == "Varattu":
-                        continue
-                    
-                    # Get player name - try different formats
-                    name = player_data.get('name', '')
-                    if not name and (player_data.get('firstName') or player_data.get('familyName')):
-                        name = f"{player_data.get('firstName', '')} {player_data.get('familyName', '')}".strip()
-                    
-                    # Get club abbreviation - try different formats
-                    club_abbr = (
-                        player_data.get('club_abbreviation') or
-                        player_data.get('clubAbbreviation') or
-                        player_data.get('clubName', 'Unknown')
-                    )
-                    
-                    # Get handicap - try different formats
-                    try:
-                        handicap = float(
-                            player_data.get('handicap') or
-                            player_data.get('handicapActive') or
-                            54
-                        )
-                    except (ValueError, TypeError):
-                        handicap = 54
-                    
-                    players.append(Player(
-                        name=name,
-                        club=club_abbr,
-                        handicap=handicap
-                    ))
-                    temp_instance.logger.debug(f"Added player: {name} ({club_abbr}, {handicap})")
+                # Prepare reservation data for API call
+                api_reservation = {
+                    'dateTimeStart': data['dateTimeStart'],
+                    'dateTimeEnd': data['dateTimeEnd'],
+                    'orderId': data['orderId'],
+                    'reservationTimeId': data['reservationTimeId'],
+                    'productId': data.get('productId'),
+                    'resources': data.get('resources', [{'resourceId': data.get('resourceId'), 'quantity': 1}] if data.get('resourceId') else None)
+                }
                 
+                temp_instance.logger.debug(f"Calling fetch_players with reservation: {api_reservation}")
+                response = club.fetch_players(api_reservation, membership)
+                temp_instance.logger.debug(f"Got API response: {response}")
+                
+                # Process each player using WiseGolf0 format
+                if isinstance(response, dict) and 'reservationsGolfPlayers' in response:
+                    # Get our reservation's timeId and orderId
+                    reservation_time_id = data.get('reservationTimeId')
+                    order_id = data.get('orderId')
+                    temp_instance.logger.debug(f"Looking for players with reservationTimeId: {reservation_time_id} and orderId: {order_id}")
+                    
+                    # Filter players that match our reservation's timeId or orderId
+                    reservation_players = [
+                        player for player in response['reservationsGolfPlayers']
+                        if (player.get('reservationTimeId') == reservation_time_id or
+                            player.get('orderId') == order_id)
+                    ]
+                    
+                    temp_instance.logger.debug(f"Found {len(reservation_players)} players for this reservation")
+                    
+                    for player_data in reservation_players:
+                        temp_instance.logger.debug(f"Processing player data: {player_data}")
+                        players.append(Player.from_wisegolf(player_data))
+                        temp_instance.logger.debug(f"Added player: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
+                elif isinstance(response, dict):
+                    temp_instance.logger.warning(f"API response missing reservationsGolfPlayers: {response}")
+                else:
+                    temp_instance.logger.warning(f"Unexpected format in API response: {type(response)}")
+                    
+                # If no players found from API response, try using the raw data
+                if not players:
+                    temp_instance.logger.debug("No players found from API response, checking raw data")
+                    if 'reservationsGolfPlayers' in data:
+                        for player_data in data['reservationsGolfPlayers']:
+                            if player_data.get('reservationTimeId') == data.get('reservationTimeId'):
+                                players.append(Player.from_wisegolf(player_data))
+                                temp_instance.logger.debug(f"Added player from raw data: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
             except Exception as e:
-                temp_instance.logger.error(f"Failed to fetch players from REST API: {e}")
-                temp_instance.logger.debug(f"Player data that caused error: {player_data_list if 'player_data_list' in locals() else 'No data fetched'}")
+                temp_instance.logger.error(f"Failed to fetch players from REST API: {e}", exc_info=True)
+                temp_instance.logger.debug(f"Player data that caused error: {response if 'response' in locals() else 'No data fetched'}")
         
         # If no players found from REST API, use the reservation data itself
         if not players:
             temp_instance.logger.debug("No players found from REST API, using reservation data")
             if all(key in data for key in ["firstName", "familyName"]):
-                name = f"{data['firstName']} {data['familyName']}".strip()
-                club_abbr = data.get('clubAbbreviation', 'Unknown')
-                try:
-                    handicap = float(data.get('handicapActive', 54))
-                except (ValueError, TypeError):
-                    handicap = 54
-                
-                players.append(Player(
-                    name=name,
-                    club=club_abbr,
-                    handicap=handicap
-                ))
-                temp_instance.logger.debug(f"Added player from reservation data: {name} ({club_abbr}, {handicap})")
+                players.append(Player.from_wisegolf(data))
+                temp_instance.logger.debug(f"Added player from reservation data: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
             else:
                 temp_instance.logger.debug("No player data found in reservation, using user data")
                 players.append(Player(

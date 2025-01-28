@@ -67,38 +67,44 @@ class BaseWiseGolfAPI(BaseAPI, RequestHandlerMixin):
         Get players for a specific reservation.
         
         Args:
-            reservation_data: Dictionary containing:
-                - productId: Product ID
-                - date: Date in YYYY-MM-DD format (or dateTimeStart to extract date from)
-                - orderId: Optional order ID
+            reservation_data: Dictionary containing reservation details
                 
         Returns:
             Dictionary containing player information
         """
         try:
-            # Extract date from dateTimeStart if date not provided
-            date = reservation_data.get('date')
-            if not date and 'dateTimeStart' in reservation_data:
-                date = reservation_data['dateTimeStart'].split()[0]
+            self.logger.debug("WiseGolf0API.get_players - Starting with reservation data:")
+            self.logger.debug(f"WiseGolf0API.get_players - {reservation_data}")
+            
+            # Extract date from dateTimeStart
+            date = datetime.strptime(
+                reservation_data["dateTimeStart"],
+                "%Y-%m-%d %H:%M:%S"
+            ).strftime("%Y-%m-%d")
                 
-            product_id = reservation_data.get('productId')
+            # Get product ID from reservation
+            product_id = reservation_data.get("productId")
+            if not product_id and 'resources' in reservation_data:
+                resources = reservation_data.get('resources', [{}])
+                if resources:
+                    product_id = resources[0].get('resourceId')
+                    
             if not product_id:
-                raise WiseGolfResponseError("No productId provided")
-                
-            if not date:
-                raise WiseGolfResponseError("No date provided")
+                raise WiseGolfResponseError("No productId found in reservation")
                 
             params = {
                 "productid": str(product_id),
                 "date": date,
-                "golf": 1
+                "golf": 1,
+                "orderid": str(reservation_data.get('orderId'))
             }
             
-            # Add optional orderId if present
-            if order_id := reservation_data.get('orderId'):
-                params["orderid"] = str(order_id)
-                
-            return self._fetch_players(params)
+            self.logger.debug(f"WiseGolf0API.get_players - Calling _fetch_players with params: {params}")
+            response = self._fetch_players(params)
+            self.logger.debug(f"WiseGolf0API.get_players - Got response: {response}")
+            
+            # Return the response directly - it should contain reservationsGolfPlayers
+            return response
             
         except Exception as e:
             self.logger.error(f"Failed to fetch players: {e}", exc_info=True)
@@ -193,7 +199,10 @@ class WiseGolf0API(BaseWiseGolfAPI):
             
     def _fetch_players(self, params: Dict[str, str]) -> Dict[str, Any]:
         """Fetch players from WiseGolf0 API."""
+        self.logger.debug(f"WiseGolf0API._fetch_players - Starting with params: {params}")
+        
         if not self.rest_url:
+            self.logger.debug("WiseGolf0API._fetch_players - No rest_url found")
             return {"reservationsGolfPlayers": []}
             
         # Update headers for cross-origin request
@@ -203,15 +212,31 @@ class WiseGolf0API(BaseWiseGolfAPI):
             "Sec-Fetch-Site": "same-site"
         })
         
-        # Make request to REST API
-        response = requests.get(
+        self.logger.debug(f"WiseGolf0API._fetch_players - Making request to {self.rest_url}/reservations/ with headers: {dict(self.session.headers)}")
+        
+        # Make request to REST API using session
+        response = self.session.get(
             self.rest_url + "/reservations/",
             params=params,
-            headers=self.session.headers,
             timeout=self.DEFAULT_TIMEOUT
         )
         
-        return response.json() if response.ok else {"reservationsGolfPlayers": []}
+        self.logger.debug(f"REST API response status: {response.status_code}")
+        self.logger.debug(f"REST API response headers: {dict(response.headers)}")
+        self.logger.debug(f"REST API request URL: {response.url}")
+        self.logger.debug(f"REST API request headers: {dict(response.request.headers)}")
+        
+        if response.ok:
+            try:
+                data = response.json()
+                self.logger.debug(f"REST API response content: {data}")
+                return data
+            except Exception as e:
+                self.logger.error(f"Failed to parse JSON response: {e}", exc_info=True)
+                return {"reservationsGolfPlayers": []}
+        else:
+            self.logger.error(f"REST API request failed with status {response.status_code}: {response.text}")
+            return {"reservationsGolfPlayers": []}
 
     def _extract_data_from_response(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract reservation data from API response.

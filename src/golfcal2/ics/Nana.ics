@@ -5,4 +5,14 @@ CALSCALE:GREGORIAN
 METHOD:PUBLISH
 X-WR-CALNAME:Golf Reservations - Nana
 X-WR-TIMEZONE:Europe/Helsinki
+BEGIN:VEVENT
+SUMMARY:Golf: Vantaankoski 11:00 - Simulaattori 3 (2 Players\, THCP: 53.7)
+DTSTART;TZID=Europe/Helsinki:20250202T110000
+DTEND;TZID=Europe/Helsinki:20250202T130000
+DTSTAMP;TZID=Europe/Helsinki:20250128T140206
+UID:Vantaankoski_20250202_1100_0_Nana
+DESCRIPTION:Teetime 2025-02-02 11:00:00\nJarkko\, PGC\, HCP: 23.8\nNana\, 
+ VGC\, HCP: 29.9\n\nWeather:\n08:00-14:00 ☁️ 0.0°C 3.5m/s 💧8%
+LOCATION:Martinkyläntie 9\, 01770 Vantaa\, Finland
+END:VEVENT
 END:VCALENDAR
