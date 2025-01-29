@@ -3,12 +3,12 @@ Reservation service for golf calendar application.
 """
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Tuple, Set, NoReturn, cast, Protocol, runtime_checkable
 from typing_extensions import Never
 from zoneinfo import ZoneInfo
 import requests
-from icalendar import Event, Calendar  # type: ignore
+from icalendar import Event, Calendar, vText, vDatetime  # type: ignore
 
 from golfcal2.models.golf_club import GolfClubFactory, GolfClub, AppConfigProtocol as GolfClubConfigProtocol
 from golfcal2.models.reservation import Reservation
@@ -84,20 +84,20 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         self.utc_tz = ZoneInfo('UTC')
         
         # Initialize services
-        self.weather_manager = WeatherManager(self.timezone, self.utc_tz, config.__dict__)
+        self._weather_service = WeatherManager(self.timezone, self.utc_tz, dict(config.global_config))
         self.auth_service = AuthService(self.user_config.get('auth_details', {}))
         
         # Set logging context
         self.set_log_context(user=username)
+        
+        # Initialize event builder
+        from golfcal2.services.calendar.builders.event_builder import ReservationEventBuilder
+        self.event_builder = ReservationEventBuilder(self.weather_service, config)
     
     @property
     def weather_service(self) -> WeatherManager:
-        """Lazy load weather service."""
-        global _weather_manager
-        if _weather_manager is None:
-            from golfcal2.services.weather_service import WeatherManager
-            _weather_manager = WeatherManager(self.timezone, self.utc_tz, cast(Dict[str, Any], self.config))
-        return _weather_manager
+        """Get the weather service."""
+        return self._weather_service
 
     def check_config(self) -> bool:
         """Check if the service configuration is valid.
@@ -484,42 +484,20 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         )
 
     def _add_reservation_to_calendar(self, reservation: Reservation, cal: Calendar) -> None:
-        """
-        Add a reservation to the calendar.
-        
-        Args:
-            reservation: Reservation to add
-            cal: Calendar to add to
-        """
-        event = Event()
-        event.add('summary', f"Golf {reservation.membership.clubAbbreviation}")
-        event.add('dtstart', reservation.start_time)
-        event.add('dtend', reservation.end_time)
-        event.add('location', self._get_club_address(reservation.membership.club))
-        
-        # Create unique event ID
-        resource_id = reservation.raw_data.get('resourceId', '0')
-        if not resource_id and 'resources' in reservation.raw_data:
-            resources = reservation.raw_data.get('resources', [{}])
-            if resources:
-                resource_id = resources[0].get('resourceId', '0')
-        
-        event_uid = f"{reservation.membership.clubAbbreviation}_{reservation.start_time.strftime('%Y%m%d%H%M')}_{resource_id}_{self.username}"
-        event.add('uid', event_uid)
-        
-        # Add description
-        event.add('description', reservation.get_event_description())
-        
-        # Add duration
-        duration = reservation.end_time - reservation.start_time
-        event.add('duration', duration)
-        
-        # Add weather for all clubs that have coordinates
-        club_config = self.config.clubs.get(reservation.membership.club)
-        if club_config and 'coordinates' in club_config:
-            self._add_weather_to_event(event, reservation.membership.club, reservation.start_time, self.weather_service)
-        
-        self._add_event_to_calendar(event, cal)
+        """Add a reservation to the calendar."""
+        try:
+            # Get club config
+            club_config = self.config.clubs.get(reservation.membership.club, {})
+            
+            # Use event builder like external events do
+            event = self.event_builder.build(reservation, club_config)
+            if event:
+                self._add_event_to_calendar(event, cal)
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Failed to add reservation to calendar: {e}")
+            return
 
     def _get_club_address(self, club_id: str) -> str:
         """
@@ -579,5 +557,17 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             # Get unique clubs from user's memberships
             courses = {membership.club for membership in user.memberships}
             return sorted(courses)
+
+    def clear_weather_cache(self) -> None:
+        """Clear all cached weather responses."""
+        self.weather_service.clear_cache()
+    
+    def list_weather_cache(self) -> List[Dict[str, Any]]:
+        """List all cached weather responses."""
+        return self.weather_service.list_cache()
+    
+    def cleanup_weather_cache(self) -> int:
+        """Clean up expired weather cache entries."""
+        return self.weather_service.cleanup_cache()
 
     

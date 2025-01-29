@@ -220,3 +220,11 @@ class WeatherResponseCache:
         except sqlite3.Error as e:
             self.logger.error("Failed to clear weather cache: %s", str(e))
             raise 
+    
+    def list_all(self) -> List[Dict[str, Any]]:
+        """List all cached entries.
+        
+        Returns:
+            List of dictionaries containing cache entry details
+        """
+        return self.list_entries() 

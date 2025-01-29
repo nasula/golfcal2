@@ -91,12 +91,11 @@ class MetWeatherService(WeatherService):
                 ErrorCode.WEATHER_ERROR,
                 f"Request exceeds maximum forecast range of {self.MAX_FORECAST_RANGE} hours"
             )
-            return None
 
         try:
             url = f"https://api.met.no/weatherapi/locationforecast/2.0/complete"
             headers = {
-                'User-Agent': 'GolfCal/2.0 github.com/jarkko/golfcal2'
+                'User-Agent': 'GolfCal2/2.0 (https://github.com/jarkko/golfcal2; jarkkoahonen@icloud.com)'
             }
             params = {
                 'lat': latitude,
@@ -104,19 +103,23 @@ class MetWeatherService(WeatherService):
             }
             response = requests.get(url, headers=headers, params=params)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            if not data:
+                self._handle_errors(
+                    ErrorCode.WEATHER_ERROR,
+                    "Empty response from MET API"
+                )
+            return data
         except requests.exceptions.Timeout:
             self._handle_errors(
                 ErrorCode.TIMEOUT,
                 "Request timed out"
             )
-            return None
         except requests.exceptions.RequestException as e:
             self._handle_errors(
                 ErrorCode.WEATHER_REQUEST_ERROR,
                 f"Request failed: {str(e)}"
             )
-            return None
 
     def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
         """Parse MET API response into WeatherData objects.

@@ -201,42 +201,136 @@ def create_parser() -> argparse.ArgumentParser:
     
     return parser
 
-def process_command(args: argparse.Namespace, logger: logging.Logger, config: ConfigurationManager, is_dev: bool = False) -> int:
+def process_command(args: argparse.Namespace, logger: logging.Logger, config_manager: ConfigurationManager, is_dev: bool = False) -> int:
     """Process golf calendar."""
     try:
+        # Get the AppConfig instance
+        config = config_manager.config
+        
+        # Get username from args or config
+        username = args.user or config.get('default_user')
+        if not username:
+            logger.error("No username specified and no default user configured")
+            return 1
+            
+        # Initialize services
+        reservation_service = ReservationService(username, config)
+        
+        if args.command == 'list':
+            if args.list_type == 'weather-cache':
+                # Handle weather cache listing
+                entries = reservation_service.list_weather_cache()
+                
+                if args.clear:
+                    reservation_service.clear_weather_cache()
+                    print("Weather cache cleared successfully")
+                    return 0
+                
+                if not entries:
+                    print("Weather cache is empty")
+                    return 0
+                
+                if args.format == 'json':
+                    print(json.dumps(entries, indent=2))
+                else:
+                    print("\nWeather Cache Contents")
+                    print("=" * 60)
+                    for entry in entries:
+                        print(f"Service: {entry['service']}")
+                        print(f"Location: {entry['location']}")
+                        print(f"Forecast Period: {entry['forecast_period']}")
+                        print(f"Expires: {entry['expires']}")
+                        print(f"Created: {entry['created']}")
+                        print("-" * 60)
+                return 0
+        
         # Get list of users to process
-        users = [args.user] if args.user else config.users.keys()
+        users = [args.user] if args.user else list(config.users.keys())
         if not users:
             logger.error("No users configured")
             return 1
             
-        if args.dry_run:
+        if getattr(args, 'dry_run', False):
             logger.info("Dry run mode - no changes will be made")
         
         success = True
         for username in users:
             try:
-                logger.info(f"Processing calendar for user {username}")
+                # Different log message based on command
+                if getattr(args, 'list_type', None) == 'reservations':
+                    logger.info(f"Listing reservations for user {username}")
+                else:
+                    logger.info(f"Processing calendar for user {username}")
                 
-                # Get the User object (already converted in main)
+                # Get the User object using from_config
                 user_config = config.users.get(username)
                 if not user_config:
                     logger.warning(f"User {username} not found in configuration")
                     continue
                 
-                user = User(username, user_config)
+                # Convert user_config to dict for User.from_config
+                user = User.from_config(username, dict(user_config))
                 reservation_service = ReservationService(username, config)
-                calendar_service = CalendarService(config, dev_mode=is_dev)
+                calendar_service = CalendarService(config)
                 
                 # Get reservations
-                calendar, reservations = reservation_service.process_user(username, user)
+                calendar, reservations = reservation_service.process_user(username, dict(user_config))
                 if not reservations:
                     logger.info(f"No reservations found for user {username}")
                 else:
                     logger.info(f"Found {len(reservations)} reservations for user {username}")
                 
-                # Process calendar regardless of reservations
-                if not args.dry_run:
+                # If listing reservations, print them out
+                if getattr(args, 'list_type', None) == 'reservations':
+                    # Get external events too
+                    external_events = calendar_service.external_event_service.process_events(username, dev_mode=args.dev)
+                    
+                    # Add external events to calendar
+                    for event in external_events:
+                        calendar.add_component(event)
+                    
+                    if args.format == 'json':
+                        # Convert all events to JSON-serializable format
+                        data = {
+                            username: {
+                                "events": [event.format_for_display() for event in reservations + external_events]
+                            }
+                        }
+                        print(json.dumps(data, indent=2))
+                    else:
+                        if len(users) > 1:
+                            print(f"\nEvents for {username}:")
+                            print("=" * 60)
+                        else:
+                            print("\nEvents:")
+                            print("=" * 60)
+                        
+                        # Print all events in chronological order
+                        for event in sorted(calendar.walk('vevent'), key=lambda x: x['dtstart'].dt):
+                            # Get event details
+                            start_time = event['dtstart'].dt
+                            end_time = event['dtend'].dt
+                            name = event['summary']
+                            location = event.get('location', '')
+                            description = event.get('description', '')
+                            
+                            # Format times
+                            start_str = start_time.strftime('%Y-%m-%d %H:%M')
+                            end_str = end_time.strftime('%H:%M')
+                            
+                            # Print event details
+                            print(f"{start_str} - {end_str}: {name}")
+                            if location:
+                                print(f"Location: {location}")
+                            
+                            # Extract and print weather data if present
+                            if description and 'Weather:' in description:
+                                weather_part = description.split('Weather:', 1)[1].strip()
+                                print("\nWeather:")
+                                print(weather_part)
+                            print("-" * 60)
+                # Otherwise process calendar as usual
+                elif not getattr(args, 'dry_run', False):
                     calendar_service.process_user_reservations(user, reservations)
                     logger.info(f"Calendar processed successfully for user {username}")
                 
@@ -251,286 +345,19 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, config: Co
         logger.error(f"Failed to process calendars: {e}", exc_info=True)
         return 1
 
-def list_command(args: argparse.Namespace, logger: logging.Logger, config: ConfigurationManager) -> int:
-    """List golf courses or reservations."""
-    try:
-        if not args.list_type:
-            logger.error("Please specify what to list: 'courses', 'reservations', or 'weather-cache'")
-            return 1
-            
-        # Initialize weather manager if needed for reservations
-        weather_manager = None
-        config_with_tz = None
-        if args.list_type == 'reservations':
-            config_manager = ConfigurationManager()
-            weather_manager = WeatherManager(
-                config_manager.get_timezone(config.global_config['timezone']),
-                config_manager.get_timezone('UTC'),
-                config.global_config
-            )
-            
-            # Create config object with timezone attributes
-            config_with_tz = config
-            config_with_tz.local_tz = config_manager.get_timezone(config.global_config['timezone'])
-            config_with_tz.utc_tz = config_manager.get_timezone('UTC')
-            config_with_tz.timezone = config_with_tz.local_tz
-        
-        if args.list_type == 'weather-cache':
-            logger.info("Listing weather cache contents")
-            import sqlite3
-            from datetime import datetime, timedelta
-            
-            # Initialize cache with proper path from config
-            cache_dir = os.path.expanduser('~/.cache/golfcal2')
-            os.makedirs(cache_dir, exist_ok=True)
-            cache = WeatherResponseCache(os.path.join(cache_dir, 'weather_responses.db'))
-            
-            # Handle clear command
-            if args.clear:
-                try:
-                    cache.clear()  # Use the clear method instead of cleanup_expired
-                    logger.info("Weather cache cleared")
-                    return 0
-                except sqlite3.Error as e:
-                    logger.error(f"Database error while clearing weather cache: {e}")
-                    return 1
-                except Exception as e:
-                    logger.error(f"Failed to clear weather cache: {e}")
-                    return 1
-            
-            # List cache contents
-            try:
-                with sqlite3.connect(cache.db_path) as conn:
-                    conn.row_factory = sqlite3.Row
-                    cursor = conn.execute("""
-                        SELECT service_type, latitude, longitude, forecast_start, forecast_end, expires, response 
-                        FROM weather_responses 
-                        WHERE expires > ? 
-                        ORDER BY expires DESC
-                    """, (datetime.utcnow().isoformat(),))
-                    
-                    entries = []
-                    for row in cursor:
-                        entry = {
-                            'service': row['service_type'],
-                            'location': f"{row['latitude']}, {row['longitude']}",
-                            'start_time': row['forecast_start'],
-                            'end_time': row['forecast_end'],
-                            'expires': row['expires'],
-                            'forecast': json.loads(row['response']) if row['response'] else None
-                        }
-                        entries.append(entry)
-                
-                if not entries:
-                    logger.info("Weather cache is empty")
-                    return 0
-                
-                if args.format == 'json':
-                    print(json.dumps(entries, indent=2, default=str))
-                else:
-                    print("\nWeather Cache Contents")
-                    print("=" * 60)
-                    for entry in entries:
-                        print(f"\nService: {entry['service']}")
-                        print(f"Location: {entry['location']}")
-                        print(f"Time Range: {entry['start_time']} to {entry['end_time']}")
-                        print(f"Expires: {entry['expires']}")
-                        if entry['forecast']:
-                            print("\nForecast:")
-                            if isinstance(entry['forecast'].get('data'), list):
-                                for item in entry['forecast']['data']:
-                                    print(f"  - Time: {item.get('time')}")
-                                    print(f"    Temperature: {item.get('temperature')}°C")
-                                    print(f"    Weather: {item.get('symbol_code', 'Unknown')}")
-                            else:
-                                item = entry['forecast'].get('data', {})
-                                print(f"  - Time: {item.get('time')}")
-                                print(f"    Temperature: {item.get('temperature')}°C")
-                                print(f"    Weather: {item.get('symbol_code', 'Unknown')}")
-                        print("-" * 40)
-                
-                return 0
-                
-            except sqlite3.Error as e:
-                logger.error(f"Database error while listing weather cache: {e}")
-                return 1
-            except Exception as e:
-                logger.error(f"Failed to list weather-cache: {e}")
-                return 1
+def list_command(args: argparse.Namespace, logger: logging.Logger, config_manager: ConfigurationManager) -> int:
+    """List reservations for users."""
+    # Just call process_command with list_type set
+    return process_command(args, logger, config_manager)
 
-        elif args.list_type == 'courses':
-            # Get list of users to process
-            users = [args.user] if args.user else config.users.keys()
-            if not users:
-                logger.error("No users configured")
-                return 1
-                
-            success = True
-            for username in users:
-                try:
-                    logger.info(f"Listing courses for user {username}")
-                    reservation_service = ReservationService(username, config)
-                    courses = reservation_service.list_courses(include_all=args.all)
-                    
-                    if not courses:
-                        logger.info(f"No courses found for user {username}")
-                        continue
-                        
-                    if len(users) > 1:
-                        print(f"\nCourses for {username}:")
-                        print("-" * 40)
-                    
-                    for course in courses:
-                        print(f"- {course}")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to list courses for user {username}: {e}", exc_info=True)
-                    success = False
-                    continue
-                    
-            return 0 if success else 1
-                
-        elif args.list_type == 'reservations':
-            # Get list of users to process
-            users = [args.user] if args.user else config.users.keys()
-            if not users:
-                logger.error("No users configured")
-                return 1
-                
-            success = True
-            for username in users:
-                try:
-                    logger.info(f"Listing reservations for user {username}")
-                    
-                    # Initialize reservation service
-                    reservation_service = ReservationService(username, config)
-                    
-                    # Get regular reservations
-                    reservations = reservation_service.list_reservations(
-                        active_only=args.active,
-                        upcoming_only=args.upcoming,
-                        days=args.days
-                    )
-                    
-                    # Initialize error aggregator before getting external events
-                    from golfcal2.config.error_aggregator import init_error_aggregator
-                    from golfcal2.config.logging_config import load_logging_config
-                    logging_config = load_logging_config()
-                    init_error_aggregator(logging_config.error_aggregation)
-                    
-                    # Get external events
-                    calendar_service = CalendarService(config_with_tz, weather_manager, dev_mode=args.dev)
-                    external_events = calendar_service.external_event_service.process_events(username, dev_mode=args.dev)
-                    
-                    if not reservations and not external_events:
-                        logger.info(f"No reservations or events found for user {username}")
-                        continue
-                    
-                    if args.format == 'json':
-                        # Convert reservations to JSON-serializable format
-                        data = {
-                            username: {
-                                "reservations": [r.to_dict() for r in reservations],
-                                "external_events": [
-                                    {
-                                        "summary": event.get("summary", "Unknown Event"),
-                                        "start": event.get("dtstart").dt.isoformat() if event.get("dtstart") else None,
-                                        "end": event.get("dtend").dt.isoformat() if event.get("dtend") else None,
-                                        "location": event.get("location", ""),
-                                        "description": event.get("description", "")
-                                    }
-                                    for event in external_events
-                                ]
-                            }
-                        }
-                        print(json.dumps(data, indent=2))
-                    else:
-                        if len(users) > 1:
-                            print(f"\nReservations for {username}:")
-                            print("=" * 60)
-                        
-                        # Print regular reservations
-                        if reservations:
-                            if len(users) == 1:
-                                print("\nReservations:")
-                                print("=" * 60)
-                            for reservation in reservations:
-                                # Get weather data for the reservation
-                                weather_data = None
-                                try:
-                                    if reservation.club and reservation.club.club_details and 'coordinates' in reservation.club.club_details:
-                                        weather_response = weather_manager.get_weather(
-                                            lat=reservation.club.club_details['coordinates']['lat'],
-                                            lon=reservation.club.club_details['coordinates']['lon'],
-                                            start_time=reservation.start_time,
-                                            end_time=reservation.end_time
-                                        )
-                                        if weather_response:
-                                            weather_data = weather_response.data
-                                except Exception as e:
-                                    logger.warning(f"Failed to get weather data for reservation: {e}")
-
-                                # Format times
-                                start_str = reservation.start_time.strftime('%Y-%m-%d %H:%M')
-                                end_str = reservation.end_time.strftime('%H:%M')
-                                
-                                # Print reservation details
-                                print(f"{start_str} - {end_str}: {reservation.club.name}")
-                                if reservation.club.address:
-                                    print(f"Location: {reservation.club.address}")
-                                
-                                # Print players
-                                players_str = ", ".join([f"{p.name} (HCP: {p.handicap})" for p in reservation.players])
-                                print(f"Players: {players_str}")
-                                
-                                # Print weather if available
-                                if weather_data:
-                                    weather_str = reservation._format_weather_data(weather_data)
-                                    print(f"Weather: {weather_str}")
-                                
-                                print("-" * 60)
-                        
-                        # Print external events
-                        if external_events:
-                            if reservations:  # Add extra newline if we printed reservations
-                                print()
-                            if len(users) == 1:
-                                print("External Events:")
-                                print("=" * 60)
-                            for event in external_events:
-                                start = event.get("dtstart").dt
-                                end = event.get("dtend").dt if event.get("dtend") else None
-                                
-                                # Format times
-                                start_str = start.strftime('%Y-%m-%d %H:%M')
-                                end_str = end.strftime('%H:%M') if end else "?"
-                                
-                                # Print event details
-                                print(f"{start_str} - {end_str}: {event.get('summary', 'Unknown Event')}")
-                                if event.get("location"):
-                                    print(f"Location: {event.get('location')}")
-                                if event.get("description"):
-                                    print(f"Details: {event.get('description')}")
-                                print("-" * 60)
-                                
-                except Exception as e:
-                    logger.error(f"Failed to list reservations for user {username}: {e}", exc_info=True)
-                    success = False
-                    continue
-                    
-            return 0 if success else 1
-        
-        return 0
-        
-    except Exception as e:
-        logger.error(f"Failed to list {args.list_type}: {e}", exc_info=True)
-        return 1
-
-def check_command(args: argparse.Namespace, logger: logging.Logger, config: ConfigurationManager) -> int:
+def check_command(args: argparse.Namespace, logger: logging.Logger, config_manager: ConfigurationManager) -> int:
     """Check configuration and system health."""
     try:
+        # Get the AppConfig instance
+        config = config_manager.config
+        
         # Get list of users to check
-        users = [args.user] if args.user else config.users.keys()
+        users = [args.user] if args.user else list(config.users.keys())
         if not users:
             logger.error("No users configured")
             return 1
@@ -542,9 +369,9 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: Conf
         
         # Check directory permissions
         dirs_to_check = [
-            ('ICS', config.global_config.get('ics_dir', 'ics')),
-            ('Logs', config.global_config.get('logs_dir', 'logs')),
-            ('Config', config.global_config.get('config_dir', 'config'))
+            ('ICS', config.ics_dir),
+            ('Logs', config.get('logs_dir', 'logs')),
+            ('Config', config.config_dir)
         ]
         
         for dir_name, dir_path in dirs_to_check:
@@ -574,8 +401,8 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: Conf
         
         # Check weather cache
         try:
-            cache = WeatherResponseCache(os.path.join(config.global_config.get('data_dir', 'data'), 'weather_cache.db'))
-            if not cache.check_health():
+            cache = WeatherResponseCache(os.path.join(config.get('data_dir', 'data'), 'weather_cache.db'))
+            if not cache.clear():  # Use clear() instead of check_health()
                 logger.error("Weather cache health check failed")
                 success = False
         except Exception as e:
@@ -629,14 +456,17 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: Conf
                     
                     # Check weather services
                     weather_manager = WeatherManager(
-                        config.get_timezone(config.global_config['timezone']),
-                        config.get_timezone('UTC'),
-                        config.global_config
+                        ZoneInfo(config.timezone),
+                        ZoneInfo('UTC'),
+                        dict(config.global_config)  # Convert AppConfig to dict
                     )
                     for service_name, service in weather_manager.services.items():
                         try:
-                            service.check_availability()
-                            logger.info(f"Weather service {service_name} is available")
+                            if not service.is_healthy():  # Use is_healthy() instead of check_health()
+                                logger.error(f"Weather service {service_name} is not available")
+                                success = False
+                            else:
+                                logger.info(f"Weather service {service_name} is available")
                         except Exception as e:
                             logger.error(f"Weather service {service_name} check failed: {str(e)}")
                             success = False
@@ -648,10 +478,13 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: Conf
                             continue
                             
                         try:
-                            club = reservation_service.get_club(club_name)
+                            club = reservation_service.get_club(club_name)  # Use get_club() instead of get_club_instance()
                             if club:
-                                club.check_availability()
-                                logger.info(f"Club API for {club_name} is available")
+                                if not club.is_healthy():  # Use is_healthy() instead of check_health()
+                                    logger.error(f"Club API for {club_name} is not available")
+                                    success = False
+                                else:
+                                    logger.info(f"Club API for {club_name} is available")
                             else:
                                 logger.error(f"Club {club_name} not found in configuration")
                                 success = False
@@ -662,8 +495,11 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config: Conf
                     # Check external calendar services if configured
                     if calendar_service.external_event_service:
                         try:
-                            calendar_service.external_event_service.check_availability()
-                            logger.info("External calendar services are available")
+                            if not calendar_service.external_event_service.is_healthy():  # Use is_healthy() instead of check_health()
+                                logger.error("External calendar services are not available")
+                                success = False
+                            else:
+                                logger.info("External calendar services are available")
                         except Exception as e:
                             logger.error(f"External calendar services check failed: {str(e)}")
                             success = False
@@ -695,27 +531,29 @@ def cleanup_weather_cache(args):
         return 1
     return 0
 
-def get_command(args: argparse.Namespace, logger: logging.Logger, config: ConfigurationManager) -> int:
+def get_command(args: argparse.Namespace, logger: logging.Logger, config_manager: ConfigurationManager) -> int:
     """Get various types of data."""
     try:
         if not args.get_type:
             logger.error("Please specify what to get: 'weather'")
             return 1
             
+        # Get the AppConfig instance
+        config = config_manager.config
+            
         if args.get_type == 'weather':
             logger.info(f"Getting weather data for location ({args.lat}, {args.lon})")
             
             # Initialize weather manager
-            config_manager = ConfigurationManager()
             weather_manager = WeatherManager(
-                config_manager.get_timezone(config.global_config['timezone']),
-                config_manager.get_timezone('UTC'),
-                config.global_config
+                ZoneInfo(config.timezone),
+                ZoneInfo('UTC'),
+                dict(config.global_config)  # Convert AppConfig to dict
             )
             
             # Get weather data for the next 24 hours
             from datetime import datetime, timedelta
-            now = datetime.now(config_manager.get_timezone(config.global_config['timezone']))
+            now = datetime.now(ZoneInfo(config.timezone))
             end = now + timedelta(hours=24)
             
             try:
@@ -733,7 +571,7 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config: Config
                     print("\nWeather Forecast")
                     print("---------------")
                     for w in response.data:
-                        print(f"\nTime: {w.elaboration_time}")
+                        print(f"\nTime: {w.time}")
                         print(f"Temperature: {w.temperature}°C")
                         print(f"Precipitation: {w.precipitation} mm")
                         print(f"Wind: {w.wind_speed} m/s from {w.wind_direction}°")
@@ -741,8 +579,8 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config: Config
                             print(f"Precipitation probability: {w.precipitation_probability}%")
                         if w.thunder_probability is not None:
                             print(f"Thunder probability: {w.thunder_probability}%")
-                        if w.symbol:
-                            print(f"Summary: {w.symbol}")
+                        if w.weather_code:
+                            print(f"Summary: {w.weather_code}")
                     
                     if response.expires:
                         print(f"\nExpires: {response.expires}")
@@ -756,7 +594,7 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config: Config
         return 0
         
     except Exception as e:
-        logger.error(f"Failed to get data: {str(e)}")
+        logger.error(f"Failed to get data: {e}", exc_info=True)
         return 1
 
 def main() -> int:
@@ -771,36 +609,24 @@ def main() -> int:
         config = config_manager.load_config(dev_mode=args.dev, verbose=args.verbose)
         
         # Set up logging
-        setup_logging(config.global_config, dev_mode=args.dev, verbose=args.verbose, log_file=args.log_file)
+        setup_logging(config, dev_mode=args.dev, verbose=args.verbose, log_file=args.log_file)
         logger = get_logger(__name__)
         
         # Initialize error aggregator
         error_config = ErrorAggregationConfig(
             enabled=True,
-            report_interval=config.global_config.get('ERROR_REPORT_INTERVAL', 3600),
-            error_threshold=config.global_config.get('ERROR_THRESHOLD', 5),
-            time_threshold=config.global_config.get('ERROR_TIME_THRESHOLD', 300),  # 5 minutes
+            report_interval=int(str(config.global_config.get('ERROR_REPORT_INTERVAL', 3600))),
+            error_threshold=int(str(config.global_config.get('ERROR_THRESHOLD', 5))),
+            time_threshold=int(str(config.global_config.get('ERROR_TIME_THRESHOLD', 300))),  # 5 minutes
             categorize_by=['service', 'error_type']  # Categorize errors by service and type
         )
         init_error_aggregator(error_config)
         
         # Initialize services
         weather_manager = WeatherManager(
-            config_manager.get_timezone(config.global_config['timezone']),
-            config_manager.get_timezone('UTC'),
-            config.global_config
-        )
-        
-        # Create config object with timezone attributes
-        config_with_tz = config
-        config_with_tz.local_tz = config_manager.get_timezone(config.global_config['timezone'])
-        config_with_tz.utc_tz = config_manager.get_timezone('UTC')
-        config_with_tz.timezone = config_with_tz.local_tz
-        
-        calendar_service = CalendarService(
-            config_with_tz,
-            weather_manager,
-            dev_mode=args.dev
+            ZoneInfo(config.timezone),
+            ZoneInfo('UTC'),
+            dict(config.global_config)  # Convert AppConfig to dict
         )
         
         # Execute command
@@ -808,13 +634,13 @@ def main() -> int:
             parser.print_help()
             return 1
         elif args.command == 'process':
-            return process_command(args, logger, config, args.dev)
+            return process_command(args, logger, config_manager, args.dev)
         elif args.command == 'list':
-            return list_command(args, logger, config)
+            return list_command(args, logger, config_manager)
         elif args.command == 'check':
-            return check_command(args, logger, config)
+            return check_command(args, logger, config_manager)
         elif args.command == 'get':
-            return get_command(args, logger, config)
+            return get_command(args, logger, config_manager)
         else:
             logger.error(f"Unknown command: {args.command}")
             return 1

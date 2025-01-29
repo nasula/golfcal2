@@ -1,7 +1,7 @@
 """Mixins for service classes."""
 
 from datetime import datetime
-from typing import Optional, Any, Dict, Union, Set, cast
+from typing import Optional, Any, Dict, Union, Set, cast, List
 from zoneinfo import ZoneInfo
 from icalendar import Event, Calendar, vText  # type: ignore[import]
 
@@ -10,6 +10,7 @@ import icalendar  # type: ignore[import]
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.config.settings import AppConfig
 from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_types import WeatherData
 from golfcal2.models.reservation import Reservation
 
 class CalendarHandlerMixin:
@@ -62,12 +63,54 @@ class CalendarHandlerMixin:
         if hasattr(self, 'logger'):
             self.logger.debug(f"Added event to calendar: {event.decoded('summary')}")
     
+    def _get_weather_for_reservation(
+        self,
+        reservation: Reservation,
+        weather_service: Optional[WeatherManager] = None
+    ) -> Optional[List[WeatherData]]:
+        """Get weather data for a reservation."""
+        if not self.config or not hasattr(self.config, 'clubs'):
+            return None
+            
+        club_config = self.config.clubs.get(reservation.membership.club)
+        if not club_config or 'coordinates' not in club_config:
+            return None
+            
+        if weather_service is None:
+            return None
+            
+        try:
+            coords = club_config['coordinates']
+            if not coords or 'lat' not in coords or 'lon' not in coords:
+                return None
+                
+            # Get weather data using the reservation's times
+            weather_response = weather_service.get_weather(
+                lat=coords['lat'],
+                lon=coords['lon'],
+                start_time=reservation.start_time,
+                end_time=reservation.end_time
+            )
+            
+            if not weather_response:
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"No weather data found for club {reservation.membership.club}")
+                return None
+            
+            return weather_response.data
+            
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.error(f"Failed to get weather data: {e}")
+            return None
+
     def _add_weather_to_event(
         self,
         event: Event,
         club_id: str,
         start_time: datetime,
-        weather_service: Optional[WeatherManager] = None
+        weather_service: Optional[WeatherManager] = None,
+        existing_reservation: Optional[Reservation] = None
     ) -> None:
         """Add weather information to event."""
         if not self.config or not hasattr(self.config, 'clubs'):
@@ -88,21 +131,51 @@ class CalendarHandlerMixin:
                     self.logger.warning(f"No end time found for event {event.get('uid')}")
                 return
             
-            coords = club_config['coordinates']
-            if not coords or 'lat' not in coords or 'lon' not in coords:
-                return
+            # Use existing reservation if provided, otherwise create a temporary one
+            reservation = existing_reservation
+            if reservation is None:
+                # Create a temporary Reservation object for weather handling
+                from golfcal2.models.golf_club import ExternalGolfClub
+                from golfcal2.models.user import User, Membership
+                from golfcal2.models.reservation import Reservation
                 
-            # Get weather data
-            weather_data = weather_service.get_weather(
-                lat=coords['lat'],
-                lon=coords['lon'],
-                start_time=start_time,
-                end_time=end_time
-            )
+                # Create minimal club object with coordinates
+                club = ExternalGolfClub(
+                    name=club_config.get('name', 'Golf Club'),
+                    url="",
+                    coordinates=club_config['coordinates'],
+                    timezone=start_time.tzinfo.key if hasattr(start_time.tzinfo, 'key') else 'UTC',
+                    address=club_config.get('address', '')
+                )
+                
+                # Create minimal user and membership objects
+                membership = Membership(
+                    club=club.name,
+                    clubAbbreviation="EXT",
+                    duration={"hours": 0, "minutes": 0},
+                    auth_details={}
+                )
+                user = User(
+                    name="",
+                    email="",
+                    handicap=0,
+                    memberships=[membership]
+                )
+                
+                # Create temporary reservation for weather handling
+                reservation = Reservation(
+                    club=club,
+                    user=user,
+                    membership=membership,
+                    start_time=start_time,
+                    end_time=end_time,
+                    players=[],
+                    raw_data={}
+                )
             
+            # Get weather data using shared function
+            weather_data = self._get_weather_for_reservation(reservation, weather_service)
             if not weather_data:
-                if hasattr(self, 'logger'):
-                    self.logger.warning(f"No weather data found for club {club_id}")
                 return
             
             # Update event description with weather data
@@ -112,16 +185,12 @@ class CalendarHandlerMixin:
             else:
                 description = "Weather:\n"
             
-            # Format weather data
-            for forecast in weather_data:
-                description += (
-                    f"{forecast.time.strftime('%H:%M')} - "
-                    f"{forecast.temperature}°C, "
-                    f"{forecast.wind_speed}m/s"
-                )
-                if forecast.precipitation_probability is not None:
-                    description += f", {forecast.precipitation_probability}% rain"
-                description += "\n"
+            # Use get_event_description like WiseGolf0 events do
+            weather_description = reservation.get_event_description(weather_data)
+            if "\nWeather:\n" in weather_description:
+                description = weather_description
+            else:
+                description += weather_description
             
             event['description'] = description
             

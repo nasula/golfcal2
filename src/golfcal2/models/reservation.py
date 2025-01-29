@@ -309,54 +309,52 @@ class Reservation(LoggerMixin):
         
         normalized_data = sorted(normalized_data, key=lambda x: x.time)
         
-        # Check if we have any forecasts for the event date
-        event_date = self.start_time.date()
-        date_forecasts = [f for f in normalized_data if f.time.date() == event_date]
+        def get_block_end(forecasts: List[WeatherData], index: int, event_end: datetime) -> datetime:
+            """Get the end time of a forecast block."""
+            return forecasts[index + 1].time if index < len(forecasts) - 1 else forecasts[index].time + timedelta(hours=6)
         
-        if not date_forecasts:
-            self.debug(
-                "No forecasts found for event date",
-                event_date=event_date.isoformat(),
-                earliest_forecast=normalized_data[0].time.isoformat() if normalized_data else None,
-                latest_forecast=normalized_data[-1].time.isoformat() if normalized_data else None
-            )
-            return "No forecast available for this date"
-        
-        # Find first forecast before event start and last forecast before event end
-        start_idx = 0
-        for i, forecast in enumerate(date_forecasts):
-            if forecast.time > self.start_time:
-                start_idx = max(0, i - 1)
-                break
-        
-        end_idx = len(date_forecasts) - 1
-        for i, forecast in enumerate(date_forecasts):
-            if forecast.time > self.end_time:
-                end_idx = max(0, i - 1)
-                break
-        
-        filtered_data = date_forecasts[start_idx:end_idx + 1]
+        # Filter forecasts to only include those relevant to the event time
+        filtered_data = []
+        for i, curr in enumerate(normalized_data):
+            block_end = get_block_end(normalized_data, i, self.end_time)
+            
+            # Only include forecasts that overlap with the event start time
+            if curr.time <= self.end_time and block_end > self.start_time:
+                filtered_data.append(curr)
         
         self.debug(
             "Filtered forecasts",
-            event_date=event_date.isoformat(),
-            original_count=len(normalized_data),
-            date_forecast_count=len(date_forecasts),
+            original_count=len(data_list),
             filtered_count=len(filtered_data),
             filtered_times=[f.time.isoformat() for f in filtered_data]
         )
         
         if not filtered_data:
             return "No forecast available for event time"
+            
+        # Check if we have any forecasts that actually overlap with the event time
+        has_valid_forecast = False
+        for forecast in filtered_data:
+            block_end = get_block_end(filtered_data, filtered_data.index(forecast), self.end_time)
+            if forecast.time <= self.end_time and block_end > self.start_time:
+                has_valid_forecast = True
+                break
+                
+        if not has_valid_forecast:
+            return "No forecast available for event time"
         
         formatted_lines = []
         now = datetime.now(self.utc_tz)
         
-        for forecast in filtered_data:
-            # Format time string based on block duration
-            if forecast.block_duration.total_seconds() > 3600:
-                # For multi-hour blocks, show the full range
-                block_end = forecast.time + forecast.block_duration
+        for i, forecast in enumerate(filtered_data):
+            # Get block end time
+            block_end = get_block_end(filtered_data, i, self.end_time)
+            
+            # Calculate time difference in hours
+            time_diff = (block_end - forecast.time).total_seconds() / 3600
+            
+            # Format time string based on block size
+            if time_diff > 1:
                 time_str = f"{forecast.time.strftime('%H:%M')}-{block_end.strftime('%H:%M')}"
             else:
                 time_str = forecast.time.strftime('%H:%M')
@@ -381,7 +379,8 @@ class Reservation(LoggerMixin):
             self.debug(
                 "Formatted forecast line",
                 time=forecast.time.isoformat(),
-                block_duration=forecast.block_duration.total_seconds() / 3600,
+                block_end=block_end.isoformat(),
+                block_size_hours=time_diff,
                 temperature=forecast.temperature,
                 wind_speed=forecast.wind_speed,
                 weather_code=forecast.weather_code.value,
@@ -455,7 +454,8 @@ class Reservation(LoggerMixin):
                 local_tz = ZoneInfo(tz_manager.timezone_name)
                 utc_tz = ZoneInfo('UTC')
                 
-                weather_manager = WeatherManager(local_tz, utc_tz, None)
+                # Initialize WeatherManager with proper config
+                weather_manager = WeatherManager(local_tz, utc_tz, config)
                 
                 weather_data = weather_manager.get_weather(
                     lat=coordinates['lat'],
@@ -465,7 +465,7 @@ class Reservation(LoggerMixin):
                 )
                 
                 if weather_data:
-                    self.debug(f"Got weather data for {self.membership.club}: {len(weather_data)} forecasts")
+                    self.debug(f"Got weather data for {self.membership.club}: {len(weather_data.data)} forecasts")
                     output.append("\nWeather:")
                     output.append(self._format_weather_data(weather_data))
                 else:

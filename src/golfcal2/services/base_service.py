@@ -92,10 +92,13 @@ class WeatherService(EnhancedLoggerMixin):
             lon: Longitude
             start_time: Start time for forecast
             end_time: End time for forecast
-            club: Optional club name for caching
+            club: Optional club identifier for caching
             
         Returns:
-            WeatherResponse object or None if no data available
+            Optional[WeatherResponse]: Weather data if available
+            
+        Raises:
+            WeatherError: If weather service fails
         """
         try:
             # Validate inputs
@@ -121,12 +124,20 @@ class WeatherService(EnhancedLoggerMixin):
             # Fetch and parse data
             response_data = self._fetch_forecasts(lat, lon, start_time, end_time)
             if response_data is None:
-                return None
+                raise WeatherServiceUnavailable(
+                    f"No forecast data available from {self.service_type}",
+                    self.service_type
+                )
                 
             weather_response = self._parse_response(response_data)
+            if weather_response is None:
+                raise WeatherServiceUnavailable(
+                    f"Failed to parse forecast data from {self.service_type}",
+                    self.service_type
+                )
             
             # Cache the response if possible
-            if weather_response is not None and self.cache is not None and club is not None:
+            if self.cache is not None and club is not None:
                 expiry_time = self.get_expiry_time()
                 self.cache.store_response(
                     self.service_type,
@@ -144,7 +155,10 @@ class WeatherService(EnhancedLoggerMixin):
             raise
         except Exception as e:
             self.error("Error in get_weather", exc_info=e)
-            return None
+            raise WeatherServiceError(
+                f"Unexpected error in {self.service_type} weather service: {str(e)}",
+                self.service_type
+            )
             
     def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
         """Fetch forecasts from the weather service.

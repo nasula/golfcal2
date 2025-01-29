@@ -160,12 +160,52 @@ class ExternalEventBuilder(EventBuilder):
             if 'location' in event_data:
                 event.add('location', vText(self._get_location(event_data)))
             
-            # Build description
-            description = f"External golf event at {event_data['location']}"
+            # Create a temporary Reservation object to use its formatting methods
+            from golfcal2.models.golf_club import ExternalGolfClub
+            from golfcal2.models.user import User, Membership
+            from golfcal2.models.reservation import Reservation
             
-            # Add weather if coordinates available
+            # Get proper timezone name from config or use a default
+            timezone_name = self.config.global_config.get('timezone', 'Europe/Helsinki')
+            if hasattr(event_timezone, 'key'):
+                timezone_name = event_timezone.key
+            
+            club = ExternalGolfClub(
+                name=event_data['name'],
+                url="",
+                coordinates=event_data.get('coordinates'),
+                timezone=timezone_name,
+                address=event_data.get('address', event_data.get('location', ''))
+            )
+            
+            # Create minimal user and membership objects
+            membership = Membership(
+                club=club.name,
+                clubAbbreviation="EXT",
+                duration={"hours": 0, "minutes": 0},
+                auth_details={}
+            )
+            user = User(
+                name=person_name,
+                email="",
+                handicap=0,
+                memberships=[membership]
+            )
+            
+            # Create reservation object
+            reservation = Reservation(
+                club=club,
+                user=user,
+                membership=membership,
+                start_time=start,
+                end_time=end,
+                players=[],
+                raw_data=event_data
+            )
+            
+            # Get weather data if coordinates available
+            weather_data = None
             if 'coordinates' in event_data:
-                duration_minutes = int((end - start).total_seconds() / 60)
                 coords = event_data['coordinates']
                 location = Location(
                     id=str(coords['lat']) + ',' + str(coords['lon']),
@@ -173,15 +213,16 @@ class ExternalEventBuilder(EventBuilder):
                     latitude=coords['lat'],
                     longitude=coords['lon']
                 )
-                weather_data = self._get_weather(
+                weather_response = self._get_weather(
                     location,
                     start,
-                    start + timedelta(minutes=duration_minutes)
+                    end
                 )
-                if weather_data:
-                    description += "\n\nWeather:\n" + self._format_weather_data(weather_data.data)
+                if weather_response is not None:
+                    weather_data = weather_response.data
             
-            event.add('description', vText(description))
+            # Use reservation's description formatting
+            event.add('description', vText(reservation.get_event_description(weather_data)))
             return event
             
         except Exception as e:

@@ -86,9 +86,9 @@ class ExternalEventService(EnhancedLoggerMixin):
         # Reset processed events
         self._processed_events = []
         
-        # Calculate cutoff time (24 hours ago) with timezone
+        # Use current time as cutoff (instead of 24 hours ago)
         now = datetime.now(self.default_timezone)
-        cutoff_time = now - timedelta(hours=24)
+        cutoff_time = now
         self.logger.debug(f"Using cutoff time: {cutoff_time}")
         
         for event_data in self.load_events(dev_mode):
@@ -122,9 +122,9 @@ class ExternalEventService(EnhancedLoggerMixin):
         current_date = start_date
         
         while current_date <= end_date:
-            # Skip if older than 24 hours
-            if current_date < cutoff_time:
-                self.logger.debug(f"Skipping old recurring event: {current_date}")
+            # Skip if event is in the past
+            if current_date + timedelta(hours=3) < cutoff_time:  # Add 3 hours buffer to account for events that might be ongoing
+                self.logger.debug(f"Skipping past recurring event: {current_date}")
                 # Move to next occurrence
                 if event_data['repeat']['frequency'] == 'weekly':
                     current_date += timedelta(days=7)
@@ -196,9 +196,9 @@ class ExternalEventService(EnhancedLoggerMixin):
                     self.logger.error(f"Failed to parse event dates: {e}")
                     return None
             
-            # Skip if older than 24 hours
-            if start < cutoff_time:
-                self.logger.debug(f"Skipping old external event: {start}")
+            # Skip if event is in the past
+            if start + timedelta(hours=3) < cutoff_time:  # Add 3 hours buffer to account for events that might be ongoing
+                self.logger.debug(f"Skipping past external event: {start}")
                 return None
             
             # Create event using builder

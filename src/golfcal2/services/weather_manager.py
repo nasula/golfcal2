@@ -119,29 +119,46 @@ class WeatherManager(EnhancedLoggerMixin):
             return None
             
         errors: List[Exception] = []
-        for service in self.services.values():
-            if service is None:
-                continue
+        
+        # Select primary service based on location
+        if 55 <= lat <= 72 and 4 <= lon <= 32:  # Nordic region
+            primary_service = 'met'
+            fallback_services = ['openmeteo', 'openweather']
+        else:
+            primary_service = 'openmeteo'
+            fallback_services = ['openweather']
+            
+        self.debug(
+            "Selected weather service",
+            primary=primary_service,
+            fallbacks=fallback_services,
+            coords=(lat, lon)
+        )
+        
+        # Try primary service
+        service = self.services.get(primary_service)
+        if service:
             try:
                 response = service.get_weather(lat, lon, start_time, end_time, club)
-                if response is not None:
+                if response:
                     return response
-            except WeatherServiceUnavailable as e:
-                self.warning(f"Service {service.service_type} unavailable", exc_info=e)
-                errors.append(e)
-            except WeatherServiceTimeout as e:
-                self.warning(f"Service {service.service_type} timeout", exc_info=e)
-                errors.append(e)
-            except WeatherServiceRateLimited as e:
-                self.warning(f"Service {service.service_type} rate limited", exc_info=e)
-                errors.append(e)
             except WeatherError as e:
-                self.error(f"Service {service.service_type} error", exc_info=e)
+                self.warning(f"Primary service {primary_service} failed", exc_info=e)
                 errors.append(e)
-            except Exception as e:
-                self.error(f"Unexpected error in service {service.service_type}", exc_info=e)
-                errors.append(e)
-                
+        
+        # Try fallback services
+        for service_name in fallback_services:
+            service = self.services.get(service_name)
+            if service:
+                try:
+                    response = service.get_weather(lat, lon, start_time, end_time, club)
+                    if response:
+                        return response
+                except WeatherError as e:
+                    self.warning(f"Fallback service {service_name} failed", exc_info=e)
+                    errors.append(e)
+        
+        # All services failed
         if errors:
             self.error(
                 "All weather services failed",
@@ -149,7 +166,9 @@ class WeatherManager(EnhancedLoggerMixin):
                 coords=(lat, lon),
                 time_range=f"{start_time.isoformat()} to {end_time.isoformat()}"
             )
-            
+            for e in errors:
+                self.error(f"Service error: {str(e)}", exc_info=e)
+                
         return None
 
     def _get_services_for_location(
@@ -192,4 +211,24 @@ class WeatherManager(EnhancedLoggerMixin):
             
         except Exception as e:
             self.error("Failed to get services for location", exc_info=e)
-            return [] 
+            return []
+
+    def clear_cache(self) -> None:
+        """Clear all cached weather responses."""
+        self.response_cache.clear()
+    
+    def list_cache(self) -> List[Dict[str, Any]]:
+        """List all cached weather responses.
+        
+        Returns:
+            List of cached responses with metadata
+        """
+        return self.response_cache.list_entries()
+    
+    def cleanup_cache(self) -> int:
+        """Clean up expired cache entries.
+        
+        Returns:
+            Number of entries removed
+        """
+        return self.response_cache.cleanup_expired() 

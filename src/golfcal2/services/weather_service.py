@@ -2,7 +2,7 @@
 
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
 
 from golfcal2.services.weather_types import (
@@ -209,3 +209,24 @@ class WeatherManager(EnhancedLoggerMixin):
                     aggregate_error(str(e), "weather_manager", str(e.__traceback__))
         
         return None
+
+    def list_cache(self) -> List[Dict[str, Any]]:
+        """List all cached weather responses.
+        
+        Returns:
+            List of dictionaries containing cache entry details
+        """
+        return self.response_cache.list_entries()
+
+    def clear_cache(self) -> None:
+        """Clear all cached weather responses."""
+        self.response_cache.clear()
+
+    def cleanup_cache(self) -> int:
+        """Clean up expired cache entries.
+        
+        Returns:
+            Number of entries removed
+        """
+        self.response_cache.clear_expired()
+        return 0  # TODO: Return actual number of entries removed
