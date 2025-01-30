@@ -9,7 +9,7 @@ from icalendar import Event, vText, vDatetime  # type: ignore[import]
 
 from golfcal2.models.reservation import Reservation
 from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.services.weather_service import WeatherService, WeatherManager
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.config.settings import AppConfig
 from golfcal2.services.weather_types import (
     WeatherResponse, WeatherData, Location, WeatherCode
@@ -19,7 +19,7 @@ from golfcal2.services.weather_formatter import WeatherFormatter
 class EventBuilder(ABC, LoggerMixin):
     """Base class for event builders."""
     
-    def __init__(self, weather_service: WeatherManager, config: AppConfig):
+    def __init__(self, weather_service: WeatherService, config: AppConfig):
         """Initialize builder."""
         super().__init__()
         self.weather_service = weather_service
@@ -71,7 +71,7 @@ class EventBuilder(ABC, LoggerMixin):
 class ReservationEventBuilder(EventBuilder):
     """Event builder for golf reservations."""
     
-    def __init__(self, weather_service: WeatherManager, config: AppConfig):
+    def __init__(self, weather_service: WeatherService, config: AppConfig):
         """Initialize builder."""
         super().__init__(weather_service, config)
     

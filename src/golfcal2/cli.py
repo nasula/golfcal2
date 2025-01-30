@@ -10,8 +10,10 @@ from zoneinfo import ZoneInfo
 import os
 from pathlib import Path
 import json
+from datetime import datetime
+from icalendar import Calendar  # type: ignore
 
-from golfcal2.config.settings import ConfigurationManager
+from golfcal2.config.settings import AppConfig, ConfigurationManager
 from golfcal2.utils.logging_utils import get_logger
 from golfcal2.config.logging import setup_logging
 from golfcal2.services.calendar_service import CalendarService
@@ -19,7 +21,7 @@ from golfcal2.services.reservation_service import ReservationService
 from golfcal2.models.user import User
 from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
 from golfcal2.services.external_event_service import ExternalEventService
-from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_database import WeatherResponseCache
 
 def create_parser() -> argparse.ArgumentParser:
@@ -274,18 +276,31 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, config_man
                 calendar_service = CalendarService(config)
                 
                 # Get reservations
-                calendar, reservations = reservation_service.process_user(username, dict(user_config))
+                calendar = Calendar()
+                calendar.add('prodid', '-//GolfCal2//EN')
+                calendar.add('version', '2.0')
+                calendar.add('calscale', 'GREGORIAN')
+                calendar.add('method', 'PUBLISH')
+                
+                reservations = reservation_service.list_reservations()
                 if not reservations:
                     logger.info(f"No reservations found for user {username}")
-                else:
+                elif isinstance(reservations, list):
                     logger.info(f"Found {len(reservations)} reservations for user {username}")
+                else:
+                    logger.info(f"Found 1 reservation for user {username}")
                 
                 # If listing reservations, print them out
                 if getattr(args, 'list_type', None) == 'reservations':
                     # Get external events too
                     external_events = calendar_service.external_event_service.process_events(username, dev_mode=args.dev)
                     
-                    # Add external events to calendar
+                    # Convert reservations to list if needed
+                    events_list = [reservations] if not isinstance(reservations, list) else reservations
+                    
+                    # Add all events to calendar
+                    for reservation in events_list:
+                        calendar_service.add_reservation_to_calendar(calendar, reservation)
                     for event in external_events:
                         calendar.add_component(event)
                     
@@ -293,7 +308,7 @@ def process_command(args: argparse.Namespace, logger: logging.Logger, config_man
                         # Convert all events to JSON-serializable format
                         data = {
                             username: {
-                                "events": [event.format_for_display() for event in reservations + external_events]
+                                "events": [event.format_for_display() for event in events_list + external_events]
                             }
                         }
                         print(json.dumps(data, indent=2))
@@ -455,12 +470,13 @@ def check_command(args: argparse.Namespace, logger: logging.Logger, config_manag
                     logger.info(f"Performing full configuration check for user {username}")
                     
                     # Check weather services
-                    weather_manager = WeatherManager(
-                        ZoneInfo(config.timezone),
-                        ZoneInfo('UTC'),
-                        dict(config.global_config)  # Convert AppConfig to dict
+                    weather_service = WeatherService(
+                        config={
+                            **dict(config.global_config),
+                            'dev_mode': args.dev
+                        }
                     )
-                    for service_name, service in weather_manager.services.items():
+                    for service_name, service in weather_service.services.items():
                         try:
                             if not service.is_healthy():  # Use is_healthy() instead of check_health()
                                 logger.error(f"Weather service {service_name} is not available")
@@ -545,10 +561,11 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config_manager
             logger.info(f"Getting weather data for location ({args.lat}, {args.lon})")
             
             # Initialize weather manager
-            weather_manager = WeatherManager(
-                ZoneInfo(config.timezone),
-                ZoneInfo('UTC'),
-                dict(config.global_config)  # Convert AppConfig to dict
+            weather_service = WeatherService(
+                config={
+                    **dict(config.global_config),
+                    'dev_mode': args.dev
+                }
             )
             
             # Get weather data for the next 24 hours
@@ -557,7 +574,7 @@ def get_command(args: argparse.Namespace, logger: logging.Logger, config_manager
             end = now + timedelta(hours=24)
             
             try:
-                response = weather_manager.get_weather(args.lat, args.lon, now, end)
+                response = weather_service.get_weather(args.lat, args.lon, now, end)
                 if not response or not response.data:
                     logger.error("No weather data found")
                     return 1
@@ -623,10 +640,11 @@ def main() -> int:
         init_error_aggregator(error_config)
         
         # Initialize services
-        weather_manager = WeatherManager(
-            ZoneInfo(config.timezone),
-            ZoneInfo('UTC'),
-            dict(config.global_config)  # Convert AppConfig to dict
+        weather_service = WeatherService(
+            config={
+                **dict(config.global_config),
+                'dev_mode': args.dev
+            }
         )
         
         # Execute command

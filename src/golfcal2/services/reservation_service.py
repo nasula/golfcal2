@@ -27,13 +27,15 @@ from golfcal2.exceptions import (
     handle_errors
 )
 from golfcal2.config.error_aggregator import aggregate_error
-from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_formatter import WeatherFormatter
-from golfcal2.services.reservation_factory import ReservationFactory
+from golfcal2.services.reservation_factory import ReservationFactory, ReservationContext
+from golfcal2.services.met_weather_strategy import MetWeatherStrategy
+from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
 from golfcal2.utils.api_handler import APIResponseValidator
 
 # Lazy load weather service
-_weather_manager: Optional[WeatherManager] = None
+_weather_service: Optional[WeatherService] = None
 
 @runtime_checkable
 class AppConfigProtocol(GolfClubConfigProtocol, Protocol):
@@ -48,59 +50,158 @@ def raise_error(msg: str = "") -> Never:
     raise APIError(msg)
 
 class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
-    """Service for handling reservations."""
+    """Service for managing golf reservations."""
     
     def __init__(self, username: str, config: AppConfig):
-        """Initialize reservation service.
-        
-        Args:
-            username: Name of the user to process
-            config: Application configuration
-        """
-        # Initialize logger first
-        EnhancedLoggerMixin.__init__(self)
-        # Then initialize calendar handler with config
-        CalendarHandlerMixin.__init__(self, config)
-        
-        # Validate config
-        if not isinstance(config, AppConfig):
-            raise ValueError("Config must be an instance of AppConfig")
-        
-        # Store username and config
+        """Initialize service."""
+        super().__init__()
         self.username = username
-        self.config: AppConfigProtocol = config  # type: ignore
-        self.dev_mode = config.global_config.get('dev_mode', False)
+        self.config = config
         
         # Get user configuration
-        if not hasattr(config, 'users'):
-            raise ValueError("Config missing 'users' attribute")
+        if username not in config.users:
+            raise APIError(f"User {username} not found in configuration")
+        self.user_config = config.users[username]
         
-        self.user_config = self.config.users.get(username)
-        if not self.user_config:
-            raise ValueError(f"No configuration found for user {username}")
+        # Initialize timezone
+        self.timezone = ZoneInfo(config.timezone)
         
-        # Initialize timezone settings
-        if not hasattr(config, 'global_config'):
-            raise ValueError("Config missing 'global_config' attribute")
-            
-        self.timezone = ZoneInfo(config.global_config.get('timezone', 'UTC'))
-        self.utc_tz = ZoneInfo('UTC')
+        # Create user object
+        self.user = User(
+            name=username,
+            email=self.user_config.get('email', ''),
+            handicap=self.user_config.get('handicap', 0),
+            memberships=[
+                Membership(
+                    club=membership['club'],
+                    clubAbbreviation=membership.get('clubAbbreviation', membership['club']),
+                    duration=membership.get('duration', {'hours': 4}),
+                    auth_details=membership.get('auth_details', {})
+                )
+                for membership in self.user_config.get('memberships', [])
+            ]
+        )
         
         # Initialize services
-        self._weather_service = WeatherManager(self.timezone, self.utc_tz, dict(config.global_config))
         self.auth_service = AuthService(self.user_config.get('auth_details', {}))
+        self.weather_service = WeatherService(
+            config=config
+        )
         
         # Set logging context
         self.set_log_context(user=username)
-        
-        # Initialize event builder
-        from golfcal2.services.calendar.builders.event_builder import ReservationEventBuilder
-        self.event_builder = ReservationEventBuilder(self.weather_service, config)
     
-    @property
-    def weather_service(self) -> WeatherManager:
-        """Get the weather service."""
-        return self._weather_service
+    def _init_weather_service(self) -> None:
+        """Initialize weather service with strategies."""
+        self.weather_service.register_strategy('met', MetWeatherStrategy)
+        self.weather_service.register_strategy('openmeteo', OpenMeteoStrategy)
+    
+    def process_user(
+        self,
+        user_name: str,
+        user_config: Dict[str, Any],
+        past_days: int = 1
+    ) -> List[Reservation]:
+        """Process user's reservations."""
+        try:
+            # Create user object
+            user = User(
+                name=user_name,
+                email=user_config.get('email', ''),
+                handicap=user_config.get('handicap', 0),
+                memberships=[
+                    Membership(
+                        club=membership['club'],
+                        clubAbbreviation=membership.get('clubAbbreviation', membership['club']),
+                        duration=membership.get('duration', {'hours': 4}),
+                        auth_details=membership.get('auth_details', {})
+                    )
+                    for membership in user_config.get('memberships', [])
+                ]
+            )
+            
+            reservations: List[Reservation] = []
+            cutoff_time = datetime.now(ZoneInfo(self.config.get('timezone', 'UTC'))) - timedelta(days=past_days)
+            
+            # Process each membership
+            for membership in user.memberships:
+                try:
+                    # Get club configuration
+                    club_details = self.config.clubs[membership.club]
+                    club = GolfClubFactory.create_club(
+                        club_details,
+                        membership,
+                        self.auth_service,
+                        self.config
+                    )
+                    if not club:
+                        self.error(f"Failed to create club for {membership.club}")
+                        continue
+                    
+                    # Create reservation context
+                    context = ReservationContext(
+                        club=club,
+                        user=user,
+                        membership=membership
+                    )
+                    
+                    # Fetch and process reservations
+                    raw_reservations = club.fetch_reservations(membership)
+                    for raw_reservation in raw_reservations:
+                        try:
+                            # Create reservation using factory
+                            reservation = ReservationFactory.create_reservation(
+                                club_details['type'],
+                                raw_reservation,
+                                context
+                            )
+                            
+                            # Skip if older than cutoff
+                            if reservation.start_time < cutoff_time:
+                                self.debug(f"Skipping old reservation: {reservation.start_time}")
+                                continue
+                            
+                            # Add weather data if available
+                            if reservation.start_time and club_details.get('coordinates'):
+                                coords = club_details['coordinates']
+                                weather_data = self.weather_service.get_weather(
+                                    lat=coords['lat'],
+                                    lon=coords['lon'],
+                                    start_time=reservation.start_time,
+                                    end_time=reservation.end_time
+                                )
+                                if weather_data:
+                                    reservation.weather_summary = weather_data.format_forecast(
+                                        start_time=reservation.start_time,
+                                        end_time=reservation.end_time
+                                    )
+                            
+                            reservations.append(reservation)
+                            
+                        except Exception as e:
+                            self.error(f"Failed to process reservation: {e}", exc_info=True)
+                            aggregate_error(str(e), "reservation_service", str(e.__traceback__))
+                            continue
+                    
+                except Exception as e:
+                    self.error(f"Failed to process club {membership.club}: {e}", exc_info=True)
+                    aggregate_error(str(e), "reservation_service", str(e.__traceback__))
+                    continue
+            
+            return sorted(reservations, key=lambda r: r.start_time)
+            
+        except Exception as e:
+            self.error(f"Failed to process user {user_name}: {e}", exc_info=True)
+            aggregate_error(str(e), "reservation_service", str(e.__traceback__))
+            return []
+    
+    def clear_weather_cache(self) -> None:
+        """Clear weather cache."""
+        self.weather_service.clear_cache()
+    
+    def list_weather_cache(self) -> List[Dict[str, Any]]:
+        """List weather cache entries."""
+        return self.weather_service.list_cache()
 
     def check_config(self) -> bool:
         """Check if the service configuration is valid.
@@ -173,133 +274,6 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                     f"Request failed: {str(e)}",
                     response=getattr(e, 'response', None)
                 )
-
-    def process_user(
-        self,
-        user_name: str,
-        user_config: Dict[str, Any],
-        past_days: int = 1
-    ) -> Tuple[Calendar, List[Reservation]]:
-        """Process a user's reservations."""
-        try:
-            self.debug(f"Processing reservations for user: {user_name}")
-            
-            # Create calendar
-            cal = Calendar()
-            all_reservations: List[Reservation] = []
-            
-            # Create user object
-            user = User(
-                name=user_name,
-                email=user_config.get('email'),
-                phone=user_config.get('phone'),
-                memberships=[
-                    Membership(
-                        club=m['club'],
-                        clubAbbreviation=self.config.clubs[m['club']].get('clubAbbreviation'),
-                        duration=m.get('duration', self.config.global_config['default_durations']['regular']),
-                        auth_details=m.get('auth_details', {})
-                    )
-                    for m in user_config.get('memberships', [])
-                ]
-            )
-            
-            # Calculate cutoff time
-            cutoff_time = datetime.now(self.timezone) - timedelta(days=past_days)
-            
-            # Process each membership
-            for membership in user.memberships:
-                try:
-                    self.debug(f"Processing club: {membership.club}")
-                    
-                    if membership.club not in self.config.clubs:
-                        error = APIError(
-                            f"Club {membership.club} not found in configuration",
-                            ErrorCode.CONFIG_MISSING,
-                            {"club": membership.club, "user": user_name}
-                        )
-                        aggregate_error(str(error), "reservation", None)
-                        continue
-
-                    club_details = self.config.clubs[membership.club]
-                    club = GolfClubFactory.create_club(club_details, membership, self.auth_service, self.config)
-                    if not club:
-                        error = APIError(
-                            f"Unsupported club type: {club_details['type']}",
-                            ErrorCode.CONFIG_INVALID,
-                            {"club_type": club_details['type'], "club": membership.club}
-                        )
-                        aggregate_error(str(error), "reservation", None)
-                        continue
-                    
-                    raw_reservations = club.fetch_reservations(membership)
-                    self.debug(f"Found {len(raw_reservations)} reservations for {club.name}")
-                    
-                    for raw_reservation in raw_reservations:
-                        try:
-                            processor = ReservationFactory.get_processor(club_details['type'])
-                            reservation = processor.create_reservation(
-                                raw_reservation,
-                                user,
-                                club,
-                                membership
-                            )
-                            
-                            # Add weather data if available
-                            if reservation.start_time and reservation.location:
-                                try:
-                                    weather_data = self.weather_service.get_weather(
-                                        start_time=reservation.start_time,
-                                        end_time=reservation.end_time,
-                                        lat=club_details.get('coordinates', {}).get('lat'),
-                                        lon=club_details.get('coordinates', {}).get('lon')
-                                    )
-                                    if weather_data:
-                                        reservation.weather_summary = WeatherFormatter.format_forecast(
-                                            weather_data,
-                                            start_time=reservation.start_time,
-                                            end_time=reservation.end_time
-                                        )
-                                except Exception as e:
-                                    self.error(f"Error getting weather data: {e}")
-                            
-                            # Add to calendar and list if within time range
-                            if (
-                                reservation.start_time
-                                and reservation.start_time >= cutoff_time - timedelta(days=past_days)
-                            ):
-                                self._add_reservation_to_calendar(reservation, cal)
-                                all_reservations.append(reservation)
-                                
-                        except Exception as e:
-                            self.error(f"Error processing reservation: {str(e)}")
-                            aggregate_error(str(e), "reservation", None)
-                            continue
-                            
-                except Exception as e:
-                    self.error(f"Error processing membership {membership.club}: {str(e)}")
-                    aggregate_error(str(e), "reservation", None)
-                    continue
-            
-            self.debug(f"Processed {len(all_reservations)} total reservations for {user_name}")
-            return cal, all_reservations
-            
-        except APIError as e:
-            self.error(f"API Error processing {user_name}: {str(e)}")
-            aggregate_error(
-                f"Reservation error for {user_name}",
-                "reservation",
-                str(e)
-            )
-            raise
-        except Exception as e:
-            self.error(f"Unexpected error processing {user_name}: {str(e)}")
-            aggregate_error(
-                f"Unexpected error for {user_name}",
-                "reservation",
-                str(e)
-            )
-            raise
 
     def _add_reservation_to_calendar(self, reservation: Reservation, cal: Calendar) -> None:
         """Add a reservation to the calendar."""
@@ -389,7 +363,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             
             try:
                 self.debug("Calling process_user")
-                _, reservations = self.process_user(self.username, user_config, days)
+                reservations = self.process_user(self.username, user_config, days)
                 self.debug(f"Got {len(reservations)} reservations from process_user")
             except Exception as e:
                 self.error(f"Error in process_user: {e}")
@@ -521,14 +495,6 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             courses = {membership.club for membership in user.memberships}
             return sorted(courses)
 
-    def clear_weather_cache(self) -> None:
-        """Clear all cached weather responses."""
-        self.weather_service.clear_cache()
-    
-    def list_weather_cache(self) -> List[Dict[str, Any]]:
-        """List all cached weather responses."""
-        return self.weather_service.list_cache()
-    
     def cleanup_weather_cache(self) -> int:
         """Clean up expired weather cache entries."""
         return self.weather_service.cleanup_cache()

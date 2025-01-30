@@ -76,7 +76,8 @@ class WeatherFormatter:
             # Build weather line with optional precipitation and thunder probability
             parts = [time_str, symbol, f"{forecast.temperature:.1f}°C", f"{forecast.wind_speed:.1f}m/s"]
             
-            if forecast.precipitation_probability is not None and forecast.precipitation_probability > 5:
+            # Show precipitation info if there's any chance of rain or actual precipitation
+            if forecast.precipitation_probability is not None and forecast.precipitation_probability > 0:
                 if forecast.precipitation and forecast.precipitation > 0:
                     parts.append(f"💧{forecast.precipitation_probability:.0f}% {forecast.precipitation:.1f}mm")
                 else:

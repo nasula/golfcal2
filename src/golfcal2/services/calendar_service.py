@@ -19,7 +19,7 @@ from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.config.settings import AppConfig
 from golfcal2.services.auth_service import AuthService
 from golfcal2.services.mixins import CalendarHandlerMixin
-from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.external_event_service import ExternalEventService
 from golfcal2.services.calendar.builders import (
     CalendarBuilder,
@@ -56,44 +56,17 @@ def raise_error(msg: str = "") -> Never:
 class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
     """Service for managing calendar operations."""
     
-    def __init__(self, config: AppConfig, weather_service: Optional[WeatherManager] = None, dev_mode: bool = False):
-        """Initialize calendar service.
-        
-        Args:
-            config: Application configuration
-            weather_service: Optional pre-initialized weather service
-            dev_mode: Whether to run in development mode
-            
-        Raises:
-            CalendarError: If initialization fails
-        """
+    def __init__(
+        self,
+        config: ConfigProtocol,
+        weather_service: Optional[WeatherService] = None,
+        dev_mode: bool = False
+    ):
+        """Initialize service."""
         super().__init__()
-        if not isinstance(config, AppConfig):
-            raise CalendarError("Config must be an instance of AppConfig")
-        
-        # Validate required config attributes
-        if not hasattr(config, 'ics_dir'):
-            raise CalendarError("Config missing required attribute: ics_dir")
-        if not hasattr(config, 'clubs'):
-            raise CalendarError("Config missing required attribute: clubs")
-            
         self.config = config
         self.dev_mode = dev_mode
-        
-        # Initialize timezone settings
-        if hasattr(config, 'timezone'):
-            if isinstance(config.timezone, ZoneInfo):
-                self.local_tz: ZoneInfo = config.timezone
-            else:
-                try:
-                    self.local_tz = ZoneInfo(str(config.timezone))
-                except Exception as e:
-                    raise CalendarError(f"Invalid timezone {config.timezone}: {e}")
-        else:
-            self.logger.warning("No timezone configured, using UTC")
-            self.local_tz = ZoneInfo('UTC')
-        
-        # Initialize seen UIDs set
+        self.local_tz = ZoneInfo(config.timezone)
         self.seen_uids: Set[str] = set()
         
         # Initialize services
@@ -104,10 +77,8 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             lambda: raise_error("Failed to initialize calendar service")
         ):
             # Use provided weather service or create new one
-            self.weather_service = weather_service or WeatherManager(
-                self.local_tz,
-                self.local_tz,
-                self.config.__dict__
+            self.weather_service = weather_service or WeatherService(
+                config=self.config.__dict__
             )
             
             # Initialize external event service
@@ -317,3 +288,37 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         if club_id in self.config.clubs:
             return self.config.clubs[club_id].get('address') or ''
         return ''
+
+    def add_reservation_to_calendar(self, calendar: Calendar, reservation: Reservation) -> None:
+        """Add a reservation to the calendar."""
+        with handle_errors(
+            CalendarEventError,
+            "calendar",
+            f"add reservation {reservation.uid}",
+            lambda: raise_error("Failed to add reservation")
+        ):
+            # Get club configuration
+            club_config = cast(Dict[str, Any], self.config.clubs).get(reservation.membership.club) or \
+                         cast(Dict[str, Any], self.config.clubs).get(reservation.club.name)
+            if not club_config:
+                self.warning(f"No club config found for {reservation.membership.club} or {reservation.club.name}")
+                club_config = {}
+            
+            # Create event
+            event = self.reservation_builder.build(reservation, club_config)
+            if event:
+                self._add_event_to_calendar(event, calendar)
+                self.seen_uids.add(reservation.uid)
+                self.debug(f"Added reservation event: {event.get('summary')}")
+
+    def _add_event_to_calendar(self, event: Event, calendar: Calendar) -> None:
+        """Add an event to the calendar."""
+        # Check for duplicate UIDs
+        uid = event.get('uid')
+        if uid and uid in self.seen_uids:
+            self.debug(f"Skipping duplicate event with UID: {uid}")
+            return
+        
+        calendar.add_component(event)
+        if uid:
+            self.seen_uids.add(uid)

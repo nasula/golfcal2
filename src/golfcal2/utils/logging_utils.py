@@ -100,18 +100,36 @@ class EnhancedLoggerMixin:
         """Log a warning message with context."""
         self.logger.warning(self._format_message(msg, **kwargs))
     
-    def error(self, msg: str, exc_info: Optional[Exception] = None, **kwargs: Any) -> None:
+    def error(self, msg: str, exc_info: Any = None, **kwargs: Any) -> None:
         """Log an error message with context and optional exception info."""
         if exc_info:
-            kwargs['error'] = str(exc_info)
-            kwargs['traceback'] = "".join(traceback.format_tb(exc_info.__traceback__))
+            if isinstance(exc_info, bool):
+                # If exc_info is True, get the current exception info
+                import sys
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                if exc_traceback:
+                    kwargs['traceback'] = "".join(traceback.format_tb(exc_traceback))
+                if exc_value:
+                    kwargs['error'] = str(exc_value)
+            elif isinstance(exc_info, Exception):
+                kwargs['error'] = str(exc_info)
+                kwargs['traceback'] = "".join(traceback.format_tb(exc_info.__traceback__))
         self.logger.error(self._format_message(msg, **kwargs))
     
-    def critical(self, msg: str, exc_info: Optional[Exception] = None, **kwargs: Any) -> None:
+    def critical(self, msg: str, exc_info: Any = None, **kwargs: Any) -> None:
         """Log a critical message with context and optional exception info."""
         if exc_info:
-            kwargs['error'] = str(exc_info)
-            kwargs['traceback'] = "".join(traceback.format_tb(exc_info.__traceback__))
+            if isinstance(exc_info, bool):
+                # If exc_info is True, get the current exception info
+                import sys
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                if exc_traceback:
+                    kwargs['traceback'] = "".join(traceback.format_tb(exc_traceback))
+                if exc_value:
+                    kwargs['error'] = str(exc_value)
+            elif isinstance(exc_info, Exception):
+                kwargs['error'] = str(exc_info)
+                kwargs['traceback'] = "".join(traceback.format_tb(exc_info.__traceback__))
         self.logger.critical(self._format_message(msg, **kwargs))
 
 # Legacy mixin for backward compatibility

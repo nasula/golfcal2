@@ -11,14 +11,14 @@ from pathlib import Path
 
 from icalendar import Event
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
-from golfcal2.services.weather_service import WeatherService, WeatherManager
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.calendar.builders import ExternalEventBuilder
 from golfcal2.config.settings import AppConfig
 
 class ExternalEventService(EnhancedLoggerMixin):
     """Service for handling external golf events."""
     
-    def __init__(self, weather_service: WeatherManager, config: AppConfig):
+    def __init__(self, weather_service: WeatherService, config: AppConfig):
         """Initialize service."""
         super().__init__()
         self.weather_service = weather_service

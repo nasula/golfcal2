@@ -28,9 +28,19 @@ def get_weather_symbol(code: str) -> str:
         'heavysnow': '❄️',
         'lightsleet': '🌨️',
         'heavysleet': '🌨️',
-        'fog': '🌫️'
+        'fog': '🌫️',
+        'LIGHTRAIN': '🌦️',
+        'RAIN': '🌧️',
+        'HEAVYRAIN': '⛈️',
+        'RAINSHOWERS_DAY': '🌦️',
+        'RAINSHOWERS_NIGHT': '🌦️',
+        'HEAVYRAINSHOWERS_DAY': '⛈️',
+        'HEAVYRAINSHOWERS_NIGHT': '⛈️',
+        'RAINANDTHUNDER': '⛈️',
+        'HEAVYRAINANDTHUNDER': '⛈️',
+        'THUNDERSTORM': '⛈️'
     }
-    return symbol_map.get(code, '☁️')  # Default to cloudy if code not found
+    return symbol_map.get(code.lower(), '☁️')  # Default to cloudy if code not found, convert to lowercase for matching
 
 def _get_symbol_severity(symbol: str) -> int:
     """Get severity level for a weather symbol for sorting."""

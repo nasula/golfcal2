@@ -13,7 +13,7 @@ from golfcal2.config.settings import ConfigurationManager
 from golfcal2.utils.logging_utils import get_logger
 from golfcal2.config.logging import setup_logging
 from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
-from golfcal2.services import WeatherManager, CalendarService, ExternalEventService
+from golfcal2.services import WeatherService, CalendarService, ExternalEventService
 from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
 from golfcal2.models.user import User
 
@@ -165,15 +165,13 @@ def main():
         logger.info("Starting GolfCal2 service")
         
         # Initialize services and state
-        weather_manager = WeatherManager(
-            config_manager.get_timezone(config.global_config['timezone']),
-            config_manager.get_timezone('UTC'),
-            config.global_config
+        weather_service = WeatherService(
+            config=config.global_config
         )
         
         calendar_service = CalendarService(
             config.global_config,
-            weather_manager
+            weather_service
         )
         
         service_state = ServiceState()

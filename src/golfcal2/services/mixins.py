@@ -9,7 +9,7 @@ from icalendar import Event, Calendar, vText  # type: ignore[import]
 import icalendar  # type: ignore[import]
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.config.settings import AppConfig
-from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData
 from golfcal2.models.reservation import Reservation
 
@@ -66,7 +66,7 @@ class CalendarHandlerMixin:
     def _get_weather_for_reservation(
         self,
         reservation: Reservation,
-        weather_service: Optional[WeatherManager] = None
+        weather_service: Optional[WeatherService] = None
     ) -> Optional[List[WeatherData]]:
         """Get weather data for a reservation."""
         if not self.config or not hasattr(self.config, 'clubs'):
@@ -109,7 +109,7 @@ class CalendarHandlerMixin:
         event: Event,
         club_id: str,
         start_time: datetime,
-        weather_service: Optional[WeatherManager] = None,
+        weather_service: Optional[WeatherService] = None,
         existing_reservation: Optional[Reservation] = None
     ) -> None:
         """Add weather information to event."""

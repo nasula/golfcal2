@@ -12,12 +12,12 @@ from flask_cors import CORS
 from .config import Config
 from .config.settings import ConfigurationManager
 from .services.calendar_service import CalendarService
-from .services.weather_service import WeatherManager
+from .services.weather_service import WeatherService
 from .utils.logging_utils import setup_logging
 from .config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
 
 # Global service cache
-_weather_manager_cache: Optional[WeatherManager] = None
+_weather_service_cache: Optional[WeatherService] = None
 _calendar_service_cache: Optional[CalendarService] = None
 
 def create_app(config_file: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> Flask:
@@ -34,27 +34,25 @@ def create_app(config_file: Optional[str] = None, dev_mode: bool = False, verbos
     setup_logging(config, dev_mode=dev_mode, verbose=verbose)
     
     # Initialize services with cached configuration
-    def get_weather_manager():
-        global _weather_manager_cache
-        if not _weather_manager_cache:
-            _weather_manager_cache = WeatherManager(
-                config_manager.get_timezone(config.global_config['timezone']),
-                config_manager.get_timezone('UTC'),
-                config.global_config
+    def get_weather_service():
+        global _weather_service_cache
+        if not _weather_service_cache:
+            _weather_service_cache = WeatherService(
+                config=config.global_config
             )
-        return _weather_manager_cache
+        return _weather_service_cache
     
     def get_calendar_service():
         global _calendar_service_cache
         if not _calendar_service_cache:
             _calendar_service_cache = CalendarService(
                 config.global_config,
-                get_weather_manager()
+                get_weather_service()
             )
         return _calendar_service_cache
     
     # Add service getters to app context
-    app.get_weather_manager = get_weather_manager
+    app.get_weather_service = get_weather_service
     app.get_calendar_service = get_calendar_service
     
     return app 

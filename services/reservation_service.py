@@ -16,7 +16,7 @@ from golfcal2.models.user import User, Membership
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.config.settings import AppConfig
 from golfcal2.services.auth_service import AuthService
-from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.models.mixins import ReservationHandlerMixin, CalendarHandlerMixin
 from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
 from golfcal2.exceptions import (
@@ -46,7 +46,9 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         
         # Initialize services
         self.auth_service = AuthService()
-        self.weather_service = WeatherManager(self.local_tz, self.utc_tz, config)
+        self.weather_service = WeatherService(
+            config=config
+        )
         
         # Configure logger
         self.set_log_context(service="reservation")
