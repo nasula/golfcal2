@@ -14,6 +14,7 @@ from golfcal2.config.settings import AppConfig
 from golfcal2.services.weather_types import (
     WeatherResponse, WeatherData, Location, WeatherCode
 )
+from golfcal2.services.weather_formatter import WeatherFormatter
 
 class EventBuilder(ABC, LoggerMixin):
     """Base class for event builders."""
@@ -65,17 +66,7 @@ class EventBuilder(ABC, LoggerMixin):
 
     def _format_weather_data(self, weather_data: Sequence[WeatherData]) -> str:
         """Format weather data for event description."""
-        description = ""
-        for forecast in weather_data:
-            description += (
-                f"{forecast.time.strftime('%H:%M')} - "
-                f"{forecast.temperature}°C, "
-                f"{forecast.wind_speed}m/s"
-            )
-            if forecast.precipitation_probability > 0:
-                description += f", {forecast.precipitation_probability}% rain"
-            description += "\n"
-        return description
+        return WeatherFormatter.format_forecast(weather_data)
 
 class ReservationEventBuilder(EventBuilder):
     """Event builder for golf reservations."""

@@ -12,6 +12,7 @@ from golfcal2.utils.timezone_utils import TimezoneManager
 from golfcal2.models.golf_club import GolfClub, ExternalGolfClub
 from golfcal2.models.user import User, Membership
 from golfcal2.services.weather_types import WeatherData, WeatherResponse, get_weather_symbol
+from golfcal2.services.weather_formatter import WeatherFormatter
 
 class PlayerDataExtractor:
     """Helper class for extracting player data from different formats."""
@@ -67,6 +68,15 @@ class Player:
     club: str
     handicap: float
 
+    def __post_init__(self):
+        """Ensure all fields have valid values."""
+        self.name = str(self.name) if self.name is not None else "Unknown"
+        self.club = str(self.club) if self.club is not None else "Unknown"
+        try:
+            self.handicap = float(self.handicap) if self.handicap is not None else 0.0
+        except (TypeError, ValueError):
+            self.handicap = 0.0
+
     @classmethod
     def from_wisegolf(cls, data: Dict[str, Any]) -> "Player":
         """Create Player instance from WiseGolf data."""
@@ -77,8 +87,8 @@ class Player:
             handicap = PlayerDataExtractor.extract_handicap(data, "wisegolf")
             
             return cls(
-                name=f"{first_name} {family_name}".strip(),
-                club=club,
+                name=f"{first_name} {family_name}".strip() or "Unknown",
+                club=club or "Unknown",
                 handicap=handicap
             )
         except Exception:
@@ -89,7 +99,7 @@ class Player:
                 " ".join(data.get("name", "").split()[1:]) if data.get("name", "") else ""
             )
             
-            club = data.get("clubAbbreviation", data.get("club", "N/A"))
+            club = data.get("clubAbbreviation", data.get("club", "Unknown"))
             
             handicap_str = str(data.get("handicapActive", data.get("handicap", "0.0")))
             try:
@@ -98,8 +108,8 @@ class Player:
                 handicap = 0.0
             
             return cls(
-                name=f"{first_name} {family_name}".strip(),
-                club=club,
+                name=f"{first_name} {family_name}".strip() or "Unknown",
+                club=club or "Unknown",
                 handicap=handicap
             )
 
@@ -107,30 +117,34 @@ class Player:
     def from_nexgolf(cls, data: Dict[str, Any]) -> "Player":
         """Create Player instance from NexGolf data."""
         try:
-            # Try new extractor first
-            first_name, family_name = PlayerDataExtractor.extract_name(data, "nexgolf")
-            club = PlayerDataExtractor.extract_club(data, "nexgolf")
-            handicap = PlayerDataExtractor.extract_handicap(data, "nexgolf")
+            # Get player data from the correct location in the structure
+            player_data = data.get("player", {}) if isinstance(data.get("player"), dict) else {}
             
+            # Extract name components with safe defaults
+            first_name = str(player_data.get("firstName", "")).strip()
+            last_name = str(player_data.get("lastName", "")).strip()
+            
+            # Extract club data safely
+            club_data = player_data.get("club", {}) if isinstance(player_data.get("club"), dict) else {}
+            club = str(club_data.get("abbreviation", "Unknown")).strip()
+            
+            # Handle potential None values in handicap
+            try:
+                handicap = float(player_data.get("handicap", 0.0))
+            except (TypeError, ValueError):
+                handicap = 0.0
+
+            # Build name with fallback
+            name = f"{first_name} {last_name}".strip() or "Unknown"
+
             return cls(
-                name=f"{first_name} {family_name}".strip(),
+                name=name,
                 club=club,
                 handicap=handicap
             )
-        except Exception:
-            # Fallback to original implementation for backward compatibility
-            player_data = data["player"] if "player" in data else {}
-            first_name = player_data["firstName"] if "firstName" in player_data else ""
-            last_name = player_data["lastName"] if "lastName" in player_data else ""
-            club_data = player_data["club"] if "club" in player_data else {}
-            club = club_data["abbreviation"] if "abbreviation" in club_data else "N/A"
-            handicap = float(player_data["handicap"]) if "handicap" in player_data else 0.0
-            
-            return cls(
-                name=f"{first_name} {last_name}".strip(),
-                club=club,
-                handicap=handicap
-            )
+        except Exception as e:
+            logger.error(f"Error creating player from NexGolf data: {str(e)}, data: {data}")
+            return cls(name="Unknown Player", club="Unknown", handicap=0.0)
 
 @dataclass
 class Reservation(LoggerMixin):
@@ -143,6 +157,7 @@ class Reservation(LoggerMixin):
     players: List[Player]
     raw_data: Dict[str, Any]
     _tz_manager: Optional[TimezoneManager] = None
+    weather_summary: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Initialize after dataclass creation."""
@@ -150,6 +165,59 @@ class Reservation(LoggerMixin):
         if self._tz_manager is None:
             self._tz_manager = TimezoneManager()
         self.utc_tz = ZoneInfo('UTC')
+
+    @property
+    def title(self) -> str:
+        """Get event title."""
+        try:
+            self.debug("Getting event title")
+            self.debug(f"Club info: name={self.club.name if self.club else 'None'}, abbr={getattr(self.club, 'clubAbbreviation', None)}")
+            
+            # Get club abbreviation with fallbacks
+            club_abbr = None
+            if self.club and hasattr(self.club, 'clubAbbreviation'):
+                club_abbr = self.club.clubAbbreviation
+            if not club_abbr and hasattr(self.membership, 'clubAbbreviation'):
+                club_abbr = self.membership.clubAbbreviation
+            if not club_abbr:
+                club_abbr = "GOLF"  # Final fallback
+                
+            self.debug(f"Using club abbreviation: {club_abbr}")
+            
+            # Get variant name if available
+            variant = None
+            if isinstance(self.raw_data, dict) and "variantName" in self.raw_data:
+                variant = self.raw_data["variantName"]
+            elif hasattr(self.club, 'variant') and self.club.variant:
+                variant = self.club.variant
+            elif isinstance(self.raw_data, dict) and 'course' in self.raw_data:
+                course_data = self.raw_data['course']
+                if isinstance(course_data, dict) and 'name' in course_data:
+                    variant = course_data['name']
+            
+            self.debug(f"Using variant: {variant}")
+            
+            # Format time
+            time_str = self.start_time.strftime("%H:%M") if self.start_time else ""
+            self.debug(f"Using time string: {time_str}")
+            
+            # Build title
+            if variant:
+                title = f"Golf: {club_abbr} - {variant} @{time_str}"
+            else:
+                title = f"Golf: {club_abbr} @{time_str}"
+                
+            self.debug(f"Final title: {title}")
+            return title
+            
+        except Exception as e:
+            self.error(f"Error getting event title: {e}")
+            return "Golf Reservation"
+
+    @property
+    def location(self) -> str:
+        """Get event location."""
+        return self.club.get_event_location() if hasattr(self.club, 'get_event_location') else ''
 
     def _extract_resource_id(self) -> str:
         """Extract resource ID from raw data."""
@@ -167,6 +235,8 @@ class Reservation(LoggerMixin):
             self._tz_manager = TimezoneManager()
         now = self._tz_manager.now()
         is_future_event = start_time > now
+
+        self.logger.debug(f"Fetching players for start_time={start_time}, is_future_event={is_future_event}")
 
         if is_future_event and hasattr(self.club, 'fetch_players'):
             try:
@@ -228,18 +298,36 @@ class Reservation(LoggerMixin):
         # If no players found, try using the raw data
         if not players:
             self.logger.debug("No players found from club.fetch_players, checking raw data")
+            self.logger.debug(f"Raw data: {self.raw_data}")
             if 'reservationsGolfPlayers' in self.raw_data:
                 for player_data in self.raw_data['reservationsGolfPlayers']:
                     if player_data.get('reservationTimeId') == self.raw_data.get('reservationTimeId'):
                         players.append(Player.from_wisegolf(player_data))
                         self.logger.debug(f"Added player from raw data: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
+            else:
+                self.logger.debug("No reservationsGolfPlayers found in raw data")
         
+        self.logger.debug(f"Returning players: {[f'{p.name} ({p.club})' for p in players]}")
         return players
 
     @property
     def total_handicap(self) -> float:
         """Calculate total handicap of all players."""
-        return round(sum(p.handicap for p in self.players), 1)
+        try:
+            if not self.players:
+                return 0.0
+            total = 0.0
+            for player in self.players:
+                if player and hasattr(player, 'handicap'):
+                    try:
+                        handicap = float(player.handicap) if player.handicap is not None else 0.0
+                        total += handicap
+                    except (TypeError, ValueError):
+                        continue
+            return round(total, 1)
+        except Exception as e:
+            self.logger.error(f"Error calculating total handicap: {str(e)}")
+            return 0.0
 
     @property
     def uid(self) -> str:
@@ -252,230 +340,154 @@ class Reservation(LoggerMixin):
         resource_id = self._extract_resource_id()
         
         # Format date and time components
-        date_str = self.start_time.strftime('%Y%m%d')
-        time_str = self.start_time.strftime('%H%M')
+        date_str = self.start_time.strftime('%Y%m%d') if self.start_time else '00000000'
+        time_str = self.start_time.strftime('%H%M') if self.start_time else '0000'
         
         # Create unique ID that includes all necessary components
-        return f"{self.club.name}_{date_str}_{time_str}_{resource_id}_{self.user.name}"
+        return f"{self.club.name if self.club else 'Unknown'}_{date_str}_{time_str}_{resource_id}_{self.user.name if self.user else 'Unknown'}"
 
     def get_event_summary(self) -> str:
         """Get event summary for calendar."""
-        # Format time in 24-hour format
-        time_str = self.start_time.strftime('%H:%M')
-        
-        # Get variant name (for WiseGolf0, it's in variantName field before the colon)
-        if "variantName" in self.raw_data:
-            variant = self.raw_data["variantName"].split(":")[0]
-        else:
-            variant = self.club.variant
-        
-        # Get player count and total handicap
-        player_count = len(self.players)
-        total_hcp = self.total_handicap
-        
-        # Build summary string
-        summary = f"Golf: {self.club.name} {time_str} - {variant}"
-        if player_count > 0:
-            summary += f" ({player_count} Players, THCP: {total_hcp})"
-        
-        return summary
+        try:
+            # Debug log raw data
+            self.logger.debug(f"Summary: Raw data type: {type(self.raw_data)}")
+            self.logger.debug(f"Summary: Club info: name={getattr(self.club, 'name', None)}, abbr={getattr(self.club, 'abbreviation', None)}")
+            self.logger.debug(f"Summary: Start time: {self.start_time}")
+            
+            # Format time in 24-hour format
+            time_str = self.start_time.strftime('%H:%M') if self.start_time else 'Unknown'
+            self.logger.debug(f"Summary: Formatted time: {time_str}")
+            
+            # Get club abbreviation with safer handling
+            club_abbr = 'Unknown'
+            if self.club and hasattr(self.club, 'abbreviation'):
+                club_abbr = str(self.club.abbreviation) if self.club.abbreviation is not None else 'Unknown'
+            self.logger.debug(f"Summary: Club abbreviation: {club_abbr}")
+            
+            # Build summary string based on data source
+            if isinstance(self.raw_data, dict):
+                self.logger.debug(f"Summary: Raw data keys: {self.raw_data.keys()}")
+                if 'variantName' in self.raw_data:  # WiseGolf format
+                    variant_parts = self.raw_data["variantName"].split(":")
+                    variant = variant_parts[0] if variant_parts else 'Unknown'
+                    self.logger.debug(f"Summary: WiseGolf variant: {variant}")
+                    summary = f"Golf: {club_abbr} - {variant} @{time_str}"
+                else:  # NexGolf format
+                    # Get course name from NexGolf data
+                    course_name = None
+                    if 'course' in self.raw_data and isinstance(self.raw_data['course'], dict):
+                        course_name = str(self.raw_data['course'].get('name', ''))
+                        self.logger.debug(f"Summary: NexGolf course name: {course_name}")
+                    summary = f"Golf: {club_abbr} - {course_name} @{time_str}" if course_name else f"Golf: {club_abbr} @{time_str}"
+            else:
+                summary = f"Golf: {club_abbr} @{time_str}"
+            self.logger.debug(f"Summary: Base summary: {summary}")
+            
+            # Add player info with safer handling
+            try:
+                player_count = len(self.players) if self.players else 0
+                self.logger.debug(f"Summary: Player count: {player_count}")
+                if player_count > 0:
+                    total_hcp = self.total_handicap  # This is now safely handled in the property
+                    self.logger.debug(f"Summary: Total handicap: {total_hcp}")
+                    summary += f" ({player_count} Players, THCP: {total_hcp:.1f})"
+                self.logger.debug(f"Summary: Final summary: {summary}")
+            except Exception as e:
+                self.logger.error(f"Error adding player info to summary: {str(e)}")
+            
+            return summary
+        except Exception as e:
+            self.logger.error(f"Error formatting event summary: {str(e)}, raw_data: {self.raw_data}")
+            return "Golf Reservation"
 
     def _format_weather_data(self, weather_data: Union[WeatherResponse, List[WeatherData]]) -> str:
         """Format weather data into a human-readable string."""
-        if isinstance(weather_data, list):
-            data_list = weather_data
-        else:
-            data_list = weather_data.data if weather_data else []
-            
-        if not data_list:
-            self.debug("No weather data provided")
-            return "No forecast available"
-        
-        # Get event timezone
-        event_tz = self.start_time.tzinfo
-        self.debug(
-            "Starting weather data formatting",
-            total_forecasts=len(data_list),
-            event_time_range=f"{self.start_time.isoformat()} to {self.end_time.isoformat()}",
-            event_timezone=str(event_tz)
+        return WeatherFormatter.format_forecast(
+            weather_data,
+            start_time=self.start_time if self.start_time else datetime.now(),
+            end_time=self.end_time if self.end_time else datetime.now() + timedelta(hours=1)
         )
-        
-        # Convert all forecasts to event timezone and sort by time
-        normalized_data = []
-        for forecast in data_list:
-            if forecast.time.tzinfo != event_tz:
-                forecast.time = forecast.time.astimezone(event_tz)
-            normalized_data.append(forecast)
-        
-        normalized_data = sorted(normalized_data, key=lambda x: x.time)
-        
-        def get_block_end(forecasts: List[WeatherData], index: int, event_end: datetime) -> datetime:
-            """Get the end time of a forecast block."""
-            return forecasts[index + 1].time if index < len(forecasts) - 1 else forecasts[index].time + timedelta(hours=6)
-        
-        # Filter forecasts to only include those relevant to the event time
-        filtered_data = []
-        for i, curr in enumerate(normalized_data):
-            block_end = get_block_end(normalized_data, i, self.end_time)
-            
-            # Only include forecasts that overlap with the event start time
-            if curr.time <= self.end_time and block_end > self.start_time:
-                filtered_data.append(curr)
-        
-        self.debug(
-            "Filtered forecasts",
-            original_count=len(data_list),
-            filtered_count=len(filtered_data),
-            filtered_times=[f.time.isoformat() for f in filtered_data]
-        )
-        
-        if not filtered_data:
-            return "No forecast available for event time"
-            
-        # Check if we have any forecasts that actually overlap with the event time
-        has_valid_forecast = False
-        for forecast in filtered_data:
-            block_end = get_block_end(filtered_data, filtered_data.index(forecast), self.end_time)
-            if forecast.time <= self.end_time and block_end > self.start_time:
-                has_valid_forecast = True
-                break
-                
-        if not has_valid_forecast:
-            return "No forecast available for event time"
-        
-        formatted_lines = []
-        now = datetime.now(self.utc_tz)
-        
-        for i, forecast in enumerate(filtered_data):
-            # Get block end time
-            block_end = get_block_end(filtered_data, i, self.end_time)
-            
-            # Calculate time difference in hours
-            time_diff = (block_end - forecast.time).total_seconds() / 3600
-            
-            # Format time string based on block size
-            if time_diff > 1:
-                time_str = f"{forecast.time.strftime('%H:%M')}-{block_end.strftime('%H:%M')}"
-            else:
-                time_str = forecast.time.strftime('%H:%M')
-            
-            # Get weather symbol - both services already convert to our WeatherCode enum
-            symbol = get_weather_symbol(forecast.weather_code.value)
-            
-            # Build weather line with optional precipitation and thunder probability
-            parts = [time_str, symbol, f"{forecast.temperature:.1f}°C", f"{forecast.wind_speed:.1f}m/s"]
-            
-            if forecast.precipitation_probability is not None and forecast.precipitation_probability > 5:
-                if forecast.precipitation and forecast.precipitation > 0:
-                    parts.append(f"💧{forecast.precipitation_probability:.0f}% {forecast.precipitation:.1f}mm")
-                else:
-                    parts.append(f"💧{forecast.precipitation_probability:.0f}%")
-            
-            if hasattr(forecast, 'thunder_probability') and forecast.thunder_probability is not None and forecast.thunder_probability > 0:
-                parts.append(f"⚡{forecast.thunder_probability:.0f}%")
-            
-            line = " ".join(parts)
-            formatted_lines.append(line)
-            self.debug(
-                "Formatted forecast line",
-                time=forecast.time.isoformat(),
-                block_end=block_end.isoformat(),
-                block_size_hours=time_diff,
-                temperature=forecast.temperature,
-                wind_speed=forecast.wind_speed,
-                weather_code=forecast.weather_code.value,
-                formatted=line
-            )
-        
-        result = "\n".join(formatted_lines)
-        self.debug(
-            "Completed weather data formatting",
-            total_lines=len(formatted_lines),
-            result=result
-        )
-        return result
 
     def get_event_description(self, weather: Optional[Union[str, List[WeatherData]]] = None) -> str:
         """Get event description for calendar."""
-        description = [f"Teetime {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}"]
-        
-        # Add player details
-        for player in self.players:
-            player_info = f"{player.name}, {player.club}, HCP: {player.handicap}"
-            description.append(player_info)
-        
-        # Add weather if available
-        if weather:
-            description.append("\nWeather:")
-            if isinstance(weather, str):
-                description.append(weather)
+        try:
+            description = []
+            
+            # Add time with safe handling
+            if self.start_time:
+                description.append(f"Teetime {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
             else:
-                description.append(self._format_weather_data(weather))
-        
-        return "\n".join(description)
+                description.append("Teetime Unknown")
+            
+            # Add player details with safe handling
+            if self.players:
+                for player in self.players:
+                    if player:
+                        name = str(player.name) if player.name else "Unknown"
+                        club = str(player.club) if player.club else "Unknown"
+                        handicap = float(player.handicap) if player.handicap is not None else 0.0
+                        player_info = f"{name}, {club}, HCP: {handicap:.1f}"
+                        description.append(player_info)
+            
+            # Add weather if available
+            if weather:
+                description.append("\nWeather:")
+                if isinstance(weather, str):
+                    description.append(str(weather))
+                else:
+                    try:
+                        description.append(self._format_weather_data(weather))
+                    except Exception as e:
+                        self.logger.error(f"Error formatting weather data: {str(e)}")
+                        description.append("Weather data unavailable")
+            
+            return "\n".join(description)
+        except Exception as e:
+            self.logger.error(f"Error formatting event description: {str(e)}")
+            return "Error formatting event description"
 
     def get_event_location(self) -> str:
         """Get event location for calendar."""
         return self.club.get_event_location()
 
     def format_for_display(self) -> str:
-        """Format reservation for display in terminal."""
-        # Get club configuration to check for coordinates
-        from golfcal2.config import settings
-        config = settings.load_config()
-        club_config = config.clubs.get(self.membership.club)
-        self.debug(f"Club config for {self.membership.club}: {club_config}")
-        
-        # Format basic reservation info
-        output = [
-            f"{self.start_time.strftime('%Y-%m-%d %H:%M')} - "
-            f"{self.end_time.strftime('%H:%M')}: "
-            f"{self.club.name} - {self.club.variant}"
-        ]
-        
-        # Add player information
-        if self.players:
-            output.append("Players:")
-            for player in self.players:
-                output.append(f"  - {player.name} (HCP: {player.handicap})")
-            output.append(f"Total HCP: {self.total_handicap}")
-        
-        # Add weather data if coordinates are available
-        if club_config and 'coordinates' in club_config and club_config['coordinates'] is not None:
-            coordinates = club_config['coordinates']
-            if 'lat' in coordinates and 'lon' in coordinates:
-                self.debug(f"Found coordinates for {self.membership.club}: {coordinates}")
-                from golfcal2.services.weather_service import WeatherManager
-                from golfcal2.utils.timezone_utils import TimezoneManager
-                from zoneinfo import ZoneInfo
-                
-                tz_manager = TimezoneManager()
-                # Ensure we're using ZoneInfo objects
-                local_tz = ZoneInfo(tz_manager.timezone_name)
-                utc_tz = ZoneInfo('UTC')
-                
-                # Initialize WeatherManager with proper config
-                weather_manager = WeatherManager(local_tz, utc_tz, config)
-                
-                weather_data = weather_manager.get_weather(
-                    lat=coordinates['lat'],
-                    lon=coordinates['lon'],
-                    start_time=self.start_time,
-                    end_time=self.end_time
-                )
-                
-                if weather_data:
-                    self.debug(f"Got weather data for {self.membership.club}: {len(weather_data.data)} forecasts")
-                    output.append("\nWeather:")
-                    output.append(self._format_weather_data(weather_data))
-                else:
-                    self.debug(f"No weather data returned for {self.membership.club}")
-            else:
-                self.debug(f"Invalid coordinates format for {self.membership.club}")
-        else:
-            self.debug(f"No coordinates found for {self.membership.club}")
-        
-        return "\n".join(output)
+        """Format reservation for display with safe string handling."""
+        try:
+            # Safely format all fields
+            club_name = str(self.club.name) if self.club else "Unknown Club"
+            start_time = str(self.start_time) if self.start_time else "Unknown Start"
+            end_time = str(self.end_time) if self.end_time else "Unknown End"
+            
+            # Format players safely
+            players = ", ".join([
+                str(p.name) if p else "Unknown Player" 
+                for p in self.players
+            ]) if self.players else "No players"
+            
+            return (
+                f"Reservation at {club_name}\n"
+                f"Time: {start_time} - {end_time}\n"
+                f"Players: {players}"
+            )
+        except Exception as e:
+            self.logger.error(f"Error formatting reservation: {str(e)}")
+            return "Error formatting reservation details"
+
+    def format_with_weather(self, weather_data: List[WeatherData]) -> str:
+        """Format reservation with weather using safe string handling."""
+        try:
+            base_info = self.format_for_display()
+            
+            # Safely format weather
+            weather_str = "\n".join([
+                f"{str(w.time)}: {str(w.temperature)}°C, {str(w.precipitation)}mm rain"
+                for w in weather_data
+            ]) if weather_data else "No weather data available"
+            
+            return f"{base_info}\nWeather Forecast:\n{weather_str}"
+        except Exception as e:
+            self.logger.error(f"Error formatting weather: {str(e)}")
+            return f"{self.format_for_display()}\nError formatting weather data"
 
     def overlaps_with(self, other: "Reservation") -> bool:
         """Check if this reservation overlaps with another."""
@@ -570,26 +582,43 @@ class Reservation(LoggerMixin):
             _tz_manager=tz_manager
         )
         
+        temp_instance.logger.debug(f"Processing NexGolf data: {data}")
+        
+        # Parse start time using club's method
         start_time = club.parse_start_time(data)
         if start_time.tzinfo is None:
             start_time = tz_manager.localize_datetime(start_time)
         end_time = club.get_end_time(start_time, membership.duration)
         
-        # Try to fetch players using the helper method first
-        players: List[Player] = temp_instance._fetch_players(start_time)
+        temp_instance.logger.debug(f"Parsed times: start={start_time}, end={end_time}")
         
-        # If no players found, try the old way
-        if not players and "reservations" in data:
-            for player_data in data["reservations"]:
-                players.append(Player.from_nexgolf(player_data))
+        # Initialize players list
+        players: List[Player] = []
         
-        # If still no players, add the user as default player
+        # Process players from NexGolf format
+        if "reservations" in data:
+            temp_instance.logger.debug(f"Processing NexGolf reservations: {data.get('reservations')}")
+            try:
+                for player_data in data["reservations"]:
+                    temp_instance.logger.debug(f"Processing player data: {player_data}")
+                    if player_data and isinstance(player_data, dict):
+                        player = Player.from_nexgolf(player_data)
+                        players.append(player)
+                        temp_instance.logger.debug(f"Added player: {player.name} ({player.club}, {player.handicap})")
+            except Exception as e:
+                temp_instance.logger.error(f"Failed to process NexGolf player data: {e}", exc_info=True)
+                temp_instance.logger.debug(f"Raw data that caused error: {data}")
+        
+        # If no players found, add the user as default player
         if not players:
+            temp_instance.logger.debug(f"No players found, using user as default: {user.name}")
             players = [Player(
                 name=user.name,
                 club=membership.clubAbbreviation,
                 handicap=float(user.handicap or 0.0)
             )]
+        
+        temp_instance.logger.debug(f"Final players list: {[f'{p.name} ({p.club})' for p in players]}")
         
         return cls(
             club=club,
@@ -628,8 +657,15 @@ class Reservation(LoggerMixin):
         )
         
         # Parse start time from the dateTimeStart field and make it timezone-aware
-        start_time = datetime.strptime(data["dateTimeStart"], "%Y-%m-%d %H:%M:%S")
-        start_time = tz_manager.localize_datetime(start_time)
+        try:
+            start_time = datetime.strptime(data["dateTimeStart"], "%Y-%m-%d %H:%M:%S")
+            start_time = tz_manager.localize_datetime(start_time)
+        except (KeyError, ValueError) as e:
+            temp_instance.logger.error(f"Failed to parse start time from data: {e}")
+            # Try using club's parse_start_time as fallback
+            start_time = club.parse_start_time(data)
+            if start_time.tzinfo is None:
+                start_time = tz_manager.localize_datetime(start_time)
         
         # Calculate end time using duration from membership
         end_time = club.get_end_time(start_time, membership.duration)

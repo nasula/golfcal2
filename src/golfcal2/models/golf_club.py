@@ -44,6 +44,7 @@ class GolfClub(ABC, LoggerMixin):
     club_details: Optional[Dict[str, Any]] = None
     _tz_manager: Optional[TimezoneManager] = None
     config: Optional[AppConfigProtocol] = None
+    clubAbbreviation: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Initialize after dataclass initialization."""
@@ -183,9 +184,14 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
         product: Optional[str] = None,
         auth_service: Optional[AuthService] = None,
         club_details: Optional[Dict[str, Any]] = None,
-        config: Optional[AppConfigProtocol] = None
+        config: Optional[AppConfigProtocol] = None,
+        clubAbbreviation: Optional[str] = None
     ) -> None:
         """Initialize WiseGolf club."""
+        # Extract clubAbbreviation from club_details if not provided
+        if clubAbbreviation is None and club_details and 'clubAbbreviation' in club_details:
+            clubAbbreviation = club_details['clubAbbreviation']
+        
         super().__init__(
             name=name,
             url=url,
@@ -196,7 +202,8 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
             product=product,
             auth_service=auth_service,
             club_details=club_details,
-            config=config
+            config=config,
+            clubAbbreviation=clubAbbreviation
         )
 
     @abstractmethod
@@ -336,6 +343,39 @@ class WiseGolf0Club(BaseWiseGolfClub):
 class NexGolfClub(GolfClub):
     """NexGolf golf club implementation."""
     
+    def __init__(
+        self,
+        name: str,
+        url: str,
+        address: str = "Unknown",
+        timezone: str = "UTC",
+        coordinates: Optional[Dict[str, float]] = None,
+        variant: Optional[str] = None,
+        product: Optional[str] = None,
+        auth_service: Optional[AuthService] = None,
+        club_details: Optional[Dict[str, Any]] = None,
+        config: Optional[AppConfigProtocol] = None,
+        clubAbbreviation: Optional[str] = None
+    ) -> None:
+        """Initialize NexGolf club."""
+        super().__init__(
+            name=name,
+            url=url,
+            address=address,
+            timezone=timezone,
+            coordinates=coordinates,
+            variant=variant,
+            product=product,
+            auth_service=auth_service,
+            club_details=club_details,
+            config=config,
+            clubAbbreviation=clubAbbreviation
+        )
+        
+        # Ensure we have a club abbreviation
+        if not self.clubAbbreviation and self.club_details:
+            self.clubAbbreviation = self.club_details.get("clubAbbreviation")
+    
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from NexGolf API."""
         api = NexGolfAPI(self.url, membership.auth_details)
@@ -444,13 +484,19 @@ class GolfClubFactory:
         config: AppConfigProtocol
     ) -> Optional[GolfClub]:
         """Create golf club instance based on type."""
-        # Return cached club if available
+        # Get the full club name, prioritizing the explicit name in club_details
         club_name = (
-            club_details.get("name") or  # Explicit name
-            membership.club or  # Club name from membership
-            club_details.get("clubAbbreviation") or  # Club abbreviation
-            club_details.get("type", "").title()  # Fallback to capitalized type
+            club_details.get("name") or  # Explicit full name from club details
+            membership.club  # Full club name from membership
         )
+        if not club_name:
+            # Only use abbreviation as name if no full name is available
+            club_name = (
+                club_details.get("clubAbbreviation") or  # Club abbreviation
+                club_details.get("type", "").title()  # Fallback to capitalized type
+            )
+            
+        # Return cached club if available
         if club_name in cls._clubs:
             return cls._clubs[club_name]
             
@@ -484,7 +530,8 @@ class GolfClubFactory:
             "timezone": timezone,
             "auth_service": auth_service,
             "club_details": club_details,
-            "config": config
+            "config": config,
+            "clubAbbreviation": club_details.get("clubAbbreviation")
         }
 
         club: Optional[GolfClub] = None

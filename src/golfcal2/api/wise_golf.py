@@ -18,6 +18,7 @@ from golfcal2.models.mixins import (
     APIAuthError
 )
 from golfcal2.services.auth_service import AuthService
+from golfcal2.utils.api_handler import APIResponseValidator
 
 __all__ = ['WiseGolfAPI', 'WiseGolf0API']
 
@@ -130,19 +131,27 @@ class WiseGolfAPI(BaseWiseGolfAPI):
                 "reservations": "getusergolfreservations"
             }
             
-            response = self._make_request("GET", "", params=params)
-            self.logger.debug(f"WiseGolfAPI response data: {response}")
+            # Get raw response from request
+            raw_response = self._make_request("GET", "", params=params)
+            self.logger.debug(f"WiseGolfAPI response data: {raw_response}")
             
-            if not isinstance(response, dict):
+            # Validate the response data structure
+            if not isinstance(raw_response, dict):
                 raise WiseGolfResponseError("Invalid response format")
-                
-            if 'success' not in response or not response['success']:
+            
+            if 'success' not in raw_response:
+                raise WiseGolfResponseError("Missing 'success' field in response")
+            
+            if not raw_response['success']:
                 raise WiseGolfResponseError("Request was not successful")
-                
-            rows = response.get('rows', [])
+            
+            if 'rows' not in raw_response:
+                raise WiseGolfResponseError("Missing 'rows' field in response")
+            
+            rows = raw_response['rows']
             if not isinstance(rows, list):
                 return []
-                
+            
             self.logger.debug(f"Found {len(rows)} reservations")
             return rows
             
@@ -187,24 +196,38 @@ class WiseGolf0API(BaseWiseGolfAPI):
             }
             
             endpoint = "/pd/simulaattorit/18/simulaattorit/"
-            response = self._make_request("GET", endpoint, params=params)
+            raw_response = self._make_request("GET", endpoint, params=params)
             
-            self.logger.debug(f"WiseGolf0API response data: {response}")
-            return self._extract_data_from_response(response)
+            # Validate the response data structure
+            if not isinstance(raw_response, dict):
+                raise WiseGolfResponseError("Invalid response format")
+            
+            if 'success' not in raw_response:
+                raise WiseGolfResponseError("Missing 'success' field in response")
+            
+            if not raw_response['success']:
+                raise WiseGolfResponseError("Request was not successful")
+            
+            if 'rows' not in raw_response:
+                raise WiseGolfResponseError("Missing 'rows' field in response")
+            
+            rows = raw_response['rows']
+            if not isinstance(rows, list):
+                return []
+            
+            self.logger.debug(f"Found {len(rows)} reservations")
+            return rows
             
         except APIResponseError as e:
             raise WiseGolfResponseError(f"Request failed: {str(e)}")
         except Exception as e:
             raise WiseGolfResponseError(f"Unexpected error: {str(e)}")
-            
+    
     def _fetch_players(self, params: Dict[str, str]) -> Dict[str, Any]:
         """Fetch players from WiseGolf0 API."""
-        self.logger.debug(f"WiseGolf0API._fetch_players - Starting with params: {params}")
-        
         if not self.rest_url:
-            self.logger.debug("WiseGolf0API._fetch_players - No rest_url found")
             return {"reservationsGolfPlayers": []}
-            
+        
         # Update headers for cross-origin request
         self.session.headers.update({
             "Origin": self.base_url,
@@ -212,30 +235,37 @@ class WiseGolf0API(BaseWiseGolfAPI):
             "Sec-Fetch-Site": "same-site"
         })
         
-        self.logger.debug(f"WiseGolf0API._fetch_players - Making request to {self.rest_url}/reservations/ with headers: {dict(self.session.headers)}")
-        
-        # Make request to REST API using session
-        response = self.session.get(
-            self.rest_url + "/reservations/",
-            params=params,
-            timeout=self.DEFAULT_TIMEOUT
-        )
-        
-        self.logger.debug(f"REST API response status: {response.status_code}")
-        self.logger.debug(f"REST API response headers: {dict(response.headers)}")
-        self.logger.debug(f"REST API request URL: {response.url}")
-        self.logger.debug(f"REST API request headers: {dict(response.request.headers)}")
-        
-        if response.ok:
+        try:
+            response = self.session.get(
+                self.rest_url + "/reservations/",
+                params=params,
+                timeout=self.DEFAULT_TIMEOUT
+            )
+            
+            # Validate response status code
+            if response.status_code != 200:
+                raise WiseGolfResponseError(f"Request failed with status {response.status_code}")
+            
+            # Parse JSON response
             try:
                 data = response.json()
-                self.logger.debug(f"REST API response content: {data}")
-                return data
-            except Exception as e:
-                self.logger.error(f"Failed to parse JSON response: {e}", exc_info=True)
-                return {"reservationsGolfPlayers": []}
-        else:
-            self.logger.error(f"REST API request failed with status {response.status_code}: {response.text}")
+            except ValueError as e:
+                raise WiseGolfResponseError(f"Invalid JSON response: {str(e)}")
+            
+            # Validate response structure
+            if not isinstance(data, dict):
+                raise WiseGolfResponseError("Invalid response format")
+            
+            if 'reservationsGolfPlayers' not in data:
+                raise WiseGolfResponseError("Missing 'reservationsGolfPlayers' field in response")
+            
+            return data
+            
+        except requests.RequestException as e:
+            self.logger.error(f"Request failed: {str(e)}")
+            return {"reservationsGolfPlayers": []}
+        except Exception as e:
+            self.logger.error(f"Unexpected error: {str(e)}")
             return {"reservationsGolfPlayers": []}
 
     def _extract_data_from_response(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -28,6 +28,9 @@ from golfcal2.exceptions import (
 )
 from golfcal2.config.error_aggregator import aggregate_error
 from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_formatter import WeatherFormatter
+from golfcal2.services.reservation_factory import ReservationFactory
+from golfcal2.utils.api_handler import APIResponseValidator
 
 # Lazy load weather service
 _weather_manager: Optional[WeatherManager] = None
@@ -177,47 +180,37 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         user_config: Dict[str, Any],
         past_days: int = 1
     ) -> Tuple[Calendar, List[Reservation]]:
-        """
-        Process reservations for user.
-        
-        Args:
-            user_name: Name of user
-            user_config: User configuration
-            past_days: Number of days to include past reservations
-            
-        Returns:
-            Tuple of (calendar, list of reservations)
-        """
-        with handle_errors(
-            APIError,
-            "reservation",
-            f"process user {user_name}",
-            lambda: raise_error(f"Failed to process user {user_name}")
-        ):
-            self.debug(f"Processing reservations for user {user_name}")
-            self.debug(f"User config: {user_config}")
-            
-            user = User.from_config(user_name, user_config)
-            self.debug(f"Created user with {len(user.memberships)} memberships")
-            all_reservations: List[Reservation] = []
+        """Process a user's reservations."""
+        try:
+            self.debug(f"Processing reservations for user: {user_name}")
             
             # Create calendar
-            cal = self.build_base_calendar(user_name, self.timezone)
+            cal = Calendar()
+            all_reservations: List[Reservation] = []
             
-            # Calculate cutoff time (24 hours ago)
-            now = datetime.now(self.timezone)
-            cutoff_time = now - timedelta(hours=24)
-            self.debug(f"Using cutoff time: {cutoff_time}")
+            # Create user object
+            user = User(
+                name=user_name,
+                email=user_config.get('email'),
+                phone=user_config.get('phone'),
+                memberships=[
+                    Membership(
+                        club=m['club'],
+                        clubAbbreviation=self.config.clubs[m['club']].get('clubAbbreviation'),
+                        duration=m.get('duration', self.config.global_config['default_durations']['regular']),
+                        auth_details=m.get('auth_details', {})
+                    )
+                    for m in user_config.get('memberships', [])
+                ]
+            )
             
+            # Calculate cutoff time
+            cutoff_time = datetime.now(self.timezone) - timedelta(days=past_days)
+            
+            # Process each membership
             for membership in user.memberships:
-                with handle_errors(
-                    APIError,
-                    "reservation",
-                    f"process membership {membership.club} for user {user_name}",
-                    lambda: raise_error(f"Failed to process membership {membership.club}")
-                ):
-                    self.debug(f"Processing membership {membership.club} for user {user_name}")
-                    self.debug(f"Membership details: {membership.__dict__}")
+                try:
+                    self.debug(f"Processing club: {membership.club}")
                     
                     if membership.club not in self.config.clubs:
                         error = APIError(
@@ -229,8 +222,6 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                         continue
 
                     club_details = self.config.clubs[membership.club]
-                    self.debug(f"Club details from config: {club_details}")
-                    
                     club = GolfClubFactory.create_club(club_details, membership, self.auth_service, self.config)
                     if not club:
                         error = APIError(
@@ -241,163 +232,121 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                         aggregate_error(str(error), "reservation", None)
                         continue
                     
-                    self.debug(f"Created club instance of type: {type(club).__name__}")
-                    self.debug(f"Fetching reservations from {club.name}")
-                    
-                    raw_reservations = club.fetch_reservations(membership)  # type: ignore
-                    self.debug(f"Found {len(raw_reservations)} raw reservations for {club.name}")
+                    raw_reservations = club.fetch_reservations(membership)
+                    self.debug(f"Found {len(raw_reservations)} reservations for {club.name}")
                     
                     for raw_reservation in raw_reservations:
-                        with handle_errors(
-                            APIError,
-                            "reservation",
-                            f"process reservation for {club.name}",
-                            lambda: raise_error(f"Failed to process reservation for {club.name}")
-                        ):
-                            if club_details["type"] == "wisegolf":
-                                self._process_wisegolf_reservation(
-                                    raw_reservation, club, user, membership,
-                                    cutoff_time, past_days, cal, all_reservations
-                                )
-                            elif club_details["type"] == "wisegolf0":
-                                self._process_wisegolf0_reservation(
-                                    raw_reservation, club, user, membership,
-                                    cutoff_time, past_days, cal, all_reservations
-                                )
-                            elif club_details["type"] == "nexgolf":
-                                self._process_nexgolf_reservation(
-                                    raw_reservation, club, user, membership,
-                                    cutoff_time, past_days, cal, all_reservations
-                                )
-                            elif club_details["type"] == "teetime":
-                                self._process_teetime_reservation(
-                                    raw_reservation, club, user, membership,
-                                    cutoff_time, past_days, cal, all_reservations
-                                )
-                            else:
-                                error = APIError(
-                                    f"Unsupported club type: {club_details['type']}",
-                                    ErrorCode.CONFIG_INVALID,
-                                    {"club_type": club_details['type'], "club": club.name}
-                                )
-                                aggregate_error(str(error), "reservation", None)
-                                continue
+                        try:
+                            processor = ReservationFactory.get_processor(club_details['type'])
+                            reservation = processor.create_reservation(
+                                raw_reservation,
+                                user,
+                                club,
+                                membership
+                            )
+                            
+                            # Add weather data if available
+                            if reservation.start_time and reservation.location:
+                                try:
+                                    weather_data = self.weather_service.get_weather(
+                                        start_time=reservation.start_time,
+                                        end_time=reservation.end_time,
+                                        lat=club_details.get('coordinates', {}).get('lat'),
+                                        lon=club_details.get('coordinates', {}).get('lon')
+                                    )
+                                    if weather_data:
+                                        reservation.weather_summary = WeatherFormatter.get_weather_summary(weather_data)
+                                except Exception as e:
+                                    self.error(f"Error getting weather data: {e}")
+                            
+                            # Add to calendar and list if within time range
+                            if (
+                                reservation.start_time
+                                and reservation.start_time >= cutoff_time - timedelta(days=past_days)
+                            ):
+                                self._add_reservation_to_calendar(reservation, cal)
+                                all_reservations.append(reservation)
+                                
+                        except Exception as e:
+                            self.error(f"Error processing reservation: {str(e)}")
+                            aggregate_error(str(e), "reservation", None)
+                            continue
+                            
+                except Exception as e:
+                    self.error(f"Error processing membership {membership.club}: {str(e)}")
+                    aggregate_error(str(e), "reservation", None)
+                    continue
             
-            # Sort reservations by start time
-            all_reservations.sort(key=lambda r: r.start_time)
-            self.debug(f"Returning {len(all_reservations)} reservations for user {user_name}")
-            
-            # Return both calendar and reservations
+            self.debug(f"Processed {len(all_reservations)} total reservations for {user_name}")
             return cal, all_reservations
+            
+        except APIError as e:
+            self.error(f"API Error processing {user_name}: {str(e)}")
+            aggregate_error(
+                f"Reservation error for {user_name}",
+                "reservation",
+                str(e)
+            )
+            raise
+        except Exception as e:
+            self.error(f"Unexpected error processing {user_name}: {str(e)}")
+            aggregate_error(
+                f"Unexpected error for {user_name}",
+                "reservation",
+                str(e)
+            )
+            raise
 
-    def _process_wisegolf_reservation(
-        self,
-        raw_reservation: Dict[str, Any],
-        club: Any,
-        user: User,
-        membership: Membership,
-        cutoff_time: datetime,
-        past_days: int,
-        cal: Calendar,
-        all_reservations: List[Reservation]
-    ) -> None:
-        """Process a WiseGolf reservation."""
-        self.debug(f"Processing WiseGolf reservation: {raw_reservation}")
-        start_time = datetime.strptime(raw_reservation['dateTimeStart'], '%Y-%m-%d %H:%M:%S')
-        start_time = start_time.replace(tzinfo=self.timezone)
-        
-        # Skip if older than cutoff
-        if start_time < cutoff_time:
-            self.debug(f"Skipping old WiseGolf reservation: {start_time}")
-            return
-        
-        reservation = Reservation.from_wisegolf(raw_reservation, club, user, membership)
-        if self._should_include_reservation(reservation, past_days, self.timezone):
-            all_reservations.append(reservation)
-            self._add_reservation_to_calendar(reservation, cal)
-
-    def _process_wisegolf0_reservation(
-        self,
-        raw_reservation: Dict[str, Any],
-        club: Any,
-        user: User,
-        membership: Membership,
-        cutoff_time: datetime,
-        past_days: int,
-        cal: Calendar,
-        all_reservations: List[Reservation]
-    ) -> None:
-        """Process a WiseGolf0 reservation."""
-        self.debug(f"Processing WiseGolf0 reservation: {raw_reservation}")
-        start_time = datetime.strptime(raw_reservation['dateTimeStart'], '%Y-%m-%d %H:%M:%S')
-        start_time = start_time.replace(tzinfo=self.timezone)
-        
-        # Skip if older than cutoff
-        if start_time < cutoff_time:
-            self.debug(f"Skipping old WiseGolf0 reservation: {start_time}")
-            return
-        
-        reservation = Reservation.from_wisegolf0(raw_reservation, club, user, membership)
-        if self._should_include_reservation(reservation, past_days, self.timezone):
-            all_reservations.append(reservation)
-            self._add_reservation_to_calendar(reservation, cal)
-
-    def _process_nexgolf_reservation(
-        self,
-        raw_reservation: Dict[str, Any],
-        club: Any,
-        user: User,
-        membership: Membership,
-        cutoff_time: datetime,
-        past_days: int,
-        cal: Calendar,
-        all_reservations: List[Reservation]
-    ) -> None:
-        """Process a NexGolf reservation."""
-     #   self.debug(f"Processing NexGolf reservation: {raw_reservation}")
-        reservation = Reservation.from_nexgolf(raw_reservation, club, user, membership)
-        
-        # Skip if older than cutoff
-        if reservation.start_time < cutoff_time:
-            self.debug(f"Skipping old NexGolf reservation: {reservation.start_time}")
-            return
-        
-        if self._should_include_reservation(reservation, past_days, self.timezone):
-            all_reservations.append(reservation)
-            self._add_reservation_to_calendar(reservation, cal)
-
-    def _process_teetime_reservation(
-        self,
-        raw_reservation: Dict[str, Any],
-        club: Any,
-        user: User,
-        membership: Membership,
-        cutoff_time: datetime,
-        past_days: int,
-        cal: Calendar,
-        all_reservations: List[Reservation]
-    ) -> None:
-        """Process a TeeTime reservation."""
-        self.debug(f"Processing TeeTime reservation: {raw_reservation}")
-        # Create reservation directly since from_teetime is not available
-        reservation = Reservation(
-            raw_data=raw_reservation,
-            club=club,
-            user=user,
-            membership=membership,
-            start_time=datetime.fromisoformat(raw_reservation['start_time']).replace(tzinfo=self.timezone),
-            end_time=datetime.fromisoformat(raw_reservation['end_time']).replace(tzinfo=self.timezone),
-            players=raw_reservation.get('players', [])  # Add players from raw data or empty list if not present
-        )
-        
-        # Skip if older than cutoff
-        if reservation.start_time < cutoff_time:
-            self.debug(f"Skipping old TeeTime reservation: {reservation.start_time}")
-            return
-        
-        if self._should_include_reservation(reservation, past_days, self.timezone):
-            all_reservations.append(reservation)
-            self._add_reservation_to_calendar(reservation, cal)
+    def _add_reservation_to_calendar(self, reservation: Reservation, cal: Calendar) -> None:
+        """Add a reservation to the calendar."""
+        try:
+            event = Event()
+            
+            # Add basic event details
+            try:
+                event.add('summary', reservation.title)
+                event.add('dtstart', vDatetime(reservation.start_time))
+                event.add('dtend', vDatetime(reservation.end_time))
+                event.add('location', reservation.location or '')
+            except Exception as e:
+                self.error(f"Error setting basic event details: {e}")
+                raise
+            
+            # Create unique event ID
+            try:
+                resource_id = '0'
+                if isinstance(reservation.raw_data, dict):
+                    if 'resourceId' in reservation.raw_data:
+                        resource_id = str(reservation.raw_data.get('resourceId', '0'))
+                    elif 'resources' in reservation.raw_data:
+                        resources = reservation.raw_data.get('resources', [{}])
+                        if resources and isinstance(resources[0], dict):
+                            resource_id = str(resources[0].get('resourceId', '0'))
+                    elif 'id' in reservation.raw_data:
+                        resource_id = str(reservation.raw_data.get('id', '0'))
+                
+                club_abbr = getattr(reservation.membership, 'clubAbbreviation', 'GOLF')
+                event_uid = f"{club_abbr}_{reservation.start_time.strftime('%Y%m%d%H%M')}_{resource_id}_{self.username}"
+                event.add('uid', event_uid)
+            except Exception as e:
+                self.error(f"Error creating event UID: {e}")
+                raise
+            
+            # Add description
+            try:
+                description = reservation.get_event_description()
+                if reservation.weather_summary:
+                    description += f"\n\nWeather: {reservation.weather_summary}"
+                event.add('description', description)
+            except Exception as e:
+                self.error(f"Error setting description: {e}")
+                event.add('description', "Golf Reservation")
+            
+            cal.add_component(event)
+            
+        except Exception as e:
+            self.error(f"Error adding reservation to calendar: {e}")
+            raise
 
     def list_reservations(
         self,
@@ -422,6 +371,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             "list reservations",
             lambda: raise_error("Failed to list reservations")
         ):
+            self.debug("=== Starting list_reservations ===")
             all_reservations: List[Reservation] = []
             now = datetime.now(self.timezone)
             
@@ -429,19 +379,44 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 self.warning(f"User {self.username} not found in configuration")
                 return []
             
+            self.debug(f"Processing user {self.username}")
             user_config = self.config.users[self.username]
-            _, reservations = self.process_user(self.username, user_config, days)
+            self.debug("User config retrieved")
             
-            for reservation in reservations:
-                if active_only and not self._is_active(reservation, now):
-                    continue
-                
-                if upcoming_only and not self._is_upcoming(reservation, now, days):
-                    continue
-                
-                all_reservations.append(reservation)
+            try:
+                self.debug("Calling process_user")
+                _, reservations = self.process_user(self.username, user_config, days)
+                self.debug(f"Got {len(reservations)} reservations from process_user")
+            except Exception as e:
+                self.error(f"Error in process_user: {e}")
+                raise
             
-            return sorted(all_reservations, key=lambda r: r.start_time)
+            for idx, reservation in enumerate(reservations):
+                self.debug(f"Processing reservation {idx + 1}/{len(reservations)}")
+                try:
+                    if active_only:
+                        self.debug("Checking if reservation is active")
+                        if not self._is_active(reservation, now):
+                            self.debug("Reservation is not active, skipping")
+                            continue
+                    
+                    if upcoming_only:
+                        self.debug("Checking if reservation is upcoming")
+                        if not self._is_upcoming(reservation, now, days):
+                            self.debug("Reservation is not upcoming, skipping")
+                            continue
+                    
+                    self.debug("Adding reservation to list")
+                    all_reservations.append(reservation)
+                except Exception as e:
+                    self.error(f"Error processing reservation {idx + 1}: {e}")
+                    self.error(f"Reservation data: {reservation.__dict__}")
+                    raise
+            
+            self.debug(f"Found {len(all_reservations)} matching reservations")
+            sorted_reservations = sorted(all_reservations, key=lambda r: r.start_time)
+            self.debug("=== Finished list_reservations ===")
+            return sorted_reservations
     
     def check_overlaps(self) -> List[Tuple[Reservation, Reservation]]:
         """
@@ -482,22 +457,6 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             res1.start_time < res2.end_time and
             res2.start_time < res1.end_time
         )
-
-    def _add_reservation_to_calendar(self, reservation: Reservation, cal: Calendar) -> None:
-        """Add a reservation to the calendar."""
-        try:
-            # Get club config
-            club_config = self.config.clubs.get(reservation.membership.club, {})
-            
-            # Use event builder like external events do
-            event = self.event_builder.build(reservation, club_config)
-            if event:
-                self._add_event_to_calendar(event, cal)
-            
-        except Exception as e:
-            if hasattr(self, 'logger'):
-                self.logger.error(f"Failed to add reservation to calendar: {e}")
-            return
 
     def _get_club_address(self, club_id: str) -> str:
         """
