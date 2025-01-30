@@ -255,7 +255,11 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                                         lon=club_details.get('coordinates', {}).get('lon')
                                     )
                                     if weather_data:
-                                        reservation.weather_summary = WeatherFormatter.get_weather_summary(weather_data)
+                                        reservation.weather_summary = WeatherFormatter.format_forecast(
+                                            weather_data,
+                                            start_time=reservation.start_time,
+                                            end_time=reservation.end_time
+                                        )
                                 except Exception as e:
                                     self.error(f"Error getting weather data: {e}")
                             
