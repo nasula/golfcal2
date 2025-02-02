@@ -142,29 +142,36 @@ class MetWeatherService(WeatherService):
             prev_time: Optional[datetime] = None
             
             for entry in timeseries:
-                # Handle 'Z' suffix in timestamp by replacing it with +00:00
-                time_str = entry['time'].replace('Z', '+00:00')
-                try:
-                    time = datetime.fromisoformat(time_str)
-                except ValueError:
-                    # If that fails, try parsing without timezone and assume UTC
-                    time = datetime.strptime(entry['time'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+                # MET API always returns UTC times with 'Z' suffix
+                time_str = entry['time']
+                if time_str.endswith('Z'):
+                    time_str = time_str[:-1]  # Remove Z
+                time = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
                 
                 if prev_time and time <= prev_time:
                     continue
                     
                 data = entry['data']['instant']['details']
+                next_hour = entry['data'].get('next_1_hours', {})
+                next_hour_details = next_hour.get('details', {})
+                next_hour_summary = next_hour.get('summary', {})
+                
+                # Get precipitation amount and symbol code from next_1_hours if available
+                precipitation = next_hour_details.get('precipitation_amount', 0.0)
+                symbol_code = next_hour_summary.get('symbol_code', '')
+                
                 weather_data.append(
                     WeatherData(
-                        time=time,
+                        time=time,  # Time is in UTC
                         temperature=data.get('air_temperature', 0.0),
-                        precipitation=data.get('precipitation_amount', 0.0),
+                        precipitation=precipitation,
                         precipitation_probability=0.0,  # MET doesn't provide this
                         wind_speed=data.get('wind_speed', 0.0),
                         wind_direction=data.get('wind_from_direction', 0.0),
-                        weather_code=WeatherCode(self._map_weather_code(data.get('symbol_code', ''))),
+                        weather_code=WeatherCode(self._map_weather_code(symbol_code)),
                         humidity=data.get('relative_humidity', 0.0),
-                        cloud_cover=data.get('cloud_area_fraction', 0.0)
+                        cloud_cover=data.get('cloud_area_fraction', 0.0),
+                        block_duration=timedelta(hours=1)  # MET provides hourly forecasts
                     )
                 )
                 prev_time = time

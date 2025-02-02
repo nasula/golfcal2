@@ -2,7 +2,7 @@
 MET weather service strategy implementation.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 import requests
 
@@ -17,6 +17,18 @@ class MetWeatherStrategy(WeatherStrategy):
     HOURLY_RANGE: int = 48  # 2 days
     SIX_HOURLY_RANGE: int = 240  # 10 days
     MAX_FORECAST_RANGE: int = 216  # 9 days
+    
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get block size based on forecast range.
+        
+        MET provides:
+        - 1-hour blocks for first 48 hours
+        - 6-hour blocks beyond that
+        """
+        if hours_ahead <= self.HOURLY_RANGE:
+            return 1
+        else:
+            return 6
     
     def get_weather(self) -> Optional[WeatherResponse]:
         """Get weather data from MET."""
@@ -100,16 +112,16 @@ class MetWeatherStrategy(WeatherStrategy):
             
             for entry in timeseries:
                 try:
-                    # Handle both ISO format with and without Z suffix
+                    # MET API returns UTC times with 'Z' suffix
                     time_str = entry['time']
                     if time_str.endswith('Z'):
                         time_str = time_str[:-1]  # Remove Z
-                        time = datetime.fromisoformat(time_str).replace(tzinfo=self.context.utc_tz)
-                    else:
-                        time = datetime.fromisoformat(time_str)
+                    time = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
                     
-                    if not (self.context.start_time <= time <= self.context.end_time):
-                        continue
+                    # Calculate hours ahead for block size (ensure UTC)
+                    now_utc = datetime.now(timezone.utc)
+                    hours_ahead = (time - now_utc).total_seconds() / 3600
+                    block_duration = timedelta(hours=self.get_block_size(hours_ahead))
                     
                     instant = entry['data']['instant']['details']
                     next_hour = entry['data'].get('next_1_hours', {})
@@ -130,29 +142,22 @@ class MetWeatherStrategy(WeatherStrategy):
                     thunder_prob = next_hour_details.get('probability_of_thunder', 0.0)
                     
                     weather_data.append(WeatherData(
-                        time=time,
+                        time=time,  # Time is in UTC
                         temperature=instant.get('air_temperature', 0.0),
                         precipitation=next_hour_details.get('precipitation_amount', 0.0),
                         wind_speed=instant.get('wind_speed', 0.0),
                         wind_direction=instant.get('wind_from_direction', 0.0),
                         precipitation_probability=precipitation_prob,
                         thunder_probability=thunder_prob,
-                        weather_code=weather_code
+                        weather_code=weather_code,
+                        block_duration=block_duration
                     ))
-                except ValueError as e:
-                    self.warning(f"Failed to parse timestamp {entry['time']}: {e}")
+                except Exception as e:
+                    self.error(f"Failed to parse entry: {e}", exc_info=True)
                     continue
             
-            # Get elaboration time from response metadata or use current time
-            elaboration_time = datetime.now(self.context.utc_tz)
-            if 'meta' in response_data and 'updated_at' in response_data['meta']:
-                try:
-                    time_str = response_data['meta']['updated_at']
-                    if time_str.endswith('Z'):
-                        time_str = time_str[:-1]
-                    elaboration_time = datetime.fromisoformat(time_str).replace(tzinfo=self.context.utc_tz)
-                except ValueError:
-                    pass
+            # Get elaboration time in UTC
+            elaboration_time = datetime.now(timezone.utc)
             
             return WeatherResponse(
                 data=weather_data,

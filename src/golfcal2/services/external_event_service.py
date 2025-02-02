@@ -86,9 +86,9 @@ class ExternalEventService(EnhancedLoggerMixin):
         # Reset processed events
         self._processed_events = []
         
-        # Use current time as cutoff (instead of 24 hours ago)
+        # Use start of current day as cutoff
         now = datetime.now(self.default_timezone)
-        cutoff_time = now
+        cutoff_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
         self.logger.debug(f"Using cutoff time: {cutoff_time}")
         
         for event_data in self.load_events(dev_mode):

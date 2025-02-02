@@ -309,12 +309,15 @@ def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = Fal
     # Register custom logger class
     logging.setLoggerClass(StructuredLogger)
     
-    # Set up service loggers
-    for service_name in logging_config.services:
+    # Set up service loggers with proper propagation
+    for service_name, service_config in logging_config.services.items():
         service_logger = get_service_logger(
             service_name,
             logging_config,
             logging.DEBUG if verbose else logging.INFO
         )
         # Ensure service loggers propagate to root
-        service_logger.propagate = True 
+        service_logger.propagate = True
+        
+    # Log initial setup
+    root_logger.debug("Logging initialized in verbose mode") if verbose else root_logger.info("Logging initialized") 

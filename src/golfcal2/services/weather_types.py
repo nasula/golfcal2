@@ -344,8 +344,13 @@ class WeatherResponse:
         for item in data['data']:
             # Convert block_duration from seconds back to timedelta
             block_duration = timedelta(seconds=item['block_duration'])
-            # Parse time from ISO format
+            # Parse time from ISO format and ensure UTC
             time = datetime.fromisoformat(item['time'])
+            if not time.tzinfo:
+                time = time.replace(tzinfo=timezone.utc)
+            elif time.tzinfo != timezone.utc:
+                time = time.astimezone(timezone.utc)
+            
             # Create WeatherData object
             weather_data.append(WeatherData(
                 temperature=item['temperature'],
@@ -354,20 +359,28 @@ class WeatherResponse:
                 wind_speed=item['wind_speed'],
                 wind_direction=item['wind_direction'],
                 weather_code=WeatherCode(item['weather_code']),
-                time=time,
+                time=time,  # Now guaranteed to be in UTC
                 thunder_probability=item.get('thunder_probability', 0.0),
                 block_duration=block_duration,
                 humidity=item.get('humidity', 0.0),
                 cloud_cover=item.get('cloud_cover', 0.0)
             ))
         
-        # Parse elaboration_time from ISO format
+        # Parse elaboration_time from ISO format and ensure UTC
         elaboration_time = datetime.fromisoformat(data['elaboration_time'])
+        if not elaboration_time.tzinfo:
+            elaboration_time = elaboration_time.replace(tzinfo=timezone.utc)
+        elif elaboration_time.tzinfo != timezone.utc:
+            elaboration_time = elaboration_time.astimezone(timezone.utc)
         
-        # Parse expires if present
+        # Parse expires if present and ensure UTC
         expires = None
         if data.get('expires'):
             expires = datetime.fromisoformat(data['expires'])
+            if not expires.tzinfo:
+                expires = expires.replace(tzinfo=timezone.utc)
+            elif expires.tzinfo != timezone.utc:
+                expires = expires.astimezone(timezone.utc)
         
         return cls(
             data=weather_data,

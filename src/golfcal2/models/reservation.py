@@ -816,30 +816,48 @@ class Reservation(LoggerMixin):
 
     @staticmethod
     def _parse_dynamic_time(time_str: str, timezone: str) -> datetime:
-        """Parse dynamic time string (e.g., 'tomorrow 10:00')."""
+        """Parse dynamic time string (e.g., 'tomorrow 10:00' or '3 days 09:30')."""
         parts = time_str.split()
-        if len(parts) != 2:
-            raise ValueError(f"Invalid time format: {time_str}")
         
-        time_parts = parts[1].split(':')
+        # Get current date in the target timezone
+        now = datetime.now(ZoneInfo(timezone))
+        
+        # Parse the time part (always the last part)
+        time_part = parts[-1]
+        time_parts = time_part.split(':')
         if len(time_parts) != 2:
-            raise ValueError(f"Invalid time format: {parts[1]}")
+            raise ValueError(f"Invalid time format: {time_part}")
         
         hour = int(time_parts[0])
         minute = int(time_parts[1])
         
-        now = datetime.now(ZoneInfo(timezone))
-        if parts[0] == 'tomorrow':
-            target_date = now.date() + timedelta(days=1)
-        elif parts[0] == 'today':
-            target_date = now.date()
-        else:
-            # Format: "N days"
-            try:
-                days = int(parts[0].split()[0])
-                target_date = now.date() + timedelta(days=days)
-            except (ValueError, IndexError):
-                raise ValueError(f"Invalid date format: {parts[0]}")
+        # Initialize result with today's date and the specified time
+        result = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         
-        return datetime.combine(target_date, datetime.min.time().replace(hour=hour, minute=minute), tzinfo=ZoneInfo(timezone))
+        # Handle date part
+        if len(parts) == 2:
+            if parts[0] == 'tomorrow':
+                result += timedelta(days=1)
+            elif parts[0] == 'today':
+                pass  # Already set to today
+            elif parts[0].isdigit():
+                # Format: "N days"
+                days = int(parts[0])
+                result += timedelta(days=days)
+            else:
+                raise ValueError(f"Invalid date format: {parts[0]}")
+        elif len(parts) == 3:
+            if parts[1] == 'days':
+                # Format: "N days HH:MM"
+                try:
+                    days = int(parts[0])
+                    result += timedelta(days=days)
+                except ValueError:
+                    raise ValueError(f"Invalid number of days: {parts[0]}")
+            else:
+                raise ValueError(f"Invalid format: expected 'days' but got '{parts[1]}'")
+        else:
+            raise ValueError(f"Invalid time format: {time_str}")
+        
+        return result
 

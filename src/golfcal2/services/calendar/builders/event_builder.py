@@ -134,13 +134,25 @@ class ExternalEventBuilder(EventBuilder):
             event = Event()
             event.add('summary', f"Golf: {event_data['name']}")
             
-            # Use the original timezone from start time
-            event_timezone = start.tzinfo
-            self.debug(f"Using timezone {event_timezone} from start time")
+            # Get proper timezone from event data or config
+            timezone_name = event_data.get('timezone', self.config.global_config.get('timezone', 'Europe/Helsinki'))
+            event_timezone = ZoneInfo(timezone_name)
+            self.debug(f"Using timezone {timezone_name} for event")
             
-            # Add times with original timezone
-            event.add('dtstart', vDatetime(start))
-            event.add('dtend', vDatetime(end))
+            # Ensure times are in the correct timezone
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=event_timezone)
+            else:
+                start = start.astimezone(event_timezone)
+                
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=event_timezone)
+            else:
+                end = end.astimezone(event_timezone)
+            
+            # Add times with timezone
+            event.add('dtstart', vDatetime(start), parameters={'TZID': [timezone_name]})
+            event.add('dtend', vDatetime(end), parameters={'TZID': [timezone_name]})
             event.add('dtstamp', vDatetime(datetime.now(timezone.utc)), parameters={'VALUE': ['DATE-TIME']})
             
             # Generate and add UID
@@ -155,11 +167,6 @@ class ExternalEventBuilder(EventBuilder):
             from golfcal2.models.golf_club import ExternalGolfClub
             from golfcal2.models.user import User, Membership
             from golfcal2.models.reservation import Reservation
-            
-            # Get proper timezone name from config or use a default
-            timezone_name = self.config.global_config.get('timezone', 'Europe/Helsinki')
-            if hasattr(event_timezone, 'key'):
-                timezone_name = event_timezone.key
             
             club = ExternalGolfClub(
                 name=event_data['name'],

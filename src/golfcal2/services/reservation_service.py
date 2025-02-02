@@ -9,6 +9,7 @@ from typing_extensions import Never
 from zoneinfo import ZoneInfo
 import requests
 from icalendar import Event, Calendar, vText, vDatetime  # type: ignore
+import yaml
 
 from golfcal2.models.golf_club import GolfClubFactory, GolfClub, AppConfigProtocol as GolfClubConfigProtocol
 from golfcal2.models.reservation import Reservation
@@ -121,7 +122,9 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             )
             
             reservations: List[Reservation] = []
-            cutoff_time = datetime.now(ZoneInfo(self.config.get('timezone', 'UTC'))) - timedelta(days=past_days)
+            # Use start of current day as cutoff
+            now = datetime.now(ZoneInfo(self.config.get('timezone', 'UTC')))
+            cutoff_time = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=past_days)
             
             # Process each membership
             for membership in user.memberships:
@@ -171,7 +174,8 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                                     end_time=reservation.end_time
                                 )
                                 if weather_data:
-                                    reservation.weather_summary = weather_data.format_forecast(
+                                    reservation.weather_summary = WeatherFormatter.format_forecast(
+                                        weather_data,
                                         start_time=reservation.start_time,
                                         end_time=reservation.end_time
                                     )
@@ -350,8 +354,6 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             lambda: raise_error("Failed to list reservations")
         ):
             self.debug("=== Starting list_reservations ===")
-            all_reservations: List[Reservation] = []
-            now = datetime.now(self.timezone)
             
             if self.username not in self.config.users:
                 self.warning(f"User {self.username} not found in configuration")
@@ -365,36 +367,21 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 self.debug("Calling process_user")
                 reservations = self.process_user(self.username, user_config, days)
                 self.debug(f"Got {len(reservations)} reservations from process_user")
+                
+                # Filter reservations based on flags
+                now = datetime.now(self.timezone)
+                if active_only:
+                    reservations = [r for r in reservations if self._is_active(r, now)]
+                if upcoming_only:
+                    reservations = [r for r in reservations if self._is_upcoming(r, now, days)]
+                
+                self.debug(f"Found {len(reservations)} matching reservations")
+                self.debug("=== Finished list_reservations ===")
+                return sorted(reservations, key=lambda r: r.start_time)
+                
             except Exception as e:
                 self.error(f"Error in process_user: {e}")
                 raise
-            
-            for idx, reservation in enumerate(reservations):
-                self.debug(f"Processing reservation {idx + 1}/{len(reservations)}")
-                try:
-                    if active_only:
-                        self.debug("Checking if reservation is active")
-                        if not self._is_active(reservation, now):
-                            self.debug("Reservation is not active, skipping")
-                            continue
-                    
-                    if upcoming_only:
-                        self.debug("Checking if reservation is upcoming")
-                        if not self._is_upcoming(reservation, now, days):
-                            self.debug("Reservation is not upcoming, skipping")
-                            continue
-                    
-                    self.debug("Adding reservation to list")
-                    all_reservations.append(reservation)
-                except Exception as e:
-                    self.error(f"Error processing reservation {idx + 1}: {e}")
-                    self.error(f"Reservation data: {reservation.__dict__}")
-                    raise
-            
-            self.debug(f"Found {len(all_reservations)} matching reservations")
-            sorted_reservations = sorted(all_reservations, key=lambda r: r.start_time)
-            self.debug("=== Finished list_reservations ===")
-            return sorted_reservations
     
     def check_overlaps(self) -> List[Tuple[Reservation, Reservation]]:
         """
@@ -498,5 +485,101 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
     def cleanup_weather_cache(self) -> int:
         """Clean up expired weather cache entries."""
         return self.weather_service.cleanup_cache()
+
+    def get_test_events(self, days: int = 1) -> List[Reservation]:
+        """Get test events from test_events.yaml file.
+        
+        Args:
+            days: Number of days to look ahead/behind
+            
+        Returns:
+            List of test reservations
+        """
+        try:
+            # Load test events from YAML file
+            config_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            test_events_path = os.path.join(config_dir, 'config', 'test_events.yaml')
+            
+            if not os.path.exists(test_events_path):
+                self.warning(f"Test events file not found: {test_events_path}")
+                return []
+            
+            with open(test_events_path, 'r') as f:
+                test_events = yaml.safe_load(f)
+            
+            if not test_events:
+                return []
+            
+            # Convert test events to reservations
+            reservations = []
+            for event in test_events:
+                # Skip if event is not for current user
+                if self.username not in event.get('users', []):
+                    continue
+                
+                try:
+                    reservation = Reservation.from_external_event(event, self.user)
+                    # Only include events within the specified time range
+                    if reservation.start_time and reservation.end_time:
+                        now = datetime.now(self.timezone)
+                        cutoff = now - timedelta(days=days)
+                        if reservation.start_time >= cutoff:
+                            reservations.append(reservation)
+                except Exception as e:
+                    self.error(f"Failed to create test reservation: {e}")
+                    continue
+            
+            return reservations
+            
+        except Exception as e:
+            self.error(f"Failed to load test events: {e}")
+            return []
+
+    def _parse_dynamic_time(self, time_str: str, timezone: ZoneInfo) -> datetime:
+        """Parse a dynamic time string like 'tomorrow 10:00' or '3 days 09:30'."""
+        try:
+            # Split into parts
+            parts = time_str.split()
+            
+            # Get current date in the target timezone
+            now = datetime.now(timezone)
+            
+            # Parse the time part (always the last part)
+            time_part = parts[-1]
+            hour, minute = map(int, time_part.split(':'))
+            
+            # Initialize result with today's date and the specified time
+            result = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            # Handle date part
+            if len(parts) == 2:
+                if parts[0] == 'tomorrow':
+                    result += timedelta(days=1)
+                elif parts[0] == 'today':
+                    pass  # Already set to today
+                elif parts[0].isdigit():
+                    # Format: "N days"
+                    days = int(parts[0])
+                    result += timedelta(days=days)
+                else:
+                    raise ValueError(f"Invalid date format: {parts[0]}")
+            elif len(parts) == 3:
+                if parts[1] == 'days':
+                    # Format: "N days HH:MM"
+                    try:
+                        days = int(parts[0])
+                        result += timedelta(days=days)
+                    except ValueError:
+                        raise ValueError(f"Invalid number of days: {parts[0]}")
+                else:
+                    raise ValueError(f"Invalid format: expected 'days' but got '{parts[1]}'")
+            else:
+                raise ValueError(f"Invalid time format: {time_str}")
+            
+            return result
+            
+        except Exception as e:
+            self.error(f"Failed to parse dynamic time '{time_str}': {e}", exc_info=True)
+            raise ValueError(f"Invalid time format: {time_str}")
 
     

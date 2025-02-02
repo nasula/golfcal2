@@ -139,8 +139,8 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             self.error(f"Error checking configuration: {str(e)}")
             return False
 
-    def process_user_reservations(self, user: User, reservations: List[Reservation]) -> None:
-        """Process reservations for a user."""
+    def process_user_reservations(self, user: User, reservations: List[Reservation]) -> Calendar:
+        """Process reservations for a user and return the calendar object."""
         try:
             # Create base calendar
             calendar = self.build_base_calendar(user.name, self.local_tz)
@@ -160,15 +160,18 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                 # Add external events
                 self._process_external_events(calendar, user.name)
                 
-                # Write calendar to file
-                file_path = self._get_calendar_path(user.name)
-                self._write_calendar(calendar, file_path, user.name)
+                # Write calendar to file if not in list-only mode
+                if not getattr(self, 'list_only', False):
+                    file_path = self._get_calendar_path(user.name)
+                    self._write_calendar(calendar, file_path, user.name)
                 
                 self.logger.info(
                     f"Calendar created for user {user.name} with "
                     f"{len(reservations)} reservations and "
                     f"{len(self.external_event_service.get_events())} external events"
                 )
+                
+                return calendar
                 
         except Exception as e:
             error = CalendarError(

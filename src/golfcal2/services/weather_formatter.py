@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional, Union, Sequence
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from golfcal2.services.weather_types import WeatherData, WeatherResponse
 from golfcal2.utils.weather_utils import get_weather_symbol
 
@@ -11,9 +11,9 @@ class WeatherFormatter:
         """Format weather forecast for display.
         
         Args:
-            weather_data: Weather data to format
-            start_time: Optional start time to filter forecasts
-            end_time: Optional end time to filter forecasts
+            weather_data: Weather data to format (timestamps in UTC)
+            start_time: Optional start time to filter forecasts (in event timezone)
+            end_time: Optional end time to filter forecasts (in event timezone)
             
         Returns:
             Formatted weather forecast string
@@ -27,48 +27,64 @@ class WeatherFormatter:
         if not data_list:
             return "No forecast available"
             
-        # Get event timezone from first forecast
-        event_tz = data_list[0].time.tzinfo if data_list else None
-        
-        # Convert all forecasts to event timezone and sort by time
-        normalized_data = []
-        for forecast in data_list:
-            if event_tz and forecast.time.tzinfo != event_tz:
-                forecast.time = forecast.time.astimezone(event_tz)
-            normalized_data.append(forecast)
-        
-        normalized_data = sorted(normalized_data, key=lambda x: x.time)
-        
-        def get_block_end(forecasts: List[WeatherData], index: int, event_end: datetime = None) -> datetime:
-            """Get the end time of a forecast block."""
-            return forecasts[index + 1].time if index < len(forecasts) - 1 else forecasts[index].time + timedelta(hours=6)
-        
-        # Filter forecasts if time range provided
-        if start_time and end_time:
-            filtered_data = []
-            for i, curr in enumerate(normalized_data):
-                block_end = get_block_end(normalized_data, i, end_time)
-                if curr.time <= end_time and block_end > start_time:
-                    filtered_data.append(curr)
-        else:
-            filtered_data = normalized_data
+        # Get event timezone from start_time
+        event_tz = start_time.tzinfo if start_time else None
+        if not event_tz:
+            return "No timezone information available"
             
-        if not filtered_data:
+        # Convert event times to UTC for comparison with forecast times
+        utc = timezone.utc
+        if start_time:
+            start_time_utc = start_time.astimezone(utc)
+        if end_time:
+            end_time_utc = end_time.astimezone(utc)
+        
+        filtered = []
+        for forecast in data_list:
+            # Ensure forecast time is UTC
+            forecast_time = forecast.time
+            if forecast_time.tzinfo is None:
+                forecast_time = forecast_time.replace(tzinfo=utc)
+            else:
+                forecast_time = forecast_time.astimezone(utc)
+            
+            # Calculate block end time in UTC
+            forecast_end = forecast_time + forecast.block_duration
+            
+            # Check overlap with event time window
+            if start_time_utc and forecast_end <= start_time_utc:
+                continue
+            if end_time_utc and forecast_time >= end_time_utc:
+                continue
+            
+            filtered.append(forecast)
+        
+        if not filtered:
             return "No forecast available for event time"
             
+        # Sort forecasts by time (still in UTC)
+        filtered_data = sorted(filtered, key=lambda x: x.time)
+        
+        # Format forecasts in event timezone
         formatted_lines = []
         for i, forecast in enumerate(filtered_data):
-            # Get block end time
-            block_end = get_block_end(filtered_data, i, end_time)
+            # Convert forecast time to event timezone for display
+            local_time = forecast.time.astimezone(event_tz)
             
-            # Calculate time difference in hours
-            time_diff = (block_end - forecast.time).total_seconds() / 3600
+            # Calculate block end time
+            block_end = local_time + forecast.block_duration
             
             # Format time string based on block size
+            time_diff = forecast.block_duration.total_seconds() / 3600
             if time_diff > 1:
-                time_str = f"{forecast.time.strftime('%H:%M')}-{block_end.strftime('%H:%M')}"
+                # If block end is on the next day, include the date
+                if block_end.date() > local_time.date():
+                    time_str = f"{local_time.strftime('%H:%M')}-{block_end.strftime('%H:%M')} (+1)"
+                else:
+                    time_str = f"{local_time.strftime('%H:%M')}-{block_end.strftime('%H:%M')}"
             else:
-                time_str = forecast.time.strftime('%H:%M')
+                # Even for 1-hour blocks, show the end time for consistency
+                time_str = f"{local_time.strftime('%H:%M')}-{block_end.strftime('%H:%M')}"
             
             # Get weather symbol
             symbol = get_weather_symbol(forecast.weather_code.value)
@@ -76,8 +92,8 @@ class WeatherFormatter:
             # Build weather line with optional precipitation and thunder probability
             parts = [time_str, symbol, f"{forecast.temperature:.1f}°C", f"{forecast.wind_speed:.1f}m/s"]
             
-            # Show precipitation info if there's any chance of rain or actual precipitation
-            if forecast.precipitation_probability is not None and forecast.precipitation_probability > 0:
+            # Show precipitation info if available
+            if hasattr(forecast, 'precipitation_probability'):
                 if forecast.precipitation and forecast.precipitation > 0:
                     parts.append(f"💧{forecast.precipitation_probability:.0f}% {forecast.precipitation:.1f}mm")
                 else:

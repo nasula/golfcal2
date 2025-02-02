@@ -59,6 +59,21 @@ class WeatherStrategy(ABC, LoggerMixin):
         """Get expiry time for cached weather data."""
         pass
 
+    @abstractmethod
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get block size for forecast range.
+        
+        Each weather service must implement its own block size pattern
+        based on how it provides forecast data.
+        
+        Args:
+            hours_ahead: Number of hours ahead in the forecast
+            
+        Returns:
+            Block size in hours for the given forecast range
+        """
+        pass
+
 class WeatherService:
     """Unified weather service."""
     
@@ -135,6 +150,13 @@ class WeatherService:
             # Get weather data
             strategy = strategy_class(context)
             response = strategy.get_weather()
+            
+            # If OpenMeteo fails, try Met as fallback
+            if not response and service_type == 'openmeteo':
+                met_strategy = self._strategies['met'](context)
+                response = met_strategy.get_weather()
+                if response:
+                    service_type = 'met'  # Update service type for caching
             
             # Cache response if successful
             if response:

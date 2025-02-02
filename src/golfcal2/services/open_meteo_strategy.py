@@ -2,7 +2,7 @@
 OpenMeteo weather service strategy implementation.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 import requests
 
@@ -16,6 +16,7 @@ class OpenMeteoStrategy(WeatherStrategy):
     service_type: str = "openmeteo"
     HOURLY_RANGE: int = 168  # 7 days
     MAX_FORECAST_RANGE: int = 168  # 7 days
+    BLOCK_SIZE: int = 1  # Always use 1-hour blocks
     
     # OpenMeteo weather code mapping
     # https://open-meteo.com/en/docs#weathervariables
@@ -92,14 +93,30 @@ class OpenMeteoStrategy(WeatherStrategy):
                     'precipitation_probability',
                     'windspeed_10m',
                     'winddirection_10m',
-                    'weathercode',
-                    'thunder_probability'
+                    'weathercode'
                 ],
-                'timezone': self.context.local_tz.key
+                'timezone': 'UTC'  # Explicitly request UTC timestamps
             }
+            
+            # Log request details
+            self.debug(
+                "Making OpenMeteo API request",
+                url=base_url,
+                params=params,
+                start_time=self.context.start_time.isoformat(),
+                end_time=self.context.end_time.isoformat()
+            )
             
             # Make request
             response = requests.get(base_url, params=params)
+            
+            # Log response details
+            self.debug(
+                "OpenMeteo API response",
+                status_code=response.status_code,
+                response_text=response.text[:1000] if response.text else None,
+                url=response.url
+            )
             
             # Handle response
             if response.status_code == 200:
@@ -107,10 +124,15 @@ class OpenMeteoStrategy(WeatherStrategy):
             elif response.status_code == 429:
                 raise APIError("Rate limit exceeded", ErrorCode.RATE_LIMITED)
             else:
-                raise APIError(
-                    f"API request failed with status {response.status_code}",
-                    ErrorCode.SERVICE_UNAVAILABLE
-                )
+                error_msg = f"API request failed with status {response.status_code}"
+                if response.text:
+                    try:
+                        error_data = response.json()
+                        if 'reason' in error_data:
+                            error_msg += f": {error_data['reason']}"
+                    except:
+                        error_msg += f" - {response.text[:200]}"
+                raise APIError(error_msg, ErrorCode.SERVICE_UNAVAILABLE)
                 
         except requests.exceptions.RequestException as e:
             self.error(f"Request failed: {e}")
@@ -130,10 +152,8 @@ class OpenMeteoStrategy(WeatherStrategy):
             weather_data: List[WeatherData] = []
             
             for i, time_str in enumerate(times):
-                # Parse time and ensure it's timezone-aware
-                time = datetime.fromisoformat(time_str).replace(tzinfo=self.context.local_tz)
-                if not (self.context.start_time <= time <= self.context.end_time):
-                    continue
+                # OpenMeteo returns UTC times, force UTC timezone
+                time = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
                 
                 # Map OpenMeteo weather codes to WeatherCode enum
                 weather_code = hourly['weathercode'][i]
@@ -145,21 +165,20 @@ class OpenMeteoStrategy(WeatherStrategy):
                 wind_speed = hourly['windspeed_10m'][i] or 0.0
                 wind_direction = hourly['winddirection_10m'][i] or 0.0
                 precipitation_probability = hourly.get('precipitation_probability', [0.0])[i] or 0.0
-                thunder_probability = hourly.get('thunder_probability', [0.0])[i] or 0.0
                 
                 weather_data.append(WeatherData(
-                    time=time,
+                    time=time,  # Time is in UTC
                     temperature=temperature,
                     precipitation=precipitation,
                     wind_speed=wind_speed,
                     wind_direction=wind_direction,
                     precipitation_probability=precipitation_probability,
-                    thunder_probability=thunder_probability,
-                    weather_code=weather_code_enum
+                    weather_code=weather_code_enum,
+                    block_duration=timedelta(hours=1)  # OpenMeteo always uses 1-hour blocks
                 ))
             
-            # Get elaboration time from response metadata or use current time
-            elaboration_time = datetime.now(self.context.utc_tz)
+            # Get elaboration time in UTC
+            elaboration_time = datetime.now(timezone.utc)
             
             return WeatherResponse(
                 data=weather_data,
@@ -201,4 +220,12 @@ class OpenMeteoStrategy(WeatherStrategy):
             96: "thunderstorm",  # Thunderstorm with slight hail
             99: "thunderstorm"  # Thunderstorm with heavy hail
         }
-        return mapping.get(code, "clearsky") 
+        return mapping.get(code, "clearsky")
+    
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get block size for forecast range.
+        
+        OpenMeteo provides hourly data for the entire forecast period,
+        so we always use 1-hour blocks regardless of how far ahead we're looking.
+        """
+        return 1 

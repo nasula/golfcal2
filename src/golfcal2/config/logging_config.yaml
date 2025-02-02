@@ -65,7 +65,7 @@ services:
   calendar_service:
     level: DEBUG
     sampling:
-      debug_rate: 0.2    # Only applies when verbose mode enabled
+      debug_rate: 1.0    # Only applies when verbose mode enabled
       info_rate: 1.0     # Keep all info logs
       warning_rate: 1.0  # Keep all warning logs
       error_rate: 1.0    # Keep all error logs
@@ -82,7 +82,7 @@ services:
 
   # Authentication service logging
   auth:
-    level: WARNING
+    level: DEBUG
     sensitive_fields:
       - password
       - token
@@ -102,7 +102,7 @@ services:
   reservation_service:
     level: DEBUG
     sampling:
-      debug_rate: 0.2    # Only applies when verbose mode enabled
+      debug_rate: 1.0    # Only applies when verbose mode enabled
       info_rate: 1.0     # Keep all info logs
       warning_rate: 1.0  # Keep all warning logs
       error_rate: 1.0    # Keep all error logs
@@ -122,7 +122,7 @@ services:
   club_service:
     level: DEBUG
     sampling:
-      debug_rate: 0.1    # Only applies when verbose mode enabled
+      debug_rate: 1.0    # Only applies when verbose mode enabled
       info_rate: 1.0     # Keep all info logs
       warning_rate: 1.0  # Keep all warning logs
       error_rate: 1.0    # Keep all error logs
