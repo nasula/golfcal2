@@ -299,6 +299,15 @@ def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = Fal
         file_handler.setLevel(logging.DEBUG)
         root_logger.addHandler(file_handler)
     
+    # Set up journald handler if enabled
+    journald_config = config.global_config.get('logging', {}).get('journald', {})
+    if journald_config.get('enabled', True):  # Enable by default
+        from golfcal2.config.logging_handlers import JournaldHandler
+        journald_handler = JournaldHandler(identifier=journald_config.get('identifier', 'golfcal2'))
+        journald_handler.setFormatter(logging.Formatter(journald_config.get('format', '%(name)s: %(levelname)s %(message)s')))
+        journald_handler.setLevel(getattr(logging, journald_config.get('level', 'INFO')))
+        root_logger.addHandler(journald_handler)
+    
     # Configure library logging
     for lib, level in logging_config.libraries.items():
         lib_logger = logging.getLogger(lib)

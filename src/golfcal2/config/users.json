@@ -25,13 +25,13 @@
         "club": "PGC",
         "id": 33046,
         "auth_details": {
-          "cookie_value": "FB97678E02A524DDD872CF0B24F3EE49",
-          "X-Auth-Token": "b3e36785009ba6c288bf91529a76f18b"
+          "cookie_value": "D196905BE26AC1697394C136AF28A5FC",
+          "X-Auth-Token": "3f6c785077a73cd012ed7babd444779c"
         },
         "headers": {
           "Accept": "application/json, text/plain, */*",
-          "Cookie": "NGLOCALE=fi; JSESSIONID=FB97678E02A524DDD872CF0B24F3EE49",
-          "X-Auth-Token": "b3e36785009ba6c288bf91529a76f18b"
+          "Cookie": "NGLOCALE=fi; JSESSIONID=D196905BE26AC1697394C136AF28A5FC",
+          "X-Auth-Token": "3f6c785077a73cd012ed7babd444779c"
         },
         "duration": { "hours": 4, "minutes": 30 }
       },

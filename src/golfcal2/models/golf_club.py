@@ -1,13 +1,13 @@
 # golfclub.py
 
 """
-Golf club models.
+Golf club models for golf calendar application.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Union, cast, Type, TypeVar, Protocol, NoReturn
+from typing import Dict, Any, List, Optional, Union, cast, Type, TypeVar, Protocol, NoReturn, runtime_checkable
 from zoneinfo import ZoneInfo
 
 from golfcal2.models.user import Membership
@@ -45,6 +45,9 @@ class GolfClub(ABC, LoggerMixin):
     _tz_manager: Optional[TimezoneManager] = None
     config: Optional[AppConfigProtocol] = None
     clubAbbreviation: Optional[str] = None
+    _auth_headers: Dict[str, str] = field(default_factory=dict)
+    membership: Optional[Membership] = None
+    api_client: Optional[Union[WiseGolfAPI, WiseGolf0API]] = None
 
     def __post_init__(self) -> None:
         """Initialize after dataclass initialization."""
@@ -63,6 +66,10 @@ class GolfClub(ABC, LoggerMixin):
         # Initialize coordinates if not set
         if self.coordinates is None:
             self.coordinates = {}
+
+        # Initialize API client if auth service is provided
+        if self.auth_service and self.membership:
+            self._init_api_client()
 
     def _ensure_timezone_manager(self) -> TimezoneManager:
         """Ensure timezone manager is initialized."""
@@ -170,6 +177,86 @@ class GolfClub(ABC, LoggerMixin):
             end_time = tz_manager.localize_datetime(end_time)
         return end_time
 
+    def set_auth_headers(self, headers: Dict[str, str]) -> None:
+        """Set authentication headers.
+        
+        Args:
+            headers: Dictionary of headers to use for authentication
+        """
+        self._auth_headers = headers
+        self.logger.debug(f"Set auth headers: {headers}")
+
+    def _init_api_client(self) -> None:
+        """Initialize API client based on club type."""
+        if not self.auth_service or not self.membership or not self.club_details:
+            self.logger.error("Missing required components for API client initialization")
+            return
+            
+        club_type = self.club_details.get('type', '')
+        
+        # Get appropriate URL based on club type
+        if club_type == "wisegolf":
+            base_url = self.club_details.get("ajaxUrl")  # Use ajaxUrl for WiseGolf
+            if not base_url:
+                self.logger.error("No ajaxUrl found for WiseGolf club")
+                return
+                
+            self.api_client = WiseGolfAPI(
+                base_url,
+                self.auth_service,
+                self.club_details,
+                self.membership.__dict__,
+                self  # Pass self as the club instance
+            )
+            
+        elif club_type == "wisegolf0":
+            base_url = self.club_details.get("shopURL")  # Use shopURL for WiseGolf0
+            if not base_url:
+                self.logger.error("No shopURL found for WiseGolf0 club")
+                return
+                
+            self.api_client = WiseGolf0API(
+                base_url,
+                self.auth_service,
+                self.club_details,
+                self.membership.__dict__,
+                self  # Pass self as the club instance
+            )
+            
+        elif club_type == "nexgolf":
+            base_url = self.club_details.get("url")
+            if not base_url:
+                self.logger.error("No URL found for NexGolf club")
+                return
+                
+            self.api_client = NexGolfAPI(
+                base_url,
+                self.auth_service,
+                self.club_details,
+                self.membership.__dict__,
+                self  # Pass self as the club instance
+            )
+            
+        elif club_type == "teetime":
+            base_url = self.club_details.get("url")
+            if not base_url:
+                self.logger.error("No URL found for TeeTime club")
+                return
+                
+            self.api_client = TeeTimeAPI(
+                base_url,
+                self.auth_service,
+                self.club_details,
+                self.membership.__dict__,
+                self  # Pass self as the club instance
+            )
+            
+        else:
+            self.logger.warning(f"Unsupported club type: {club_type}")
+            return
+            
+        self.logger.debug(f"Initialized API client for club type: {club_type}")
+
 class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
     """Base class for WiseGolf clubs."""
     
@@ -185,7 +272,8 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
         auth_service: Optional[AuthService] = None,
         club_details: Optional[Dict[str, Any]] = None,
         config: Optional[AppConfigProtocol] = None,
-        clubAbbreviation: Optional[str] = None
+        clubAbbreviation: Optional[str] = None,
+        membership: Optional[Membership] = None
     ) -> None:
         """Initialize WiseGolf club."""
         # Extract clubAbbreviation from club_details if not provided
@@ -203,7 +291,8 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
             auth_service=auth_service,
             club_details=club_details,
             config=config,
-            clubAbbreviation=clubAbbreviation
+            clubAbbreviation=clubAbbreviation,
+            membership=membership
         )
 
     @abstractmethod
@@ -223,11 +312,14 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
         club_details = self._ensure_club_details()
         
         self.logger.debug(f"Creating {api_class.__name__} instance with URL: {rest_url}")
+        
+        # Create API client with the club instance
         api = api_class(
             rest_url,
             auth_service,
             club_details,
-            membership.__dict__
+            membership.__dict__,
+            self  # Pass self as the club instance
         )
         
         self.logger.debug("Fetching players")
@@ -256,18 +348,12 @@ class WiseGolfClub(BaseWiseGolfClub):
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from WiseGolf API."""
-        auth_service = self._ensure_auth_service()
-        club_details = self._ensure_club_details()
+        if not self.api_client:
+            self.logger.error("No API client available")
+            return []
             
-        self.logger.debug(f"Creating WiseGolfAPI instance with URL: {self.url}")
-        api = WiseGolfAPI(
-            self.url,
-            auth_service,
-            club_details,
-            membership.__dict__
-        )
-        self.logger.debug("Fetching reservations")
-        reservations = api.get_reservations()
+        self.logger.debug("Fetching reservations using API client")
+        reservations = self.api_client.get_reservations()
         self.logger.debug(f"Got {len(reservations)} reservations")
         return reservations
     
@@ -297,23 +383,12 @@ class WiseGolf0Club(BaseWiseGolfClub):
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from WiseGolf0 API."""
-        auth_service = self._ensure_auth_service()
-        club_details = self._ensure_club_details()
-            
-        rest_url = club_details.get('restUrl')
-        if not rest_url:
-            self.logger.error("No restUrl found in club_details")
+        if not self.api_client:
+            self.logger.error("No API client available")
             return []
             
-        self.logger.debug(f"Creating WiseGolf0API instance with URL: {rest_url}")
-        api = WiseGolf0API(
-            rest_url,
-            auth_service,
-            club_details,
-            membership.__dict__
-        )
-        self.logger.debug("Fetching reservations")
-        reservations = api.get_reservations()
+        self.logger.debug("Fetching reservations using API client")
+        reservations = self.api_client.get_reservations()
         self.logger.debug(f"Got {len(reservations)} reservations")
         return reservations
     
@@ -343,54 +418,43 @@ class WiseGolf0Club(BaseWiseGolfClub):
 class NexGolfClub(GolfClub):
     """NexGolf golf club implementation."""
     
-    def __init__(
-        self,
-        name: str,
-        url: str,
-        address: str = "Unknown",
-        timezone: str = "UTC",
-        coordinates: Optional[Dict[str, float]] = None,
-        variant: Optional[str] = None,
-        product: Optional[str] = None,
-        auth_service: Optional[AuthService] = None,
-        club_details: Optional[Dict[str, Any]] = None,
-        config: Optional[AppConfigProtocol] = None,
-        clubAbbreviation: Optional[str] = None
-    ) -> None:
-        """Initialize NexGolf club."""
-        super().__init__(
-            name=name,
-            url=url,
-            address=address,
-            timezone=timezone,
-            coordinates=coordinates,
-            variant=variant,
-            product=product,
-            auth_service=auth_service,
-            club_details=club_details,
-            config=config,
-            clubAbbreviation=clubAbbreviation
-        )
-        
-        # Ensure we have a club abbreviation
-        if not self.clubAbbreviation and self.club_details:
-            self.clubAbbreviation = self.club_details.get("clubAbbreviation")
-    
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from NexGolf API."""
-        api = NexGolfAPI(self.url, membership.auth_details)
-        return api.get_reservations()
+        if not self.api_client:
+            self.logger.error("No API client available")
+            return []
+            
+        self.logger.debug("Fetching reservations using API client")
+        return self.api_client.get_reservations()
     
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from NexGolf reservation."""
-        start_time_str = reservation["startTime"]
-        if not start_time_str:
-            raise ValueError("No start time in reservation")
+        # Try dateTimeStart first (new format)
+        start_time_str = reservation.get("dateTimeStart")
+        if start_time_str:
+            try:
+                start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                self.logger.error(f"Failed to parse dateTimeStart: {start_time_str}")
+                raise ValueError("Invalid dateTimeStart format")
+        else:
+            # Try startTime (old format)
+            start_time_str = reservation.get("startTime")
+            if not start_time_str:
+                self.logger.error("No start time found in reservation")
+                raise ValueError("No start time in reservation")
+                
+            try:
+                # Try the new format first
+                start_time = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                try:
+                    # Try the old format "HH:MM YYYY-MM-DD"
+                    start_time = datetime.strptime(start_time_str, "%H:%M %Y-%m-%d")
+                except ValueError:
+                    self.logger.error(f"Failed to parse startTime: {start_time_str}")
+                    raise ValueError("Invalid startTime format")
         
-        start_time = datetime.strptime(
-            start_time_str,
-            "%H:%M %Y-%m-%d"
-        )
         tz_manager = self._ensure_timezone_manager()
         return tz_manager.localize_datetime(start_time)
 
@@ -399,24 +463,12 @@ class TeeTimeClub(GolfClub):
     
     def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
         """Fetch reservations from TeeTime API."""
-        self.logger.debug("TeeTimeClub: Starting fetch_reservations")
-        self.logger.debug(f"TeeTimeClub: Club URL: {self.url}")
-        self.logger.debug(f"TeeTimeClub: Membership details: {membership.__dict__}")
-        self.logger.debug(f"TeeTimeClub: Club details: {self.club_details}")
-        
-        # Get auth details from membership
-        auth_details = membership.auth_details
-        self.logger.debug(f"TeeTimeClub: Auth details: {auth_details}")
-        
-        # Create API instance
-        api = TeeTimeAPI(self.url, auth_details)
-        self.logger.debug("TeeTimeClub: Created TeeTimeAPI instance")
-        
-        # Fetch reservations
-        reservations = api.get_reservations()
-        self.logger.debug(f"TeeTimeClub: Fetched {len(reservations)} reservations")
-        
-        return reservations
+        if not self.api_client:
+            self.logger.error("No API client available")
+            return []
+            
+        self.logger.debug("Fetching reservations using API client")
+        return self.api_client.get_reservations()
     
     def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
         """Parse start time from TeeTime reservation."""
@@ -531,7 +583,8 @@ class GolfClubFactory:
             "auth_service": auth_service,
             "club_details": club_details,
             "config": config,
-            "clubAbbreviation": club_details.get("clubAbbreviation")
+            "clubAbbreviation": club_details.get("clubAbbreviation"),
+            "membership": membership
         }
 
         club: Optional[GolfClub] = None

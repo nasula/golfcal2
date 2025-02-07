@@ -34,6 +34,8 @@ from golfcal2.services.reservation_factory import ReservationFactory, Reservatio
 from golfcal2.services.met_weather_strategy import MetWeatherStrategy
 from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
 from golfcal2.utils.api_handler import APIResponseValidator
+from golfcal2.services.notification_service import NotificationService
+from golfcal2.utils.timezone_utils import TimezoneManager
 
 # Lazy load weather service
 _weather_service: Optional[WeatherService] = None
@@ -58,6 +60,9 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         super().__init__()
         self.username = username
         self.config = config
+        self.club_factory = GolfClubFactory()
+        self.auth_service = AuthService(config)
+        self.notification_service = NotificationService(config)
         
         # Get user configuration
         if username not in config.users:
@@ -84,7 +89,6 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         )
         
         # Initialize services
-        self.auth_service = AuthService(self.user_config.get('auth_details', {}))
         self.weather_service = WeatherService(
             config=config
         )
@@ -330,59 +334,133 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             self.error(f"Error adding reservation to calendar: {e}")
             raise
 
-    def list_reservations(
-        self,
-        active_only: bool = False,
-        upcoming_only: bool = False,
-        days: int = 1
-    ) -> List[Reservation]:
-        """
-        List reservations with filters.
+    def list_reservations(self, days: int = 1) -> List[Reservation]:
+        """List reservations for the user."""
+        all_reservations: List[Reservation] = []
         
-        Args:
-            active_only: Only include active reservations
-            upcoming_only: Only include upcoming reservations
-            days: Number of days to look ahead/behind
-            
-        Returns:
-            List of reservations
-        """
-        with handle_errors(
-            APIError,
-            "reservation",
-            "list reservations",
-            lambda: raise_error("Failed to list reservations")
-        ):
-            self.debug("=== Starting list_reservations ===")
-            
-            if self.username not in self.config.users:
-                self.warning(f"User {self.username} not found in configuration")
-                return []
-            
-            self.debug(f"Processing user {self.username}")
-            user_config = self.config.users[self.username]
-            self.debug("User config retrieved")
-            
+        # Calculate cutoff date
+        now = datetime.now(self.timezone)
+        cutoff = now - timedelta(days=days)
+        
+        # Process each membership
+        for membership in self.user.memberships:
             try:
-                self.debug("Calling process_user")
-                reservations = self.process_user(self.username, user_config, days)
-                self.debug(f"Got {len(reservations)} reservations from process_user")
+                # Get club instance
+                if membership.club not in self.config.clubs:
+                    self.logger.warning(f"No configuration found for club {membership.club}")
+                    continue
+                    
+                club = self.club_factory.create_club(
+                    self.config.clubs[membership.club],
+                    membership,
+                    self.auth_service,
+                    self.config
+                )
+                if not club:
+                    self.logger.warning(f"Failed to create club instance for {membership.club}")
+                    continue
                 
-                # Filter reservations based on flags
-                now = datetime.now(self.timezone)
-                if active_only:
-                    reservations = [r for r in reservations if self._is_active(r, now)]
-                if upcoming_only:
-                    reservations = [r for r in reservations if self._is_upcoming(r, now, days)]
+                # Get reservations for this club
+                reservations = self._get_club_reservations(club, membership, days)
                 
-                self.debug(f"Found {len(reservations)} matching reservations")
-                self.debug("=== Finished list_reservations ===")
-                return sorted(reservations, key=lambda r: r.start_time)
+                # Filter out old reservations
+                filtered_reservations = [
+                    r for r in reservations 
+                    if r.start_time >= cutoff
+                ]
+                
+                all_reservations.extend(filtered_reservations)
                 
             except Exception as e:
-                self.error(f"Error in process_user: {e}")
-                raise
+                self.logger.error(f"Failed to get reservations for club {membership.club}: {e}")
+                continue
+        
+        # Check for player changes
+        changes = self.notification_service.check_for_changes(all_reservations)
+        if changes:
+            self.logger.info("Player changes detected:")
+            for change in changes:
+                message = self.notification_service.format_change_message(change)
+                self.logger.info("\n" + message)
+        
+        return sorted(all_reservations, key=lambda r: r.start_time)
     
+    def _get_club_reservations(
+        self,
+        club: GolfClub,
+        membership: Membership,
+        days: int
+    ) -> List[Reservation]:
+        """Get reservations for a club."""
+        try:
+            # Get current time in club's timezone
+            tz_manager = TimezoneManager(club.timezone)
+            now = tz_manager.now()
+            
+            # Calculate cutoff date for past reservations
+            past_cutoff = now - timedelta(days=days)
+            
+            self.logger.debug(f"Getting reservations for club {club.name} from {past_cutoff}")
+            
+            # Fetch raw reservations from club
+            raw_reservations = club.fetch_reservations(membership)
+            self.logger.debug(f"Got {len(raw_reservations)} raw reservations")
+            
+            # Convert raw reservations to Reservation objects
+            reservations = []
+            for raw_reservation in raw_reservations:
+                try:
+                    # Parse start time using club's method
+                    start_time = club.parse_start_time(raw_reservation)
+                    
+                    # Skip past reservations
+                    if start_time < past_cutoff:
+                        self.logger.debug(f"Skipping past reservation: {start_time}")
+                        continue
+                    
+                    # Create reservation object based on club type
+                    club_type = club.club_details.get('type', '')
+                    if club_type == 'wisegolf0':
+                        reservation = Reservation.from_wisegolf0(
+                            raw_reservation,
+                            club,
+                            self.user,
+                            membership,
+                            tz_manager
+                        )
+                    elif club_type == 'wisegolf':
+                        reservation = Reservation.from_wisegolf(
+                            raw_reservation,
+                            club,
+                            self.user,
+                            membership,
+                            tz_manager
+                        )
+                    elif club_type == 'nexgolf':
+                        reservation = Reservation.from_nexgolf(
+                            raw_reservation,
+                            club,
+                            self.user,
+                            membership,
+                            tz_manager
+                        )
+                    else:
+                        self.logger.warning(f"Unsupported club type: {club_type}")
+                        continue
+                    
+                    reservations.append(reservation)
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to process reservation: {e}", exc_info=True)
+                    continue
+            
+            self.logger.debug(f"Processed {len(reservations)} reservations for club {club.name}")
+            return reservations
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get reservations for club {club.name}: {e}", exc_info=True)
+            return []
+
     def check_overlaps(self) -> List[Tuple[Reservation, Reservation]]:
         """
         Check for overlapping reservations.
@@ -581,5 +659,36 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         except Exception as e:
             self.error(f"Failed to parse dynamic time '{time_str}': {e}", exc_info=True)
             raise ValueError(f"Invalid time format: {time_str}")
+
+    def get_club(self, club_name: str) -> Optional[GolfClub]:
+        """Get club instance by name."""
+        if club_name not in self.config.clubs:
+            return None
+        return self.club_factory.create_club(
+            self.config.clubs[club_name],
+            self.config
+        )
+
+    def list_user_courses(self) -> List[GolfClub]:
+        """List courses available to the user."""
+        courses = []
+        for membership in self.user.memberships:
+            if membership.club in self.config.clubs:
+                club = self.club_factory.create_club(
+                    self.config.clubs[membership.club],
+                    self.config
+                )
+                if club:
+                    courses.append(club)
+        return courses
+    
+    def list_all_courses(self) -> List[GolfClub]:
+        """List all configured courses."""
+        courses = []
+        for club_name, club_config in self.config.clubs.items():
+            club = self.club_factory.create_club(club_config, self.config)
+            if club:
+                courses.append(club)
+        return courses
 
     

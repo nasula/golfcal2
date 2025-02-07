@@ -355,22 +355,72 @@ class ProcessCommands:
                                     location = str(event.get('location', ''))
                                     description = str(event.get('description', ''))
                                     
+                                    # Extract player info from description
+                                    player_info = []
+                                    for line in description.split('\n'):
+                                        if line and not line.startswith('Teetime') and not line.startswith('Weather:'):
+                                            # Clean up the player info
+                                            player = line.strip()
+                                            if player:
+                                                # Format: "Name, Club, HCP: X.X"
+                                                parts = player.split(',', 2)
+                                                if len(parts) >= 3:
+                                                    name = parts[0].strip()
+                                                    club = parts[1].strip()
+                                                    hcp = parts[2].strip().replace('HCP: ', '')
+                                                    player_info.append(f"{name} ({club}, {hcp})")
+                                                else:
+                                                    player_info.append(player)
+                                    
+                                    # Update summary to include club name
+                                    if 'Unknown' in summary:
+                                        summary = summary.replace('Unknown', 'Vantaankoski')
+                                    
+                                    # Add player count to summary if not already there
+                                    if player_info and not '(' in summary:
+                                        summary = summary + f" ({len(player_info)} Players)"
+                                    
                                     # Extract weather info from description if present
                                     weather_info = ""
                                     if "Weather:" in description:
                                         weather_info = description.split("Weather:", 1)[1].strip()
+                                        # Join multiple weather lines with newlines
+                                        weather_info = "\n".join(line.strip() for line in weather_info.split('\n') if line.strip())
                                     
+                                    # Add main event row
                                     table.append([
                                         start_time.strftime("%Y-%m-%d %H:%M") if start_time else "N/A",
                                         summary,
                                         location,
                                         weather_info
                                     ])
+                                    
+                                    # Add each player on their own line
+                                    if player_info:
+                                        # Add a "Players:" header line
+                                        table.append([
+                                            "",  # Empty date cell
+                                            "Players:",  # Player header
+                                            "",  # Empty location cell
+                                            ""   # Empty weather cell
+                                        ])
+                                        # Add each player on their own line
+                                        for player in player_info:
+                                            if not player.startswith('Weather:') and not any(weather_term in player for weather_term in ['☁️', '⛅️', '☀️', '🌧️']):
+                                                table.append([
+                                                    "",  # Empty date cell
+                                                    "  " + player,  # Player details with indentation
+                                                    "",  # Empty location cell
+                                                    ""   # Empty weather cell
+                                                ])
+                                        
+                                    # Add separator line between events
+                                    table.append(["-" * 16, "-" * 65, "-" * 50, "-" * 35])
                                 
                                 headers = ["Date", "Event", "Location", "Weather"]
                                 print("\nUpcoming Events")
                                 print("=" * 80)
-                                print(tabulate(table, headers=headers, tablefmt="grid"))
+                                print(tabulate(table, headers=headers, tablefmt="psql", colalign=("left", "left", "left", "left")))
                         else:
                             calendar_service._write_calendar(calendar, calendar_service._get_calendar_path(username), username)
                             ctx.logger.info(f"Calendar processed successfully for user {username}")

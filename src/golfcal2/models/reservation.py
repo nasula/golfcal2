@@ -3,8 +3,8 @@ Reservation model for golf calendar application.
 """
 
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any, Tuple, Union
-from dataclasses import dataclass
+from typing import List, Optional, Dict, Any, Tuple, Union, cast
+from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
 from golfcal2.utils.logging_utils import LoggerMixin
@@ -154,14 +154,15 @@ class Reservation(LoggerMixin):
     membership: Membership
     start_time: datetime
     end_time: datetime
-    players: List[Player]
-    raw_data: Dict[str, Any]
+    players: List[Player] = field(default_factory=list)
+    raw_data: Optional[Dict[str, Any]] = None
     _tz_manager: Optional[TimezoneManager] = None
     weather_summary: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Initialize after dataclass creation."""
         super().__init__()
+        self.set_log_context(service="reservation")
         if self._tz_manager is None:
             self._tz_manager = TimezoneManager()
         self.utc_tz = ZoneInfo('UTC')
@@ -238,7 +239,23 @@ class Reservation(LoggerMixin):
 
         self.logger.debug(f"Fetching players for start_time={start_time}, is_future_event={is_future_event}")
 
-        if is_future_event and hasattr(self.club, 'fetch_players'):
+        # For past events, only use raw data
+        if not is_future_event:
+            self.logger.debug("Past event - using raw data only")
+            if isinstance(self.raw_data, dict):
+                # First try to create player from the main reservation data
+                if all(key in self.raw_data for key in ["firstName", "familyName"]):
+                    player = Player(
+                        name=f"{self.raw_data['firstName']} {self.raw_data['familyName']}".strip(),
+                        club=self.raw_data.get('clubAbbreviation', 'Unknown'),
+                        handicap=float(self.raw_data.get('handicapActive', 0.0))
+                    )
+                    players.append(player)
+                    self.logger.debug(f"Added player from raw data: {player.name} ({player.club}, {player.handicap})")
+            return players
+
+        # For future events, try to fetch additional players
+        if hasattr(self.club, 'fetch_players'):
             try:
                 self.logger.debug(f"Calling club.fetch_players with raw_data: {self.raw_data}")
                 player_data_list = self.club.fetch_players(self.raw_data, self.membership)
@@ -250,44 +267,25 @@ class Reservation(LoggerMixin):
                         self.logger.debug("Found reservationsGolfPlayers and rows in response")
                         
                         # Get our reservation's details
+                        our_reservation_time_id = self.raw_data.get('reservationTimeId')
                         our_order_id = self.raw_data.get('orderId')
-                        our_start_time = self.raw_data.get('dateTimeStart')
-                        our_resource_id = None
-                        if 'resources' in self.raw_data and self.raw_data['resources']:
-                            our_resource_id = self.raw_data['resources'][0].get('resourceId')
-                        elif 'resourceId' in self.raw_data:
-                            our_resource_id = self.raw_data.get('resourceId')
                         
-                        self.logger.debug(f"Looking for players with orderId: {our_order_id}, start_time: {our_start_time}, resource_id: {our_resource_id}")
+                        self.logger.debug(f"Looking for players with reservationTimeId: {our_reservation_time_id} and orderId: {our_order_id}")
                         
-                        # First find our time slot from rows
-                        matching_rows = [
-                            row for row in player_data_list['rows']
-                            if (row.get('start') == our_start_time and
-                                any(r.get('resourceId') == our_resource_id for r in row.get('resources', []))
-                                if row.get('resources') else False)
+                        # Find players that match our reservationTimeId or orderId
+                        matching_players = [
+                            player for player in player_data_list['reservationsGolfPlayers']
+                            if (player.get('reservationTimeId') == our_reservation_time_id or
+                                player.get('orderId') == our_order_id)
                         ]
                         
-                        if matching_rows:
-                            matching_time_ids = [row.get('reservationTimeId') for row in matching_rows]
-                            self.logger.debug(f"Found matching time slots with IDs: {matching_time_ids}")
-                            
-                            # Then find players that match either our orderId or are in the same time slot
-                            matching_players = [
-                                player for player in player_data_list['reservationsGolfPlayers']
-                                if (player.get('orderId') == our_order_id or
-                                    player.get('reservationTimeId') in matching_time_ids)
-                            ]
-                            
-                            self.logger.debug(f"Found {len(matching_players)} players for this time slot")
-                            
-                            # Convert each matching player to a Player object
-                            for player_data in matching_players:
-                                self.logger.debug(f"Processing player data: {player_data}")
-                                players.append(Player.from_wisegolf(player_data))
-                                self.logger.debug(f"Added player: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
-                        else:
-                            self.logger.warning("No matching time slots found in rows")
+                        self.logger.debug(f"Found {len(matching_players)} players for this reservation")
+                        
+                        # Convert each matching player to a Player object
+                        for player_data in matching_players:
+                            self.logger.debug(f"Processing player data: {player_data}")
+                            players.append(Player.from_wisegolf(player_data))
+                            self.logger.debug(f"Added player: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
                     else:
                         self.logger.warning(f"Unexpected response format from club.fetch_players: {type(player_data_list)}")
                     
@@ -297,17 +295,17 @@ class Reservation(LoggerMixin):
         
         # If no players found, try using the raw data
         if not players:
-            self.logger.debug("No players found from club.fetch_players, checking raw data")
-            self.logger.debug(f"Raw data: {self.raw_data}")
-            if 'reservationsGolfPlayers' in self.raw_data:
-                for player_data in self.raw_data['reservationsGolfPlayers']:
-                    if player_data.get('reservationTimeId') == self.raw_data.get('reservationTimeId'):
-                        players.append(Player.from_wisegolf(player_data))
-                        self.logger.debug(f"Added player from raw data: {players[-1].name} ({players[-1].club}, {players[-1].handicap})")
-            else:
-                self.logger.debug("No reservationsGolfPlayers found in raw data")
+            self.logger.debug("No players found from REST API, using reservation data")
+            if isinstance(self.raw_data, dict):
+                if all(key in self.raw_data for key in ["firstName", "familyName"]):
+                    player = Player(
+                        name=f"{self.raw_data['firstName']} {self.raw_data['familyName']}".strip(),
+                        club=self.raw_data.get('clubAbbreviation', 'Unknown'),
+                        handicap=float(self.raw_data.get('handicapActive', 0.0))
+                    )
+                    players.append(player)
+                    self.logger.debug(f"Added player from reservation data: {player.name} ({player.club}, {player.handicap})")
         
-        self.logger.debug(f"Returning players: {[f'{p.name} ({p.club})' for p in players]}")
         return players
 
     @property
@@ -516,7 +514,6 @@ class Reservation(LoggerMixin):
             membership=membership,
             start_time=datetime.now(),  # Temporary value
             end_time=datetime.now(),    # Temporary value
-            players=[],
             raw_data=data,
             _tz_manager=tz_manager
         )
@@ -577,7 +574,6 @@ class Reservation(LoggerMixin):
             membership=membership,
             start_time=datetime.now(),  # Temporary value
             end_time=datetime.now(),    # Temporary value
-            players=[],
             raw_data=data,
             _tz_manager=tz_manager
         )
@@ -651,7 +647,6 @@ class Reservation(LoggerMixin):
             membership=membership,
             start_time=datetime.now(),  # Temporary value
             end_time=datetime.now(),    # Temporary value
-            players=[],
             raw_data=data,
             _tz_manager=tz_manager
         )

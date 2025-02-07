@@ -47,6 +47,13 @@ class OpenMeteoStrategy(WeatherStrategy):
         99: WeatherCode.HEAVYRAINANDTHUNDER,  # Thunderstorm with heavy hail
     }
     
+    # Thunder probability mapping based on weather codes
+    THUNDER_PROBABILITY_MAP = {
+        95: 80.0,  # Regular thunderstorm
+        96: 90.0,  # Thunderstorm with slight hail
+        99: 100.0  # Thunderstorm with heavy hail
+    }
+    
     def get_weather(self) -> Optional[WeatherResponse]:
         """Get weather data from OpenMeteo."""
         try:
@@ -166,6 +173,9 @@ class OpenMeteoStrategy(WeatherStrategy):
                 wind_direction = hourly['winddirection_10m'][i] or 0.0
                 precipitation_probability = hourly.get('precipitation_probability', [0.0])[i] or 0.0
                 
+                # Calculate thunder probability based on weather code
+                thunder_probability = self.THUNDER_PROBABILITY_MAP.get(weather_code, 0.0)
+                
                 weather_data.append(WeatherData(
                     time=time,  # Time is in UTC
                     temperature=temperature,
@@ -173,6 +183,7 @@ class OpenMeteoStrategy(WeatherStrategy):
                     wind_speed=wind_speed,
                     wind_direction=wind_direction,
                     precipitation_probability=precipitation_probability,
+                    thunder_probability=thunder_probability,  # Add thunder probability
                     weather_code=weather_code_enum,
                     block_duration=timedelta(hours=1)  # OpenMeteo always uses 1-hour blocks
                 ))

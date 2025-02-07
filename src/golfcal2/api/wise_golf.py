@@ -37,31 +37,42 @@ class WiseGolfResponseError(WiseGolfAPIError):
 class BaseWiseGolfAPI(BaseAPI, RequestHandlerMixin):
     """Base class for WiseGolf API implementations."""
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any]):
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
         """Initialize base WiseGolf API client."""
+        self.auth_service = auth_service  # Set auth_service before super().__init__
+        self.club = club
         super().__init__(base_url, auth_service, club_details, membership)
         self._setup_auth_headers()
         
     def _setup_auth_headers(self):
         """Setup authentication headers based on auth type."""
-        if 'token' in self.auth_details:
-            self._setup_token_auth()
-        elif 'cookie_value' in self.auth_details:
-            self._setup_cookie_auth()
+        try:
+            # Add common headers first
+            self.session.headers.update({
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json'
+            })
             
-    def _setup_token_auth(self):
-        """Setup token-based authentication."""
-        self.session.headers.update({
-            'Authorization': self.auth_details['token'],
-            'x-session-type': 'wisegolf'
-        })
-        
-    def _setup_cookie_auth(self):
-        """Setup cookie-based authentication."""
-        self.session.headers.update({
-            'Cookie': f"wisenetwork_session={self.auth_details['cookie_value']}",
-            'x-session-type': 'wisegolf0'
-        })
+            if not self.club:
+                self.logger.warning("No club instance available for auth headers")
+                return
+                
+            if not self.auth_service:
+                self.logger.warning("No auth service available")
+                return
+                
+            # Get auth headers from auth service
+            auth_headers = self.auth_service.get_auth_headers(self.club, self.auth_details)
+            
+            # Update session headers
+            if auth_headers:
+                self.session.headers.update(auth_headers)
+                self.logger.debug(f"Set up auth headers: {dict(self.session.headers)}")
+            else:
+                self.logger.warning("No auth headers returned from auth service")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to set up auth headers: {e}")
         
     def get_players(self, reservation_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -119,10 +130,26 @@ class BaseWiseGolfAPI(BaseAPI, RequestHandlerMixin):
         """
         raise NotImplementedError
 
+    def _make_request(self, method: str, endpoint: str, **kwargs) -> Any:
+        """Make an API request with proper error handling."""
+        try:
+            # Ensure we have auth headers
+            if not self.session.headers.get('Authorization') and not self.session.headers.get('Cookie'):
+                self._setup_auth_headers()
+                
+            return super()._make_request(method, endpoint, **kwargs)
+        except Exception as e:
+            self.logger.error(f"Request failed: {e}")
+            raise
 
 class WiseGolfAPI(BaseWiseGolfAPI):
     """WiseGolf API client implementation."""
     
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
+        """Initialize WiseGolf API client."""
+        super().__init__(base_url, auth_service, club_details, membership, club)
+        self.logger.debug(f"WiseGolfAPI initialized with headers: {dict(self.session.headers)}")
+
     def get_reservations(self) -> List[Dict[str, Any]]:
         """Get user's reservations."""
         try:
@@ -175,17 +202,62 @@ class WiseGolfAPI(BaseWiseGolfAPI):
 class WiseGolf0API(BaseWiseGolfAPI):
     """WiseGolf0 API client implementation."""
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any]):
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
         """Initialize WiseGolf0 API client."""
-        super().__init__(base_url, auth_service, club_details, membership)
+        # Ensure auth_details has the correct type and cookie_name
+        if isinstance(membership, dict):
+            auth_details = membership.get('auth_details', {})
+            auth_details['type'] = 'wisegolf0'
+            auth_details['cookie_name'] = club_details.get('cookie_name', 'wisenetwork_session')
+            membership['auth_details'] = auth_details
+        else:
+            auth_details = getattr(membership, 'auth_details', {})
+            auth_details['type'] = 'wisegolf0'
+            auth_details['cookie_name'] = club_details.get('cookie_name', 'wisenetwork_session')
+            setattr(membership, 'auth_details', auth_details)
+            
+        super().__init__(base_url, auth_service, club_details, membership, club)
         
-        # Set REST URL from club details
-        self.rest_url = club_details.get('restUrl')
+        # Set REST URL from club details and ensure it doesn't end with slash
+        self.rest_url = club_details.get('restUrl', '').rstrip('/')
         if not self.rest_url:
             self.logger.warning("No restUrl found in club_details")
             
         self.logger.debug("WiseGolf0API final headers:")
         self.logger.debug(f"Final headers: {dict(self.session.headers)}")
+    
+    def _setup_auth_headers(self):
+        """Setup authentication headers specific to WiseGolf0."""
+        try:
+            if not self.club or not self.auth_service:
+                self.logger.warning("Missing club or auth_service for auth headers")
+                return
+                
+            # Get auth headers using get_auth_headers
+            auth_headers = self.auth_service.get_auth_headers(self.club, self.auth_details)
+            
+            # Add common headers
+            headers = {
+                'Accept': 'application/json, text/plain, */*',
+                'Content-Type': 'application/json',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Origin': self.base_url,
+                'Referer': self.base_url + "/",
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin'
+            }
+            
+            # Combine headers, letting auth headers take precedence
+            headers.update(auth_headers)
+            
+            # Update session headers
+            self.session.headers.update(headers)
+            self.logger.debug(f"Set up auth headers: {dict(self.session.headers)}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to set up auth headers: {e}")
     
     def get_reservations(self) -> List[Dict[str, Any]]:
         """Get user's reservations."""
@@ -226,30 +298,36 @@ class WiseGolf0API(BaseWiseGolfAPI):
     def _fetch_players(self, params: Dict[str, str]) -> Dict[str, Any]:
         """Fetch players from WiseGolf0 API."""
         if not self.rest_url:
+            self.logger.warning("No restUrl available for fetching players")
             return {"reservationsGolfPlayers": []}
         
-        # Update headers for cross-origin request
-        self.session.headers.update({
-            "Origin": self.base_url,
-            "Referer": self.base_url + "/",
-            "Sec-Fetch-Site": "same-site"
-        })
-        
         try:
+            # Use the existing session instead of creating a new one
+            # Construct the full URL for the REST API call
+            endpoint = "/api/1.0/reservations/"
+            full_url = urljoin(self.rest_url, endpoint)
+            
+            self.logger.debug(f"Fetching players from {full_url} with params: {params}")
+            self.logger.debug(f"Using headers: {dict(self.session.headers)}")
+            
+            # Make the request using the existing session
             response = self.session.get(
-                self.rest_url + "/reservations/",
+                full_url,
                 params=params,
                 timeout=self.DEFAULT_TIMEOUT
             )
             
             # Validate response status code
             if response.status_code != 200:
+                self.logger.error(f"Player fetch failed with status {response.status_code}: {response.text}")
                 raise WiseGolfResponseError(f"Request failed with status {response.status_code}")
             
             # Parse JSON response
             try:
                 data = response.json()
+                self.logger.debug(f"Got player data response: {data}")
             except ValueError as e:
+                self.logger.error(f"Invalid JSON in player response: {response.text}")
                 raise WiseGolfResponseError(f"Invalid JSON response: {str(e)}")
             
             # Validate response structure
@@ -257,7 +335,8 @@ class WiseGolf0API(BaseWiseGolfAPI):
                 raise WiseGolfResponseError("Invalid response format")
             
             if 'reservationsGolfPlayers' not in data:
-                raise WiseGolfResponseError("Missing 'reservationsGolfPlayers' field in response")
+                self.logger.warning("No reservationsGolfPlayers in response")
+                return {"reservationsGolfPlayers": []}
             
             return data
             
@@ -265,7 +344,7 @@ class WiseGolf0API(BaseWiseGolfAPI):
             self.logger.error(f"Request failed: {str(e)}")
             return {"reservationsGolfPlayers": []}
         except Exception as e:
-            self.logger.error(f"Unexpected error: {str(e)}")
+            self.logger.error(f"Unexpected error in _fetch_players: {str(e)}", exc_info=True)
             return {"reservationsGolfPlayers": []}
 
     def _extract_data_from_response(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:

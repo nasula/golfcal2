@@ -1,210 +1,171 @@
-# NexGolf API
+# NexGolf API Documentation
+
+This document describes the NexGolf API as implemented in the golf calendar application.
 
 ## Overview
 
-NexGolf is a Nordic golf club management system that provides a comprehensive API for accessing reservations and player data. It uses cookie-based authentication and provides detailed booking information.
+NexGolf is a golf course management system used by Nordic golf clubs. The implementation supports two variants:
+- NexGolf: Traditional system
+- TeeTime: Modern variant with slightly different URL structures
 
 ## Authentication
 
-```http
-POST /api/login
-Content-Type: application/x-www-form-urlencoded
+The implementation supports multiple authentication strategies based on club configuration:
 
-memberNumber=<member_id>&pin=<pin>
+1. Cookie Authentication (`cookie`)
+   ```python
+   headers = {
+       "Cookie": f"{cookie_name}={cookie_value}",
+       "Accept-Encoding": "gzip, deflate, br"
+   }
+   ```
+
+2. Query Authentication (`query`)
+   - Appends authentication parameters to URL
+
+3. Token App Authentication (`token_appauth`)
+   ```python
+   headers = {
+       "Authorization": f"token {token}",
+       "x-session-type": "wisegolf"
+   }
+   ```
+
+## API Endpoints
+
+### Reservations
+
+**Endpoint**: Determined by club configuration (`clubs_details[club_key]`)
+**Method**: GET
+**Parameters**:
+- `from`: Current date in YYYY-MM-DD format
+
+The URL structure varies between NexGolf and TeeTime:
+```python
+# NexGolf
+full_url = f"{base_url}?from={today}"
+# TeeTime
+full_url = f"{base_url}&from={today}"
 ```
 
-After successful authentication, the server returns session cookies that must be included in subsequent requests:
-```http
-Cookie: NGLOCALE=fi; JSESSIONID=<session_token>
-Accept: application/json, text/plain, */*
-```
+### Club Details
 
-## Endpoints
+**Endpoint**: `https://www.teetime.fi/backend/club/{club_id}`
+**Method**: GET
+**Parameters**:
+- `token`: Authentication token
 
-### Get Reservations
+Used to fetch club address information.
 
-```http
-GET /api/reservations
-Cookie: JSESSIONID=<session_token>
-```
+## Data Structures
 
-Parameters:
-- `startDate`: Start date in YYYY-MM-DD format (defaults to current date)
-- `endDate`: End date in YYYY-MM-DD format (defaults to one year from start)
+### Reservation Response
 
-Response:
+Based on the implementation, the API returns reservations with this structure:
+
 ```json
 {
-    "bookings": [
+    "startTime": "HH:MM YYYY-MM-DD",
+    "course": {
+        "club": {
+            "abbreviation": "string",
+            "name": "string",
+            "number": "string"
+        }
+    },
+    "reservations": [
         {
-            "startDateTime": "2024-01-01 10:00",
-            "players": [
-                {
-                    "firstName": "John",
-                    "lastName": "Doe",
-                    "handicap": "15.4",
-                    "club": {
-                        "name": "Golf Club",
-                        "code": "GC"
-                    }
+            "player": {
+                "firstName": "string",
+                "lastName": "string",
+                "handicap": float,
+                "club": {
+                    "abbreviation": "string"
                 }
-            ],
-            "bookingReference": "ABC123",
-            "status": "confirmed"
+            }
         }
     ]
 }
 ```
 
-## Implementation Details
+### Club Response
+
+The club details endpoint returns at minimum:
+```json
+{
+    "address": "string"
+}
+```
+
+## Implementation Examples
+
+### Fetching Reservations
 
 ```python
-class NexGolfImplementation(BaseCRMImplementation):
-    """NexGolf CRM implementation"""
+def fetch_nexgolf_reservations(membership, clubs_details):
+    club_key = membership['club']
+    auth_strategy = get_authentication_strategy(clubs_details[club_key]['auth_type'])
+    headers = auth_strategy.create_headers(
+        clubs_details[club_key]['cookie_name'], 
+        membership['auth_details']
+    )
     
-    def authenticate(self) -> None:
-        self.session = requests.Session()
+    full_url = auth_strategy.build_full_url(clubs_details[club_key], membership)
+    today = datetime.now().strftime('%Y-%m-%d')
+    
+    if clubs_details[club_key]['crm'] == 'nexgolf':
+        full_url = f"{full_url}?from={today}"
+    else:
+        full_url = f"{full_url}&from={today}"
         
-        auth_response = self._make_request(
-            'POST',
-            '/api/login',
-            data={
-                'memberNumber': self.auth_details['member_id'],
-                'pin': self.auth_details['pin']
-            }
-        )
+    return make_api_request("GET", full_url, headers)
+```
+
+### Processing Player Details
+
+```python
+def fetch_nexgolf_player_details(reservation):
+    player_details = []
+    total_handicap = 0.0
+
+    for player_info in reservation.get('reservations', []):
+        player = player_info.get('player', {})
+        handicap = player.get('handicap', 0.0)
         
-        cookies = auth_response.cookies
-        if not cookies:
-            raise APIAuthError("No session cookies in authentication response")
-            
-        self.session.cookies.update(cookies)
-    
-    def _fetch_reservations(self) -> List[Dict[str, Any]]:
-        end_date = datetime.now().replace(year=datetime.now().year + 1)
+        player_details.append({
+            "name": f"{player.get('firstName', 'N/A')} {player.get('lastName', 'N/A')}",
+            "clubAbbreviation": player.get('club', {}).get('abbreviation', 'N/A'),
+            "handicap": handicap
+        })
         
-        response = self._make_request(
-            'GET',
-            '/api/reservations',
-            params={
-                'startDate': datetime.now().strftime('%Y-%m-%d'),
-                'endDate': end_date.strftime('%Y-%m-%d')
-            }
-        )
-        return response.json()['bookings']
-    
-    def parse_reservation(self, raw_reservation: Dict[str, Any]) -> Reservation:
-        return Reservation(
-            datetime_start=self._parse_datetime(
-                raw_reservation["startDateTime"], 
-                fmt="%Y-%m-%d %H:%M"
-            ),
-            players=self._parse_players(raw_reservation),
-            booking_reference=raw_reservation.get("bookingReference"),
-            status=raw_reservation.get("status")
-        )
-    
-    def _parse_players(self, raw_reservation: Dict[str, Any]) -> List[Player]:
-        return [
-            Player(
-                first_name=player.get('firstName', ''),
-                family_name=player.get('lastName', ''),
-                handicap=float(player.get('handicap', 0)),
-                club_abbreviation=player.get('club', {}).get('code', '')
-            )
-            for player in raw_reservation.get('players', [])
-        ]
+        total_handicap += float(handicap)
+
+    return player_details, round(total_handicap, 1)
 ```
 
 ## Error Handling
 
-### Authentication Errors (401)
-```json
-{
-    "error": "authentication_failed",
-    "message": "Invalid member number or PIN"
-}
-```
+The implementation handles:
+- HTTP errors through requests.exceptions.HTTPError
+- Timeout errors (connection and read timeouts)
+- JSON decode errors
+- Missing or invalid data in responses
 
-### Rate Limiting (429)
-```json
-{
-    "error": "too_many_requests",
-    "message": "Rate limit exceeded",
-    "retry_after": 60
-}
-```
+Errors are logged using Python's logging system with these levels:
+- ERROR: For request failures and API errors
+- WARNING: For data validation issues
+- DEBUG: For request/response details
 
-### General Errors (400, 500)
-```json
-{
-    "error": "error_code",
-    "message": "Human readable message",
-    "details": {
-        "field": "error description"
-    }
-}
-```
+## Request Configuration
 
-## Implementation Notes
+Based on the implementation:
+- Connection timeout: 7 seconds
+- Read timeout: 20 seconds
 
-- Cookie-based session authentication
-- Session expires after 24 hours
-- Rate limit: 30 requests/minute
-- Timezone: Local club timezone in responses
-- Booking reference support
-- Player grouping support (1-4 players per flight)
+## Notes
 
-## Data Formats
-
-### Date/Time
-- Format: "%Y-%m-%d %H:%M"
-- Timezone: Local club timezone
-- Example: "2024-01-01 10:00"
-
-### Handicap
-- Format: String in API response, converted to float in implementation
-- Example API: "15.4"
-- Example parsed: 15.4
-- Range: 0.0 to 54.0
-- Default: 0.0 if not provided
-
-### Player Information
-Required fields:
-- First name (`firstName`)
-- Last name (`lastName`)
-- Handicap (`handicap`)
-- Club (name and code)
-
-Optional fields:
-- Member number
-- Status
-
-### Booking Information
-Required fields:
-- Start date/time (`startDateTime`)
-- Players array
-- Booking reference (`bookingReference`)
-- Status (`status`)
-
-## Data Model
-
-### Reservation
-```python
-@dataclass
-class Reservation:
-    datetime_start: datetime
-    players: List[Player]
-    booking_reference: Optional[str] = None
-    status: Optional[str] = None
-```
-
-### Player
-```python
-@dataclass
-class Player:
-    first_name: str
-    family_name: str
-    handicap: Optional[float] = None
-    club_abbreviation: Optional[str] = None
-``` 
+1. The implementation handles both NexGolf and TeeTime variants with different URL structures
+2. All dates and times are handled in Europe/Helsinki timezone and converted to UTC for storage
+3. Player details are extracted from reservation responses
+4. The implementation includes validation of API response structures
+5. Error handling includes graceful fallbacks for missing data 

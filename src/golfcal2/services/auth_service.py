@@ -2,11 +2,16 @@
 Authentication service for golf calendar application.
 """
 
-from typing import Dict, Any, Optional, Protocol, Union
+from typing import Dict, Any, Optional, Protocol, Union, TYPE_CHECKING
 from abc import ABC, abstractmethod
 from urllib.parse import urljoin
 from golfcal2.models.user import Membership
 from golfcal2.config.settings import AppConfig
+from golfcal2.utils.logging_utils import LoggerMixin
+
+# Use TYPE_CHECKING for imports only needed for type hints
+if TYPE_CHECKING:
+    from golfcal2.models.golf_club import GolfClub
 
 class AuthStrategy(Protocol):
     """Protocol for authentication strategies."""
@@ -68,12 +73,12 @@ class CookieAuthStrategy(AuthStrategy):
 
     def get_auth_cookie(self) -> Dict[str, str]:
         """Get cookie auth cookie."""
-        cookie = self.auth_details.get('cookie', '')
-        return {'Cookie': cookie} if cookie else {}
+        cookie_value = self.auth_details.get('cookie_value', '')
+        return {'Cookie': cookie_value} if cookie_value else {}
 
     def get_auth_token(self) -> str:
         """Get cookie auth token."""
-        return str(self.auth_details.get('cookie', ''))
+        return str(self.auth_details.get('cookie_value', ''))
 
     def build_full_url(self, base_url: str, path: str) -> str:
         """Build full URL with cookie auth."""
@@ -134,20 +139,107 @@ class UnsupportedAuthStrategy(AuthStrategy):
         """Build full URL with unsupported auth."""
         return urljoin(base_url, path)
 
-class AuthService:
+class AuthService(LoggerMixin):
     """Service for handling authentication."""
     
-    def __init__(self, auth_details: Union[Dict[str, Any], object]) -> None:
-        """Initialize auth service.
-        
-        Args:
-            auth_details: Authentication details dictionary or object
-        """
-        if isinstance(auth_details, dict):
-            self.auth_details = auth_details
-        else:
-            self.auth_details = getattr(auth_details, 'auth_details', {})
-        self.strategy: AuthStrategy = self._get_strategy(self.auth_details)
+    def __init__(self, config: AppConfig):
+        """Initialize service."""
+        super().__init__()
+        self.config = config
+        self.strategy: Optional[AuthStrategy] = None
+        self._current_auth_details: Optional[Dict[str, Any]] = None
+    
+    def _ensure_strategy(self, auth_details: Dict[str, Any]) -> None:
+        """Ensure strategy is initialized with current auth details."""
+        # Only initialize if auth details have changed or strategy is not set
+        if (self.strategy is None or 
+            self._current_auth_details != auth_details):
+            self.strategy = self._get_strategy(auth_details)
+            self._current_auth_details = auth_details.copy()
+    
+    def get_auth_headers(self, club: 'GolfClub', auth_details: Dict[str, Any]) -> Dict[str, str]:
+        """Get authentication headers for a club."""
+        try:
+            # Get club configuration
+            club_config = self.config.clubs.get(club.name, {})
+            
+            # Get auth type from auth_details first, fall back to club config
+            auth_type = auth_details.get('type') or club_config.get('auth_type', 'none')
+            
+            # Initialize strategy based on auth type
+            self._ensure_strategy(auth_details)
+            
+            # Handle different authentication types
+            if auth_type == 'basic':
+                return self._get_basic_auth_headers(auth_details)
+            elif auth_type == 'token':
+                return self._get_token_auth_headers(auth_details)
+            elif auth_type in ['cookie', 'wisegolf0', 'nexgolf']:
+                return self._get_cookie_auth_headers(auth_details)
+            else:
+                self.logger.debug(f"No authentication required for club {club.name}")
+                return {}
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get auth headers for club {club.name}: {e}")
+            return {}
+    
+    def _get_basic_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
+        """Get headers for basic authentication."""
+        headers = {}
+        if 'username' in auth_details and 'password' in auth_details:
+            import base64
+            auth_string = f"{auth_details['username']}:{auth_details['password']}"
+            auth_bytes = auth_string.encode('ascii')
+            base64_bytes = base64.b64encode(auth_bytes)
+            base64_string = base64_bytes.decode('ascii')
+            headers['Authorization'] = f'Basic {base64_string}'
+        return headers
+    
+    def _get_token_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
+        """Get headers for token authentication."""
+        headers = {}
+        if 'token' in auth_details:
+            headers['Authorization'] = f'Bearer {auth_details["token"]}'
+        return headers
+    
+    def _get_cookie_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
+        """Get headers for cookie authentication."""
+        headers = {}
+        if 'cookie_value' in auth_details:
+            auth_type = auth_details.get('type', '')
+            cookie_name = auth_details.get('cookie_name', '')
+            cookie_value = auth_details['cookie_value']
+            
+            self.logger.debug(f"Processing cookie auth with type: {auth_type}, name: {cookie_name}, value: {cookie_value}")
+            
+            # For WiseGolf0, we need to prefix with wisenetwork_session=
+            if auth_type == 'wisegolf0':
+                cookie_name = cookie_name or 'wisenetwork_session'
+                # Ensure cookie value is properly formatted
+                if not cookie_value.startswith(f"{cookie_name}="):
+                    headers['Cookie'] = f'{cookie_name}={cookie_value}'
+                else:
+                    headers['Cookie'] = cookie_value
+            elif auth_type == 'nexgolf':
+                # For NexGolf, use JSESSIONID and include X-Auth-Token if available
+                cookie_name = cookie_name or 'JSESSIONID'
+                headers['Cookie'] = f'NGLOCALE=fi; {cookie_name}={cookie_value}'
+                # Add X-Auth-Token if available (from token field)
+                if 'token' in auth_details:
+                    headers['X-Auth-Token'] = auth_details['token']
+                elif 'x_auth_token' in auth_details:
+                    headers['X-Auth-Token'] = auth_details['x_auth_token']
+                self.logger.debug(f"Generated headers for NexGolf: {headers}")
+            else:
+                # For other cookie-based auth, use the cookie value as is
+                if cookie_name:
+                    headers['Cookie'] = f'{cookie_name}={cookie_value}'
+                else:
+                    headers['Cookie'] = cookie_value
+                
+            self.logger.debug(f"Generated cookie header: {headers}")
+        return headers
     
     def _get_strategy(self, auth_details: Dict[str, Any]) -> AuthStrategy:
         """Get appropriate auth strategy based on auth details."""
@@ -160,14 +252,23 @@ class AuthService:
     
     def get_auth_header(self) -> Dict[str, str]:
         """Get authentication header."""
+        if not self.strategy:
+            self.logger.error("No authentication strategy initialized")
+            return {}
         return self.strategy.get_auth_header()
     
     def get_auth_cookie(self) -> Dict[str, str]:
         """Get authentication cookie."""
+        if not self.strategy:
+            self.logger.error("No authentication strategy initialized")
+            return {}
         return self.strategy.get_auth_cookie()
     
     def get_auth_token(self) -> str:
         """Get authentication token."""
+        if not self.strategy:
+            self.logger.error("No authentication strategy initialized")
+            return ""
         return self.strategy.get_auth_token()
     
     def build_full_url(
@@ -176,16 +277,7 @@ class AuthService:
         club_details: Dict[str, Any],
         membership: Membership
     ) -> str:
-        """Build full URL with authentication.
-        
-        Args:
-            auth_type: Type of authentication
-            club_details: Club details dictionary
-            membership: Membership object
-            
-        Returns:
-            Full URL with authentication parameters
-        """
+        """Build full URL with authentication."""
         # Get base URL from club details
         base_url = club_details.get('url', '')
         if not base_url:
@@ -197,8 +289,13 @@ class AuthService:
         if club_details.get('type') == 'wisegolf0':
             base_url = club_details.get('shopURL', base_url)
         
+        # Ensure strategy is initialized with membership auth details
+        self._ensure_strategy(membership.auth_details)
+        
         # Build the URL using the strategy
-        return self.strategy.build_full_url(base_url, '')
+        if self.strategy:
+            return self.strategy.build_full_url(base_url, '')
+        return base_url
     
     def create_headers(
         self,
@@ -206,27 +303,28 @@ class AuthService:
         cookie_name: str,
         auth_details: Dict[str, str]
     ) -> Dict[str, str]:
-        """Create headers for API request.
+        """Create headers for API request."""
+        # Ensure strategy is initialized with current auth details
+        self._ensure_strategy(auth_details)
         
-        Args:
-            auth_type: Type of authentication
-            cookie_name: Name of cookie for cookie-based auth
-            auth_details: Authentication details
-            
-        Returns:
-            Dictionary of headers
-        """
         headers = {}
         
         # Get auth header
-        auth_header = self.get_auth_header()
-        headers.update(auth_header)
-        
-        # Get cookie header if cookie name is provided
-        if cookie_name:
-            cookie_header = self.get_auth_cookie()
-            headers.update(cookie_header)
+        if self.strategy:
+            auth_header = self.strategy.get_auth_header()
+            headers.update(auth_header)
             
+            # Get cookie header if cookie name is provided
+            if cookie_name:
+                # For WiseGolf0, we need to prefix with wisenetwork_session=
+                if auth_type == 'wisegolf0':
+                    cookie_value = auth_details.get('cookie_value', '')
+                    if cookie_value:
+                        headers['Cookie'] = f'wisenetwork_session={cookie_value}'
+                else:
+                    cookie_header = self.strategy.get_auth_cookie()
+                    headers.update(cookie_header)
+        
         # Add common headers
         headers.update({
             'Accept': 'application/json, text/plain, */*',

@@ -1,5 +1,11 @@
 # Global configuration parameters
-timezone: "Europe/Helsinki"
+global:
+  timezone: "Europe/Helsinki"
+  pushover:
+    user_key: "u3do2o52vzktvses4wqzdx9e37rbis"
+    app_token: "anrpgnym1g1xnc8qc6yxg4f3bpk744"
+    priority: 0
+    sound: "pushover"
 
 # Directory paths
 directories:
@@ -31,6 +37,11 @@ logging:
   dev_level: "DEBUG"
   verbose_level: "INFO"
   default_level: "WARNING"
+  journald:
+    enabled: true
+    identifier: "golfcal2"
+    level: "INFO"
+    format: "%(name)s: %(levelname)s %(message)s"
 
 # Default durations for clubs if not specified in club config
 default_durations:
