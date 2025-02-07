@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
 @dataclass
@@ -52,6 +52,32 @@ class Player:
         
         # Get handicap with fallback to 0
         handicap = float(data.get("handicap", 0))
+        
+        return cls(
+            name=name,
+            club=club,
+            handicap=handicap
+        )
+
+    @classmethod
+    def from_teetime(cls, data: Dict[str, Any], club_info: Optional[Dict[str, Any]] = None) -> "Player":
+        """Create Player instance from TeeTime data.
+        
+        Args:
+            data: Player data from TeeTime API
+            club_info: Optional club information from the reservation
+        """
+        # For TeeTime, we only get a player hash ID, not the actual name
+        # We'll use a placeholder name with the hash
+        name = f"Player-{data.get('idHash', 'Unknown')[:8]}"
+        
+        # Get club abbreviation from club info if available
+        club = "Unknown"
+        if club_info and isinstance(club_info, dict):
+            club = club_info.get('abbrevitation', club_info.get('name', 'Unknown'))
+        
+        # Get handicap with fallback to 0
+        handicap = float(data.get('handicap', 0))
         
         return cls(
             name=name,

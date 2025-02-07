@@ -98,14 +98,60 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
             # Make the request to the correct endpoint with parameters
             response = self._make_request("GET", "/backend/player/flight", params=params)
             
-            # Check if response is valid
-            if not isinstance(response, dict) or 'data' not in response:
-                self.logger.error(f"Invalid response format: {response}")
+            # Response should be a list of tee times
+            if not isinstance(response, list):
+                self.logger.error(f"Invalid response format: expected list, got {type(response)}")
                 return []
             
+            # Convert tee times to reservations format
+            reservations = []
+            for tee_time in response:
+                # Skip if no reservations
+                if not tee_time.get('reservations'):
+                    continue
+                    
+                # Get course information
+                course_info = tee_time.get('course', {})
+                club_info = course_info.get('club', {})
+                
+                # Create a reservation entry
+                reservation = {
+                    'startTime': tee_time.get('startTime'),
+                    'status': tee_time.get('status'),
+                    'id': tee_time.get('id'),
+                    'course': {
+                        'name': course_info.get('name'),
+                        'id': course_info.get('id'),
+                        'club': {
+                            'name': club_info.get('name'),
+                            'abbreviation': club_info.get('abbrevitation'),  # Note: API uses 'abbrevitation'
+                            'number': club_info.get('number')
+                        }
+                    },
+                    'players': []
+                }
+                
+                # Add player information
+                for res in tee_time.get('reservations', []):
+                    player_data = res.get('player', {})
+                    if player_data:
+                        player = {
+                            'id': res.get('id'),
+                            'handicap': player_data.get('handicap', 0.0),
+                            'gender': player_data.get('gender'),
+                            'holes': player_data.get('holes', 18),
+                            'idHash': player_data.get('idHash')
+                        }
+                        reservation['players'].append(player)
+                
+                # Add settings if available
+                if 'settings' in tee_time:
+                    reservation['settings'] = tee_time['settings']
+                
+                reservations.append(reservation)
+            
             # Filter out non-confirmed reservations if needed
-            bookings = response['data']
-            return [b for b in bookings if b.get('status', 'confirmed') == 'confirmed']
+            return [r for r in reservations if r.get('status') != 'CANCELLED']
             
         except APITimeoutError as e:
             raise TeeTimeAPIError(f"Request timed out: {str(e)}")

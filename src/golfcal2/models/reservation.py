@@ -809,6 +809,89 @@ class Reservation(LoggerMixin):
             raw_data=event_data
         )
 
+    @classmethod
+    def from_teetime(
+        cls,
+        data: Dict[str, Any],
+        club: GolfClub,
+        user: User,
+        membership: Membership,
+        tz_manager: Optional[TimezoneManager] = None
+    ) -> "Reservation":
+        """Create Reservation instance from TeeTime data.
+        
+        Args:
+            data: Reservation data from TeeTime API
+            club: Golf club instance
+            user: User instance
+            membership: Membership instance
+            tz_manager: Optional timezone manager
+            
+        Returns:
+            Reservation instance
+        """
+        if tz_manager is None:
+            tz_manager = TimezoneManager()
+            
+        # Create a temporary instance to access logger
+        temp_instance = cls(
+            club=club,
+            user=user,
+            membership=membership,
+            start_time=datetime.now(),  # Temporary value
+            end_time=datetime.now(),    # Temporary value
+            raw_data=data,
+            _tz_manager=tz_manager
+        )
+        
+        # Parse start time from the startTime field (format: "12:25 2024-07-17")
+        try:
+            start_time = datetime.strptime(data["startTime"], "%H:%M %Y-%m-%d")
+            start_time = tz_manager.localize_datetime(start_time)
+        except (KeyError, ValueError) as e:
+            temp_instance.logger.error(f"Failed to parse start time from data: {e}")
+            # Use current time as fallback
+            start_time = tz_manager.now()
+        
+        # Calculate end time using duration from membership
+        end_time = club.get_end_time(start_time, membership.duration)
+        
+        # Extract players from response data
+        players: List[Player] = []
+        
+        # Get club info for player creation
+        club_info = data.get('course', {}).get('club', {})
+        
+        # Process each player in the reservations
+        for reservation in data.get('players', []):
+            if isinstance(reservation, dict):
+                try:
+                    player = Player.from_teetime(reservation, club_info)
+                    players.append(player)
+                except Exception as e:
+                    temp_instance.logger.error(f"Failed to create player from data: {e}")
+                    continue
+        
+        # If no players found, add the user as default player
+        if not players:
+            temp_instance.logger.debug(f"No players found, using user as default: {user.name}")
+            players = [Player(
+                name=user.name,
+                club=membership.clubAbbreviation,
+                handicap=float(user.handicap or 0.0)
+            )]
+        
+        return cls(
+            club=club,
+            user=user,
+            membership=membership,
+            start_time=start_time,
+            end_time=end_time,
+            players=players,
+            raw_data=data,
+            _tz_manager=tz_manager
+        )
+
     @staticmethod
     def _parse_dynamic_time(time_str: str, timezone: str) -> datetime:
         """Parse dynamic time string (e.g., 'tomorrow 10:00' or '3 days 09:30')."""
