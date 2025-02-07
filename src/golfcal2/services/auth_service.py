@@ -226,7 +226,9 @@ class AuthService(LoggerMixin):
                 cookie_name = cookie_name or 'JSESSIONID'
                 headers['Cookie'] = f'NGLOCALE=fi; {cookie_name}={cookie_value}'
                 # Add X-Auth-Token if available (from token field)
-                if 'token' in auth_details:
+                if 'X-Auth-Token' in auth_details:
+                    headers['X-Auth-Token'] = auth_details['X-Auth-Token']
+                elif 'token' in auth_details:
                     headers['X-Auth-Token'] = auth_details['token']
                 elif 'x_auth_token' in auth_details:
                     headers['X-Auth-Token'] = auth_details['x_auth_token']

@@ -51,8 +51,11 @@
     "type": "nexgolf",
     "name": "Pickala Golf Club",
     "url": "https://pgc.nexgolf.fi/pgc/member/api/flight/own",
-    "cookie_name": "NGLOCALE=fi; JSESSIONID",
-    "auth_type": "cookie",
+    "api": {
+      "base_url": "https://pgc.nexgolf.fi"
+    },
+    "cookie_name": "JSESSIONID",
+    "auth_type": "nexgolf",
     "crm": "nexgolf",
     "address": "Golfkuja 5, 02580 Siuntio, Finland",
     "clubAbbreviation": "PGC",

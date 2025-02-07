@@ -40,63 +40,26 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
         self.club_details = club_details
         self.session = requests.Session()
         self._setup_session()
-        self._setup_auth_headers()
         
     def _setup_session(self):
         """Set up session headers."""
         headers = {
             'Accept': 'application/json, text/plain, */*',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-GB,en;q=0.9',
             'Connection': 'keep-alive',
-            'Referer': f"{self.base_url}/",
-            'Origin': self.base_url,
+            'Priority': 'u=3, i',
+            'Referer': 'https://www.teetime.fi/',
             'Sec-Fetch-Dest': 'empty',
             'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin'
+            'Sec-Fetch-Site': 'same-origin',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15'
         }
         self.session.headers.update(headers)
-
-    def _setup_auth_headers(self):
-        """Setup authentication headers."""
-        try:
-            if not self.auth_service:
-                self.logger.warning("No auth service available")
-                return
-                
-            if not self.club:
-                self.logger.warning("No club instance available for auth headers")
-                return
-                
-            # Get auth headers from auth service
-            auth_headers = self.auth_service.get_auth_headers(self.club, self.auth_details)
-            
-            # Update session headers
-            if auth_headers:
-                self.session.headers.update(auth_headers)
-                self.logger.debug(f"Set up auth headers: {dict(self.session.headers)}")
-            else:
-                self.logger.warning("No auth headers returned from auth service")
-                
-        except Exception as e:
-            self.logger.error(f"Failed to set up auth headers: {e}")
-            
-    def _verify_credentials(self) -> bool:
-        """Verify API credentials."""
-        try:
-            response = self._make_request("GET", "/api/verify")
-            return response.get('status') == 'ok'
-        except Exception as e:
-            self.logger.error(f"Failed to verify credentials: {e}")
-            return False
 
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Any:
         """Make an API request with proper error handling."""
         try:
-            # Ensure we have auth headers
-            if 'X-API-Key' not in self.session.headers:
-                self._setup_auth_headers()
-                
             url = urljoin(self.base_url, endpoint)
             response = self.session.request(method, url, **kwargs)
             response.raise_for_status()
@@ -115,23 +78,25 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
     def get_reservations(self) -> List[Dict[str, Any]]:
         """Get reservations from TeeTime API."""
         try:
-            # Verify credentials first
-            if not self._verify_credentials():
-                self.logger.error("Failed to verify API credentials")
+            # Get token from auth details
+            token = self.auth_details.get('token')
+            if not token:
+                self.logger.error("No token found in auth details")
                 return []
-            
-            # Get member ID from auth details
-            if 'member_id' not in self.auth_details:
-                self.logger.error("No member ID found in auth details")
-                return []
-            
-            # Build request URL with correct parameter names
+
+            # Calculate date range (from today to end of year)
+            from_date = datetime.now().strftime('%Y-%m-%d')
+            to_date = (datetime.now().replace(month=12, day=31)).strftime('%Y-%m-%d')
+
+            # Add required query parameters
             params = {
-                'member_id': self.auth_details['member_id']
+                'from': from_date,
+                'to': to_date,
+                'token': token
             }
-            
-            # Make the request to the correct endpoint
-            response = self._make_request("GET", "/api/bookings", params=params)
+
+            # Make the request to the correct endpoint with parameters
+            response = self._make_request("GET", "/backend/player/flight", params=params)
             
             # Check if response is valid
             if not isinstance(response, dict) or 'data' not in response:
@@ -154,11 +119,18 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
     def get_club_info(self, club_number: str) -> Optional[Dict[str, Any]]:
         """Get club information from TeeTime API."""
         try:
-            # Build request URL
-            endpoint = f"/api/v1/clubs/{club_number}"
+            # Get token from auth details
+            token = self.auth_details.get('token')
+            if not token:
+                self.logger.error("No token found in auth details")
+                return None
+
+            # Build request URL with token
+            endpoint = f"/backend/clubs/{club_number}"
+            params = {'token': token}
             
             # Make request
-            response = self._make_request("GET", endpoint)
+            response = self._make_request("GET", endpoint, params=params)
             
             if isinstance(response, dict):
                 return response

@@ -66,7 +66,8 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
         self.session.headers.update(headers)
         
         # Set default cookies
-        self.session.cookies.set('NGLOCALE', 'fi', domain=self.base_url.split('//')[1])
+        domain = self.base_url.split('//')[1].split('/')[0]  # Extract domain without path
+        self.session.cookies.set('NGLOCALE', 'fi', domain=domain)
         
         # Log headers for debugging (excluding sensitive values)
         debug_headers = dict(self.session.headers)
@@ -94,10 +95,11 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
                 # Handle Cookie header separately
                 if 'Cookie' in auth_headers:
                     cookie_str = auth_headers.pop('Cookie')
+                    domain = self.base_url.split('//')[1].split('/')[0]  # Extract domain without path
                     for cookie in cookie_str.split('; '):
                         if '=' in cookie:
                             name, value = cookie.split('=', 1)
-                            self.session.cookies.set(name, value, domain=self.base_url.split('//')[1])
+                            self.session.cookies.set(name, value, domain=domain)
                 
                 # Update remaining headers
                 self.session.headers.update(auth_headers)
@@ -163,19 +165,30 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
             # Make request to get reservations using the correct endpoint
             response = self._make_request("GET", endpoint, params=params)
             
-            # Check if response is valid and has the expected structure
-            if not isinstance(response, dict):
-                self.logger.error(f"Invalid response format: {response}")
-                return []
-                
-            # Extract reservations based on response structure
-            if 'reservations' in response:
-                return response['reservations']
-            elif 'rows' in response:
-                return response['rows']
-            else:
-                self.logger.error(f"No reservations found in response: {response}")
-                return []
+            # Handle the new response format
+            if isinstance(response, list):
+                # Convert tee times to reservations
+                reservations = []
+                for tee_time in response:
+                    if 'reservations' in tee_time and tee_time['reservations']:
+                        # Create a single reservation for the tee time
+                        reservation = {
+                            'startTime': tee_time.get('startTime'),
+                            'comment': tee_time.get('comment'),
+                            'status': tee_time.get('status'),
+                            'players': tee_time['reservations']  # Store all players in the reservation
+                        }
+                        reservations.append(reservation)
+                return reservations
+            elif isinstance(response, dict):
+                # Handle old format for backward compatibility
+                if 'reservations' in response:
+                    return response['reservations']
+                elif 'rows' in response:
+                    return response['rows']
+            
+            self.logger.error(f"Invalid response format: {response}")
+            return []
             
         except Exception as e:
             self.logger.error(f"Failed to get reservations: {e}")

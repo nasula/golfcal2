@@ -592,10 +592,10 @@ class Reservation(LoggerMixin):
         players: List[Player] = []
         
         # Process players from NexGolf format
-        if "reservations" in data:
-            temp_instance.logger.debug(f"Processing NexGolf reservations: {data.get('reservations')}")
+        if "players" in data:
+            temp_instance.logger.debug(f"Processing NexGolf players: {data.get('players')}")
             try:
-                for player_data in data["reservations"]:
+                for player_data in data["players"]:
                     temp_instance.logger.debug(f"Processing player data: {player_data}")
                     if player_data and isinstance(player_data, dict):
                         player = Player.from_nexgolf(player_data)
