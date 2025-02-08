@@ -78,11 +78,17 @@ class BaseWiseGolfAPI(BaseAPI, RequestHandlerMixin):
         """
         Get players for a specific reservation.
         
+        Note: While orderId is included in the API parameters for backward compatibility,
+        it is not used for player matching. Players are instead matched based on their
+        start time and resource ID.
+        
         Args:
             reservation_data: Dictionary containing reservation details
                 
         Returns:
-            Dictionary containing player information
+            Dictionary containing player information with:
+            - reservationsGolfPlayers: List of player details
+            - rows: List of time slots with their resource information
         """
         try:
             self.logger.debug("WiseGolf0API.get_players - Starting with reservation data:")
@@ -104,6 +110,7 @@ class BaseWiseGolfAPI(BaseAPI, RequestHandlerMixin):
             if not product_id:
                 raise WiseGolfResponseError("No productId found in reservation")
                 
+            # Include orderId for backward compatibility, but it's not used for player matching
             params = {
                 "productid": str(product_id),
                 "date": date,
@@ -115,7 +122,7 @@ class BaseWiseGolfAPI(BaseAPI, RequestHandlerMixin):
             response = self._fetch_players(params)
             self.logger.debug(f"WiseGolf0API.get_players - Got response: {response}")
             
-            # Return the response directly - it should contain reservationsGolfPlayers
+            # Return the response directly - it should contain reservationsGolfPlayers and rows
             return response
             
         except Exception as e:

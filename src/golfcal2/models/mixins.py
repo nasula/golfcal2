@@ -225,7 +225,24 @@ class PlayerFetchMixin(LoggerMixin):
         skip_empty: bool = True,
         skip_reserved: bool = True
     ) -> List[Dict[str, Any]]:
-        """Extract players from WiseGolf0 format response."""
+        """Extract players from WiseGolf0 format response.
+        
+        Players are matched based on their start time and resource ID. This is because:
+        1. Each player has a reservationTimeId that points to a row in the 'rows' array
+        2. Each row contains a start time and a list of resources
+        3. Players in the same reservation will have different reservationTimeIds but the same:
+           - start time (exact match required)
+           - resource ID (exact match required)
+        
+        Args:
+            response: Response data containing reservationsGolfPlayers and rows
+            reservation: Current reservation data with dateTimeStart and resource info
+            skip_empty: Whether to skip players with no name
+            skip_reserved: Whether to skip "Varattu" players
+            
+        Returns:
+            List of player data dictionaries
+        """
         self.logger.debug(f"_extract_players_wisegolf0 - Starting extraction")
         self.logger.debug(f"_extract_players_wisegolf0 - Reservation: {reservation}")
         
@@ -240,21 +257,34 @@ class PlayerFetchMixin(LoggerMixin):
         self.logger.debug(f"_extract_players_wisegolf0 - Found {len(players_list)} players in response")
         self.logger.debug(f"_extract_players_wisegolf0 - Found {len(rows)} rows in response")
         
-        # Get our reservation's time slot details
-        our_time_id = reservation.get('reservationTimeId')
-        our_order_id = reservation.get('orderId')
-        self.logger.debug(f"_extract_players_wisegolf0 - Our reservation time ID: {our_time_id}, order ID: {our_order_id}")
+        # Get our reservation's details
+        our_start_time = reservation.get('dateTimeStart')
+        our_resource_id = None
+        if 'resources' in reservation and reservation['resources']:
+            our_resource_id = reservation['resources'][0].get('resourceId')
+        elif 'resourceId' in reservation:
+            our_resource_id = reservation.get('resourceId')
+            
+        self.logger.debug(f"_extract_players_wisegolf0 - Looking for players with start_time: {our_start_time} and resource_id: {our_resource_id}")
         
-        # Find all players with our order ID
+        # Find all time slots for this resource and start time
+        matching_time_ids = set()
+        for row in rows:
+            if row.get('start') != our_start_time:
+                continue
+            
+            # Check if this row has our resource ID
+            for resource in row.get('resources', []):
+                if resource.get('resourceId') == our_resource_id:
+                    matching_time_ids.add(row.get('reservationTimeId'))
+                    break
+                    
+        self.logger.debug(f"_extract_players_wisegolf0 - Found matching time IDs: {matching_time_ids}")
+        
+        # Get all players that have any of these time IDs
         players = []
         for player in players_list:
-            player_order_id = player.get('orderId')
-            player_time_id = player.get('reservationTimeId')
-            self.logger.debug(f"_extract_players_wisegolf0 - Processing player with time ID: {player_time_id}, order ID: {player_order_id}")
-            
-            # Skip players from different orders
-            if player_order_id != our_order_id:
-                self.logger.debug(f"_extract_players_wisegolf0 - Skipping player, order ID {player_order_id} != {our_order_id}")
+            if player.get('reservationTimeId') not in matching_time_ids:
                 continue
                 
             # Skip empty players if requested
@@ -276,7 +306,7 @@ class PlayerFetchMixin(LoggerMixin):
                 'handicapActive': player.get('handicapActive'),
                 'clubAbbreviation': player.get('clubAbbreviation', '')
             }
-            self.logger.debug(f"_extract_players_wisegolf0 - Adding player: {player_data['name']} (time ID: {player_time_id})")
+            self.logger.debug(f"_extract_players_wisegolf0 - Adding player: {player_data['name']} (time ID: {player.get('reservationTimeId')})")
             players.append(player_data)
         
         self.logger.debug(f"_extract_players_wisegolf0 - Extracted {len(players)} players")

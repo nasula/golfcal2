@@ -230,7 +230,28 @@ class Reservation(LoggerMixin):
         return str(resource_id)
 
     def _fetch_players(self, start_time: datetime) -> List[Player]:
-        """Fetch players for the reservation."""
+        """Fetch players for the reservation.
+        
+        Players are matched based on their start time and resource ID. This is because:
+        1. Each player has a reservationTimeId that points to a row in the 'rows' array
+        2. Each row contains a start time and a list of resources
+        3. Players in the same reservation will have different reservationTimeIds but the same:
+           - start time (exact match required)
+           - resource ID (exact match required)
+        
+        The matching process:
+        1. For future events, try to fetch additional players from the API
+        2. From the API response, find all time slots that match our start time and resource ID
+        3. Collect all players whose reservationTimeId matches any of our matching time slots
+        4. If no players found from API, try using the raw data
+        5. If still no players found, use the user as the default player
+        
+        Args:
+            start_time: The start time of the reservation
+            
+        Returns:
+            List of Player objects for this reservation
+        """
         players: List[Player] = []
         if self._tz_manager is None:
             self._tz_manager = TimezoneManager()
