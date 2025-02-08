@@ -201,20 +201,4 @@ class WeatherService(EnhancedLoggerMixin):
         Returns:
             bool: True if location is covered
         """
-        return True  # Default implementation covers all locations
-
-    def get_block_size(self, hours_ahead: float) -> int:
-        """Get forecast block size in hours based on how far ahead we're looking.
-        
-        Args:
-            hours_ahead: Hours ahead from current time
-            
-        Returns:
-            int: Block size in hours (1 or 6)
-        """
-        if hours_ahead <= self.HOURLY_RANGE:
-            return 1
-        elif hours_ahead <= self.SIX_HOURLY_RANGE:
-            return 6
-        else:
-            return 6  # Default to 6-hour blocks for long-range forecasts 
+        return True  # Default implementation covers all locations 

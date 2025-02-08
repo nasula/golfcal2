@@ -68,6 +68,11 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Documentation
+docs/_build/
+docs/build/
+docs/api/
+
 # Project specific
 *.log
 logs/

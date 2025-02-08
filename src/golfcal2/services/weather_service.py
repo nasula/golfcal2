@@ -40,8 +40,6 @@ class WeatherStrategy(ABC, LoggerMixin):
     """Base strategy for weather services."""
     
     service_type: str = "base"  # Should be overridden by subclasses
-    HOURLY_RANGE: int = 48  # Default hourly forecast range in hours
-    SIX_HOURLY_RANGE: int = 240  # Default 6-hourly forecast range in hours
     
     def __init__(self, context: WeatherContext):
         """Initialize strategy."""
