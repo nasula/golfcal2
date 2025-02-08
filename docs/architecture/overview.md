@@ -10,14 +10,14 @@ GolfCal2 is a command-line application designed to manage golf reservations and 
 graph TD
     CLI[CLI Interface] --> CS[Calendar Service]
     CLI --> RS[Reservation Service]
-    CLI --> WM[Weather Manager]
+    CLI --> WS[Weather Service]
     CLI --> EES[External Event Service]
     
-    CS --> WM
+    CS --> WS
     CS --> EES
     CS --> DB[(SQLite DB)]
     
-    RS --> WM
+    RS --> WS
     RS --> GCF[Golf Club Factory]
     RS --> AS[Auth Service]
     RS --> DB
@@ -27,12 +27,10 @@ graph TD
     GCF --> NG[NexGolf API]
     GCF --> TT[TeeTime API]
     
-    WM --> MET[MET.no]
-    WM --> OW[OpenWeather]
-    WM --> AE[AEMET]
-    WM --> IP[IPMA]
-    WM --> OM[OpenMeteo]
-    WM --> Cache[Weather Cache]
+    WS --> Met[Met.no Strategy]
+    WS --> OM[OpenMeteo Strategy]
+    WS --> Cache[Weather Cache]
+    WS --> DB
     
     AS --> TS[Token Strategy]
     AS --> CS2[Cookie Strategy]
@@ -65,18 +63,18 @@ graph TD
   - Weather Integration
   - Reservation Handler
 
-### 3. Weather Manager
-- Coordinates multiple weather services
-- Regional service selection
-- Caches weather data
-- Handles provider fallback
-- Normalizes weather formats
+### 3. Weather Service
+- Implements strategy pattern for providers
+- Geographic-based service selection
+- Caching with expiry management
+- Automatic fallback handling
+- Block size management
 - Providers:
-  - MET.no (Nordic countries)
-  - AEMET (Spain)
-  - IPMA (Portugal)
-  - OpenWeather (Mediterranean)
-  - OpenMeteo (Global)
+  - Met.no Strategy (Nordic/Baltic)
+  - OpenMeteo Strategy (Global)
+- Block Sizes:
+  - Met.no: 1h/6h/12h blocks
+  - OpenMeteo: 1h/3h/6h blocks
 
 ### 4. Authentication Service
 - Manages authentication strategies
@@ -111,7 +109,7 @@ sequenceDiagram
     participant GCF as GolfClubFactory
     participant GC as GolfClub
     participant AS as AuthService
-    participant WM as WeatherManager
+    participant WS as WeatherService
     participant DB as Database
 
     User->>CLI: Request Reservations
@@ -129,8 +127,9 @@ sequenceDiagram
             RS->>GC: Fetch Players
             GC-->>RS: Player Data
         end
-        RS->>WM: Get Weather
-        WM-->>RS: Weather Data
+        RS->>WS: Get Weather
+        WS->>WS: Select Strategy
+        WS-->>RS: Weather Data
         RS->>DB: Store Processed Data
         DB-->>RS: Confirmation
     end
@@ -144,28 +143,34 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant CS as CalendarService
-    participant WM as WeatherManager
+    participant WS as WeatherService
     participant Cache as WeatherCache
-    participant Primary as PrimaryProvider
-    participant Backup as BackupProvider
+    participant Met as Met.no Strategy
+    participant OM as OpenMeteo Strategy
     participant DB as Database
 
-    CS->>WM: Request Weather
-    WM->>Cache: Check Cache
+    CS->>WS: Request Weather
+    WS->>Cache: Check Cache
     alt Cache Hit
-        Cache-->>WM: Cached Data
+        Cache-->>WS: Cached Data
     else Cache Miss
-        WM->>Primary: Request Data
-        alt Primary Success
-            Primary-->>WM: Weather Data
-        else Primary Failure
-            WM->>Backup: Request Data
-            Backup-->>WM: Weather Data
+        WS->>WS: Select Strategy
+        alt Nordic/Baltic Location
+            WS->>Met: Get Weather
+            Met-->>WS: Weather Data
+        else Other Location
+            WS->>OM: Get Weather
+            alt OpenMeteo Success
+                OM-->>WS: Weather Data
+            else OpenMeteo Failure
+                WS->>Met: Fallback
+                Met-->>WS: Weather Data
+            end
         end
-        WM->>Cache: Update Cache
-        WM->>DB: Store Data
+        WS->>Cache: Update Cache
+        WS->>DB: Store Data
     end
-    WM-->>CS: Weather Data
+    WS-->>CS: Weather Data
 ```
 
 ## Configuration Structure
@@ -185,17 +190,11 @@ database:
 
 # Weather service configuration
 weather:
-  primary: "met"
-  backup: "openweather"
   cache_duration: 3600
   providers:
     met:
       user_agent: "GolfCal2/1.0.0"
-    openweather:
-      api_key: "your-key"
-    aemet:
-      api_key: "your-key"
-    ipma:
+    openmeteo:
       enabled: true
 ```
 
@@ -205,27 +204,33 @@ weather:
 sequenceDiagram
     participant User
     participant Service
-    participant External
+    participant Strategy
+    participant Cache
     participant Logger
     participant Monitor
 
     User->>Service: Request
     
-    alt Success
-        Service->>External: API Call
-        External-->>Service: Response
+    alt Cache Hit
+        Service->>Cache: Check Cache
+        Cache-->>Service: Cached Data
         Service-->>User: Result
-    else User Error
-        Service-->>User: Error Message
-        Service->>Logger: Log Warning
-    else System Error
-        Service->>Logger: Log Error
-        Service->>Monitor: Alert
-        Service-->>User: Error + Instructions
-    else Integration Error
-        External-->>Service: API Error
-        Service->>Logger: Log Error
-        Service-->>User: Error + Fallback
+    else Cache Miss
+        Service->>Strategy: Execute Strategy
+        alt Strategy Success
+            Strategy-->>Service: Result
+            Service->>Cache: Update Cache
+            Service-->>User: Result
+        else Primary Strategy Failure
+            Service->>Strategy: Try Fallback
+            Strategy-->>Service: Result
+            Service->>Logger: Log Warning
+            Service-->>User: Result
+        else Complete Failure
+            Service->>Logger: Log Error
+            Service->>Monitor: Alert
+            Service-->>User: Error Message
+        end
     end
 ```
 
@@ -249,17 +254,10 @@ sequenceDiagram
 
 ### Caching Strategy
 - Weather data caching
-- Club data caching
-- Configuration caching
+- Response caching
 - Cache invalidation
-- Cache cleanup
-
-### Optimization
-- Parallel requests
-- Connection pooling
-- Query optimization
-- Resource cleanup
-- Memory management
+- Memory optimization
+- Disk usage management
 
 ## Related Documentation
 

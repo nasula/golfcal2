@@ -14,43 +14,66 @@ The application uses a hierarchical error system for consistent error handling a
 
 ```python
 class APIError(Exception):
-    """Base class for API-related errors"""
+    """Base class for API-related errors."""
     def __init__(self, message: str, code: ErrorCode, context: Optional[Dict[str, Any]] = None):
         self.message = message
         self.code = code
         self.context = context or {}
         super().__init__(message)
 
+class RateLimitError(APIError):
+    """Raised when API rate limit is exceeded."""
+    def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
+        super().__init__(message, ErrorCode.RATE_LIMITED, context)
+
 class APITimeoutError(APIError):
-    """Raised when API requests timeout"""
+    """Raised when API requests timeout."""
     def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
         super().__init__(message, ErrorCode.TIMEOUT, context)
 
 class APIResponseError(APIError):
-    """Raised for invalid API responses"""
+    """Raised for invalid API responses."""
     def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
         super().__init__(message, ErrorCode.INVALID_RESPONSE, context)
-
-class APIAuthError(APIError):
-    """Raised for authentication failures"""
-    def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
-        super().__init__(message, ErrorCode.AUTH_FAILED, context)
 ```
 
 ### Weather Service Errors
 
 ```python
 class WeatherError(APIError):
-    """Base class for weather service errors"""
-    pass
+    """Base class for weather service errors."""
+    def __init__(self, message: str, service_type: str, context: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            message,
+            ErrorCode.WEATHER_SERVICE_ERROR,
+            {'service_type': service_type, **(context or {})}
+        )
 
 class WeatherServiceUnavailable(WeatherError):
-    """Raised when no suitable weather service is available"""
-    def __init__(self, location: Dict[str, float]):
+    """Raised when weather service is unavailable."""
+    def __init__(self, message: str, service_type: str):
         super().__init__(
-            "No weather service available for location",
-            ErrorCode.SERVICE_UNAVAILABLE,
-            {"coordinates": location}
+            message,
+            service_type,
+            {'error_type': 'service_unavailable'}
+        )
+
+class WeatherServiceRateLimited(WeatherError):
+    """Raised when weather service rate limit is exceeded."""
+    def __init__(self, message: str, service_type: str):
+        super().__init__(
+            message,
+            service_type,
+            {'error_type': 'rate_limited'}
+        )
+
+class WeatherLocationError(WeatherError):
+    """Raised for invalid location coordinates."""
+    def __init__(self, message: str, service_type: str):
+        super().__init__(
+            message,
+            service_type,
+            {'error_type': 'invalid_location'}
         )
 ```
 
@@ -73,100 +96,101 @@ class ErrorCode(Enum):
     # General API errors
     TIMEOUT = "timeout"
     INVALID_RESPONSE = "invalid_response"
-    AUTH_FAILED = "auth_failed"
+    RATE_LIMITED = "rate_limited"
     
     # Service errors
+    WEATHER_SERVICE_ERROR = "weather_service_error"
     SERVICE_UNAVAILABLE = "service_unavailable"
-    SERVICE_ERROR = "service_error"
     
     # Data errors
-    MISSING_DATA = "missing_data"
-    INVALID_DATA = "invalid_data"
+    INVALID_LOCATION = "invalid_location"
+    INVALID_PARAMETERS = "invalid_parameters"
     
-    # Business logic errors
-    RESERVATION_FAILED = "reservation_failed"
-    BOOKING_CONFLICT = "booking_conflict"
+    # Cache errors
+    CACHE_ERROR = "cache_error"
+    CACHE_EXPIRED = "cache_expired"
 ```
 
 ## Error Handling Patterns
 
-### 1. API Request Pattern
+### 1. Strategy Pattern Error Handling
 
 ```python
-def _make_request(self, method: str, endpoint: str, **kwargs) -> requests.Response:
-    """Enhanced request helper with retry and error handling."""
-    if not self.session:
-        self.authenticate()
-        
-    kwargs.setdefault('timeout', self.timeout)
+class WeatherStrategy(ABC):
+    """Base strategy for weather services."""
     
-    try:
-        response = self.session.request(
-            method,
-            f"{self.url}/{endpoint.lstrip('/')}",
-            **kwargs
-        )
-        response.raise_for_status()
-        return response
-        
-    except requests.Timeout as e:
-        raise APITimeoutError(
-            f"Request timed out: {str(e)}",
-            {"endpoint": endpoint, "method": method}
-        )
-        
-    except requests.HTTPError as e:
-        if e.response.status_code == 401:
-            # Try to reauthenticate once
-            self.authenticate()
-            response = self.session.request(
-                method,
-                f"{self.url}/{endpoint.lstrip('/')}",
-                **kwargs
+    def get_weather(self) -> Optional[WeatherResponse]:
+        """Get weather data with error handling."""
+        try:
+            response = self._fetch_forecasts(
+                self.context.lat,
+                self.context.lon,
+                self.context.start_time,
+                self.context.end_time
             )
-            response.raise_for_status()
-            return response
-        raise APIResponseError(
-            f"HTTP error: {str(e)}",
-            {"status_code": e.response.status_code}
-        )
+            
+            if response:
+                return self._parse_response(response)
+            return None
+            
+        except APIError as e:
+            self.error(f"Weather service error: {str(e)}")
+            raise WeatherError(str(e), self.service_type)
+            
+        except Exception as e:
+            self.error(f"Unexpected error: {str(e)}")
+            raise WeatherServiceUnavailable(str(e), self.service_type)
 ```
 
-### 2. Weather Service Pattern
+### 2. Service Level Error Handling
 
 ```python
-@handle_errors(WeatherError, "weather", "get weather data")
-def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
-    """Get weather data with error handling."""
-    try:
-        data = self._fetch_weather_data(lat, lon, start_time, end_time)
-        return [self._parse_weather_data(item) for item in data]
-    except Exception as e:
-        raise WeatherError(
-            f"Failed to get weather data: {str(e)}",
-            ErrorCode.SERVICE_ERROR,
-            {
-                "coordinates": {"lat": lat, "lon": lon},
-                "timeframe": {"start": start_time, "end": end_time}
-            }
-        )
+class WeatherService:
+    """Weather service with fallback handling."""
+    
+    def get_weather(
+        self,
+        lat: float,
+        lon: float,
+        start_time: datetime,
+        end_time: datetime,
+        service_type: Optional[str] = None
+    ) -> Optional[WeatherResponse]:
+        """Get weather data with fallback handling."""
+        try:
+            # Try primary service
+            service_type = service_type or self._select_service_for_location(lat, lon)
+            strategy = self._get_strategy(service_type)
+            response = strategy.get_weather()
+            
+            # Try fallback if primary fails
+            if not response and service_type == 'openmeteo':
+                met_strategy = self._get_strategy('met')
+                response = met_strategy.get_weather()
+            
+            return response
+            
+        except Exception as e:
+            aggregate_error(str(e), "weather_service", str(e.__traceback__))
+            return None
 ```
 
 ## Error Aggregation
 
-The system uses an error aggregator to collect and process errors:
+The system uses an error aggregator for monitoring and analysis:
 
 ```python
 def aggregate_error(
     error_message: str,
     component: str,
-    reservation_id: Optional[str] = None
+    traceback: Optional[str] = None
 ) -> None:
-    """Aggregate errors for monitoring and analysis."""
+    """Aggregate errors for monitoring."""
     ErrorAggregator.instance().add_error(
-        error_message,
-        component,
-        reservation_id
+        error_message=error_message,
+        component=component,
+        traceback=traceback,
+        timestamp=datetime.now(ZoneInfo('UTC'))
     )
 ```
 
@@ -174,25 +198,25 @@ def aggregate_error(
 
 ### 1. Error Types
 - Use specific error types for different scenarios
-- Include relevant context in error messages
+- Include service type and context in errors
 - Maintain proper error hierarchy
 - Use error codes consistently
 
 ### 2. Recovery Strategies
-- Implement retries for transient failures
-- Handle authentication refreshes automatically
-- Log errors with appropriate severity
-- Cache data when possible to handle service outages
+- Implement service fallbacks
+- Use caching for resilience
+- Handle rate limiting gracefully
+- Log errors with appropriate context
 
 ### 3. User Experience
-- Provide clear, actionable error messages
-- Handle errors gracefully without crashing
+- Provide clear error messages
+- Handle errors without crashing
+- Offer fallback options
 - Maintain system stability
-- Offer fallback options when available
 
-### 4. Monitoring and Debugging
-- Log error context for debugging
-- Track error frequencies and patterns
-- Set up alerts for critical errors
-- Maintain error statistics for analysis
+### 4. Monitoring
+- Aggregate errors for analysis
+- Track error patterns
+- Monitor service health
+- Set up appropriate alerts
 ``` 

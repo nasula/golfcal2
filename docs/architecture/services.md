@@ -2,52 +2,67 @@
 
 ## Overview
 
-GolfCal2's service architecture is designed around core services that handle specific aspects of the application's functionality. Each service follows a layered architecture with base classes, managers, and specific implementations.
+GolfCal2's service architecture is designed around core services that handle specific aspects of the application's functionality. Each service follows a strategy pattern with base classes, concrete strategies, and context objects.
 
 ## Service Layer Patterns
 
-### Base Service Pattern
+### Strategy Pattern
 
-All services inherit from a base service class that provides common functionality:
+Services use the strategy pattern to handle different implementations:
 
 ```python
-class BaseService(EnhancedLoggerMixin):
-    """Base class for all services."""
+class WeatherStrategy(ABC, LoggerMixin):
+    """Base strategy for weather services."""
     
-    def __init__(self, config: AppConfig):
-        self.config = config
-        self._validate_config()
+    service_type: str = "base"  # Should be overridden by subclasses
+    
+    def __init__(self, context: WeatherContext):
+        """Initialize strategy."""
+        super().__init__()
+        self.context = context
+        self.set_log_context(service=self.__class__.__name__.lower())
     
     @abstractmethod
-    def _validate_config(self) -> None:
-        """Validate service configuration."""
+    def get_weather(self) -> Optional[WeatherResponse]:
+        """Get weather data for the given context."""
+        pass
+    
+    @abstractmethod
+    def get_expiry_time(self) -> datetime:
+        """Get expiry time for cached weather data."""
+        pass
+
+    @abstractmethod
+    def get_block_size(self, hours_ahead: float) -> int:
+        """Get block size for forecast range."""
         pass
 ```
 
-### Service Manager Pattern
+### Context Objects
 
-Service managers coordinate multiple service implementations:
+Context objects encapsulate the data needed by strategies:
 
 ```python
-class WeatherServiceManager(WeatherService):
-    """Manager for handling multiple weather services."""
+class WeatherContext:
+    """Context for weather data retrieval."""
     
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
-        self.services = [
-            OpenWeatherService(local_tz, utc_tz, config, region="global"),
-            MetWeatherService(local_tz, utc_tz, config),
-            IberianWeatherService(local_tz, utc_tz, config),
-            PortugueseWeatherService(local_tz, utc_tz, config)
-        ]
-    
-    def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> WeatherResponse:
-        """Get weather data from all available services."""
-        for service in self.services:
-            try:
-                return service.get_weather(lat, lon, start_time, end_time)
-            except WeatherError:
-                continue
-        raise WeatherServiceUnavailable("No weather service available")
+    def __init__(
+        self,
+        lat: float,
+        lon: float,
+        start_time: datetime,
+        end_time: datetime,
+        local_tz: ZoneInfo,
+        utc_tz: ZoneInfo,
+        config: Dict[str, Any]
+    ):
+        self.lat = lat
+        self.lon = lon
+        self.start_time = start_time
+        self.end_time = end_time
+        self.local_tz = local_tz
+        self.utc_tz = utc_tz
+        self.config = config
 ```
 
 ### Enhanced Logging
@@ -71,23 +86,23 @@ class EnhancedLoggerMixin:
 
 ### Weather Service
 
-The weather service follows a layered architecture:
+The weather service follows a strategy pattern:
 
 ```mermaid
 graph TD
-    WM[Weather Manager] --> WS[Weather Service Base]
-    WS --> MET[MET Service]
-    WS --> OW[OpenWeather Service]
-    WS --> IB[Iberian Service]
-    WS --> PT[Portuguese Service]
+    WS[Weather Service] --> WC[Weather Context]
     WS --> Cache[Weather Cache]
     WS --> DB[Weather Database]
+    WS --> Met[Met.no Strategy]
+    WS --> OM[OpenMeteo Strategy]
+    Met --> Cache
+    OM --> Cache
 ```
 
 Key components:
-- Weather Manager: Coordinates multiple services
-- Base Service: Common functionality
-- Specific Implementations: Regional services
+- Weather Service: Strategy coordination
+- Weather Context: Request context
+- Concrete Strategies: Met.no and OpenMeteo
 - Cache Layer: Performance optimization
 - Database Layer: Persistence
 
@@ -97,7 +112,7 @@ The calendar service manages events and integrates with weather:
 
 ```mermaid
 graph TD
-    CS[Calendar Service] --> WM[Weather Manager]
+    CS[Calendar Service] --> WS[Weather Service]
     CS --> ES[Event Service]
     CS --> DB[Calendar Database]
     CS --> Builder[Calendar Builder]
@@ -115,7 +130,7 @@ The reservation service handles bookings across different systems:
 
 ```mermaid
 graph TD
-    RS[Reservation Service] --> WM[Weather Manager]
+    RS[Reservation Service] --> WS[Weather Service]
     RS --> GF[Golf Club Factory]
     RS --> Auth[Auth Service]
     GF --> WG[WiseGolf]
@@ -138,31 +153,27 @@ sequenceDiagram
     participant User
     participant RS as ReservationService
     participant CS as CalendarService
-    participant WM as WeatherManager
-    participant GCF as GolfClubFactory
-    participant GC as GolfClub
+    participant WS as WeatherService
+    participant Strat as WeatherStrategy
+    participant Cache as WeatherCache
     participant DB as Database
 
     User->>RS: Request Reservations
-    RS->>GCF: Create Club Instance
-    GCF-->>RS: Club Instance
-    RS->>GC: Fetch Reservations
-    GC->>GC: Make API Request
-    GC-->>RS: Raw Reservations
-    
-    loop For Each Reservation
-        alt Future Reservation
-            RS->>GC: Fetch Players
-            GC-->>RS: Player Data
-        end
-        RS->>WM: Get Weather
-        WM-->>RS: Weather Data
-        RS->>CS: Create Calendar Event
-        CS->>DB: Store Event
-        DB-->>CS: Success
-        CS-->>RS: Event Created
+    RS->>WS: Get Weather
+    WS->>Cache: Check Cache
+    alt Cache Hit
+        Cache-->>WS: Cached Data
+    else Cache Miss
+        WS->>Strat: Create Strategy
+        Strat->>Strat: Fetch Data
+        Strat-->>WS: Weather Data
+        WS->>Cache: Store Data
     end
-    
+    WS-->>RS: Weather Data
+    RS->>CS: Create Calendar Event
+    CS->>DB: Store Event
+    DB-->>CS: Success
+    CS-->>RS: Event Created
     RS-->>User: Processed Reservations
 ```
 
@@ -177,11 +188,12 @@ Services implement comprehensive error handling:
 
 2. Integration Errors
    - API timeouts
-   - Authentication failures
+   - Rate limiting
    - Data validation errors
 
 3. Recovery Strategies
    - Automatic retries
    - Service fallbacks
+   - Cache utilization
    - Graceful degradation
 ``` 

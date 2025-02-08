@@ -12,7 +12,10 @@ tests/
 │   ├── services/
 │   │   ├── test_calendar_service.py
 │   │   ├── test_reservation_service.py
-│   │   ├── test_weather_service.py
+│   │   ├── test_weather/
+│   │   │   ├── test_weather_service.py
+│   │   │   ├── test_met_strategy.py
+│   │   │   └── test_openmeteo_strategy.py
 │   │   └── test_auth_service.py
 │   ├── models/
 │   │   ├── test_reservation.py
@@ -39,7 +42,7 @@ tests/
 pytest
 
 # Run specific test file
-pytest tests/unit/services/test_weather_service.py
+pytest tests/unit/services/test_weather/test_weather_service.py
 
 # Run tests matching pattern
 pytest -k "weather"
@@ -74,40 +77,58 @@ markers =
 
 ```python
 import pytest
-from golfcal2.services.weather_service import WeatherManager
+from golfcal2.services.weather_service import WeatherService
+from golfcal2.services.weather_types import WeatherContext
 
-def test_weather_manager_initialization():
-    """Test WeatherManager initialization."""
+def test_weather_service_initialization():
+    """Test WeatherService initialization."""
     config = {
-        'weather': {
-            'met': {'user_agent': 'Test/1.0'},
-            'openweather': {'api_key': 'test-key'}
-        }
+        'timezone': 'Europe/Oslo',
+        'dev_mode': False
     }
-    manager = WeatherManager(config)
-    assert manager.services['met'] is not None
-    assert manager.services['openweather'] is not None
+    service = WeatherService(config)
+    assert 'met' in service._strategies
+    assert 'openmeteo' in service._strategies
 
-@pytest.mark.parametrize('coordinates,expected', [
-    ({'lat': 60.1699, 'lon': 24.9384}, True),
-    ({'lat': 91.0, 'lon': 181.0}, False)
+@pytest.mark.parametrize('coordinates,expected_service', [
+    ((60.1699, 24.9384), 'met'),  # Helsinki (Nordic)
+    ((41.8789, 2.7649), 'openmeteo')  # Barcelona (Other)
 ])
-def test_validate_coordinates(coordinates, expected):
-    """Test coordinate validation."""
-    manager = WeatherManager({})
-    assert manager.validate_coordinates(coordinates) == expected
+def test_service_selection(coordinates, expected_service):
+    """Test weather service selection based on location."""
+    service = WeatherService({})
+    lat, lon = coordinates
+    selected = service._select_service_for_location(lat, lon)
+    assert selected == expected_service
+
+def test_weather_strategy_block_sizes():
+    """Test block size calculations for different ranges."""
+    context = WeatherContext(
+        lat=60.1699,
+        lon=24.9384,
+        start_time=datetime.now(ZoneInfo('UTC')),
+        end_time=datetime.now(ZoneInfo('UTC')) + timedelta(hours=24),
+        local_tz=ZoneInfo('Europe/Helsinki'),
+        utc_tz=ZoneInfo('UTC'),
+        config={}
+    )
+    
+    met_strategy = MetWeatherStrategy(context)
+    assert met_strategy.get_block_size(24) == 1  # Short range
+    assert met_strategy.get_block_size(72) == 6  # Medium range
+    assert met_strategy.get_block_size(192) == 12  # Long range
 ```
 
 ### Integration Tests
 
 ```python
 import pytest
-from golfcal2.services import WeatherManager, CalendarService
+from golfcal2.services import WeatherService, CalendarService
 
 @pytest.mark.integration
 def test_weather_calendar_integration(config):
     """Test weather integration with calendar service."""
-    weather_manager = WeatherManager(config)
+    weather_service = WeatherService(config)
     calendar_service = CalendarService(config)
     
     # Create test reservation
@@ -118,8 +139,8 @@ def test_weather_calendar_integration(config):
     
     # Verify weather data
     assert event.weather is not None
-    assert 'temperature' in event.weather
-    assert 'precipitation' in event.weather
+    assert hasattr(event.weather[0], 'temperature')
+    assert hasattr(event.weather[0], 'precipitation')
 ```
 
 ### End-to-End Tests
@@ -144,22 +165,36 @@ def test_reservation_list_flow():
 ```python
 import pytest
 import yaml
+from zoneinfo import ZoneInfo
 
 @pytest.fixture
 def config():
     """Provide test configuration."""
-    with open('config.test.yaml') as f:
-        return yaml.safe_load(f)
+    return {
+        'timezone': 'Europe/Oslo',
+        'dev_mode': True,
+        'directories': {
+            'cache': 'tests/data/cache'
+        }
+    }
 
 @pytest.fixture
-def weather_manager(config):
-    """Provide configured WeatherManager."""
-    return WeatherManager(config)
+def weather_service(config):
+    """Provide configured WeatherService."""
+    return WeatherService(config)
 
 @pytest.fixture
-def calendar_service(config, weather_manager):
-    """Provide configured CalendarService."""
-    return CalendarService(config, weather_manager)
+def weather_context():
+    """Provide test WeatherContext."""
+    return WeatherContext(
+        lat=59.8940,
+        lon=10.8282,
+        start_time=datetime.now(ZoneInfo('UTC')),
+        end_time=datetime.now(ZoneInfo('UTC')) + timedelta(hours=24),
+        local_tz=ZoneInfo('Europe/Oslo'),
+        utc_tz=ZoneInfo('UTC'),
+        config={}
+    )
 ```
 
 ### Mock Services
@@ -169,126 +204,53 @@ import pytest
 from unittest.mock import Mock, patch
 
 @pytest.fixture
-def mock_weather_service():
-    """Provide mock weather service."""
-    service = Mock()
-    service.get_weather.return_value = {
-        'temperature': 20.0,
-        'precipitation': 0.0,
-        'wind_speed': 5.0
-    }
-    return service
-
-@pytest.fixture
-def mock_club_api():
-    """Provide mock golf club API."""
-    api = Mock()
-    api.get_reservations.return_value = [
-        {
-            'date': '2024-01-10',
-            'time': '10:00',
-            'players': ['Test User']
-        }
-    ]
-    return api
-```
-
-## Mocking
-
-### API Responses
-
-```python
-@pytest.mark.unit
-def test_weather_service_with_mock(mock_weather_service):
-    """Test weather service with mocked API."""
-    weather_data = mock_weather_service.get_weather(
-        coordinates={'lat': 60.1699, 'lon': 24.9384},
-        time='2024-01-10T10:00:00Z'
+def mock_weather_strategy():
+    """Provide mock weather strategy."""
+    strategy = Mock()
+    strategy.get_weather.return_value = WeatherResponse(
+        data=[
+            WeatherData(
+                temperature=20.0,
+                precipitation=0.0,
+                precipitation_probability=0.0,
+                wind_speed=5.0,
+                wind_direction='N',
+                weather_code=WeatherCode.CLEARSKY_DAY,
+                time=datetime.now(ZoneInfo('UTC')),
+                block_duration=timedelta(hours=1)
+            )
+        ],
+        expires=datetime.now(ZoneInfo('UTC')) + timedelta(hours=1)
     )
-    assert weather_data['temperature'] == 20.0
-    assert weather_data['precipitation'] == 0.0
-```
-
-### External Services
-
-```python
-@pytest.mark.unit
-@patch('golfcal2.services.weather_service.requests.get')
-def test_weather_api_call(mock_get):
-    """Test weather API call with mocked response."""
-    mock_get.return_value.json.return_value = {
-        'temperature': 20.0,
-        'precipitation': 0.0
-    }
-    mock_get.return_value.status_code = 200
-    
-    manager = WeatherManager({})
-    data = manager.get_weather(
-        coordinates={'lat': 60.1699, 'lon': 24.9384}
-    )
-    assert data['temperature'] == 20.0
+    return strategy
 ```
 
 ## Test Data
 
-### Factory Fixtures
+### Test Events
 
 ```python
-import pytest
-from datetime import datetime, timedelta
-
 @pytest.fixture
-def create_reservation():
-    """Factory for creating test reservations."""
-    def _create(
-        start_time=None,
-        duration_minutes=60,
-        club_name="TestGolf",
-        players=None
-    ):
-        if start_time is None:
-            start_time = datetime.now()
-        if players is None:
-            players = ["Test User"]
-            
-        return {
-            'start_time': start_time,
-            'end_time': start_time + timedelta(minutes=duration_minutes),
-            'club': club_name,
-            'players': players
+def test_events():
+    """Provide test events for different ranges and regions."""
+    return [
+        {
+            'name': 'Oslo GC Tomorrow',
+            'location': 'Oslo Golf Club',
+            'coordinates': {'lat': 59.8940, 'lon': 10.8282},
+            'start_time': 'tomorrow 10:00',
+            'end_time': 'tomorrow 14:00',
+            'timezone': 'Europe/Oslo'
+        },
+        {
+            'name': 'PGA Catalunya 4 Days',
+            'location': 'PGA Catalunya',
+            'coordinates': {'lat': 41.8789, 'lon': 2.7649},
+            'start_time': '4 days 09:30',
+            'end_time': '4 days 14:30',
+            'timezone': 'Europe/Madrid'
         }
-    return _create
-```
-
-### Database Fixtures
-
-```python
-import pytest
-import sqlite3
-
-@pytest.fixture
-def test_db():
-    """Provide test database connection."""
-    conn = sqlite3.connect(':memory:')
-    yield conn
-    conn.close()
-
-@pytest.fixture
-def weather_db(test_db):
-    """Initialize weather database."""
-    cursor = test_db.cursor()
-    cursor.execute('''
-        CREATE TABLE weather (
-            id INTEGER PRIMARY KEY,
-            latitude REAL,
-            longitude REAL,
-            temperature REAL,
-            precipitation REAL,
-            timestamp TEXT
-        )
-    ''')
-    test_db.commit()
-    return test_db
+    ]
 ```
 
 ## Best Practices

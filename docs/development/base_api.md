@@ -1,205 +1,199 @@
-# Base API Implementation
+# Base API Documentation
 
 ## Overview
 
-The Base API provides a foundation for all API clients in the application, implementing common functionality like authentication, request handling, and error management.
+The `BaseAPI` class provides a foundation for implementing API clients in GolfCal2. It handles common functionality such as request management, error handling, rate limiting, and authentication. The class is designed to be extended by specific service implementations, including weather service strategies.
 
 ## Core Components
 
-### 1. BaseAPI Class
+### BaseAPI Class
 
 ```python
-class BaseAPI(LoggerMixin):
-    DEFAULT_TIMEOUT = (7, 20)  # (connection timeout, read timeout)
-    DEFAULT_RETRY_TOTAL = 3
-    DEFAULT_RETRY_BACKOFF_FACTOR = 0.5
-    DEFAULT_RETRY_STATUS_FORCELIST = [408, 429, 500, 502, 503, 504]
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional
+import requests
+from requests.exceptions import RequestException
+from golfcal2.utils.logging import get_logger
+from golfcal2.utils.errors import APIError, RateLimitError
+
+class BaseAPI(ABC):
+    """Base class for API implementations."""
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Dict[str, Any]):
-        # Initialize API client with authentication and configuration
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.logger = get_logger(__name__)
+        self._setup_rate_limiting()
+    
+    @abstractmethod
+    def _setup_rate_limiting(self) -> None:
+        """Configure rate limiting for the API."""
         pass
+    
+    def _make_request(
+        self,
+        method: str,
+        url: str,
+        params: Optional[Dict] = None,
+        headers: Optional[Dict] = None,
+        **kwargs
+    ) -> Dict:
+        """Make HTTP request with error handling and rate limiting."""
+        try:
+            response = requests.request(
+                method=method,
+                url=url,
+                params=params,
+                headers=headers,
+                **kwargs
+            )
+            
+            if response.status_code == 429:
+                raise RateLimitError(
+                    f"Rate limit exceeded for {self.__class__.__name__}"
+                )
+            
+            response.raise_for_status()
+            return response.json()
+            
+        except RequestException as e:
+            self.logger.error(f"API request failed: {str(e)}")
+            raise APIError(f"Request failed: {str(e)}")
 ```
-
-### 2. Request Handling
-
-The base implementation provides robust request handling with:
-
-1. **Retry Configuration**
-   ```python
-   retry_strategy = Retry(
-       total=DEFAULT_RETRY_TOTAL,
-       backoff_factor=DEFAULT_RETRY_BACKOFF_FACTOR,
-       status_forcelist=DEFAULT_RETRY_STATUS_FORCELIST,
-       allowed_methods=["GET", "POST"]
-   )
-   ```
-
-2. **Session Management**
-   - Automatic retry handling
-   - Connection pooling
-   - Cookie persistence
-   - Header management
-
-3. **Response Validation**
-   ```python
-   def _validate_response(self, response: requests.Response) -> None:
-       try:
-           response.raise_for_status()
-       except requests.exceptions.HTTPError as e:
-           error_msg = f"HTTP {response.status_code}"
-           try:
-               error_data = response.json()
-               if isinstance(error_data, dict):
-                   error_msg = error_data.get('message', error_data.get('error', str(e)))
-           except (ValueError, AttributeError):
-               error_msg = response.text or str(e)
-           
-           raise APIResponseError(f"Request failed: {error_msg}")
-   ```
 
 ## Error Handling
 
-### 1. Error Classes
+### Error Classes
 
 ```python
-class GolfCalError(Exception):
-    """Base error class for all application errors."""
-    def __init__(self, message: str, code: ErrorCode, details: Optional[Dict[str, Any]] = None):
-        self.message = message
-        self.code = code
-        self.details = details or {}
-        super().__init__(message)
+class APIError(Exception):
+    """Base class for API-related errors."""
+    pass
 
-class AuthError(GolfCalError):
-    """Authentication-related errors."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
-        super().__init__(message, ErrorCode.AUTH_FAILED, details)
+class RateLimitError(APIError):
+    """Raised when API rate limit is exceeded."""
+    pass
 
-class ConfigError(GolfCalError):
-    """Configuration-related errors."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
-        super().__init__(message, ErrorCode.CONFIG_INVALID, details)
+class AuthenticationError(APIError):
+    """Raised for authentication/authorization failures."""
+    pass
 
-class ValidationError(GolfCalError):
-    """Data validation errors."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
-        super().__init__(message, ErrorCode.VALIDATION_FAILED, details)
+class ValidationError(APIError):
+    """Raised for invalid request parameters."""
+    pass
 ```
 
-### 2. Error Codes
+### Error Codes
 
-Common error codes used throughout the application:
-
-- `AUTH_FAILED`: Authentication failures
-- `CONFIG_INVALID`: Configuration issues
-- `VALIDATION_FAILED`: Data validation errors
-- `SERVICE_ERROR`: General service errors
-- `REQUEST_FAILED`: API request failures
-
-### 3. Error Recovery
-
-The system implements multiple layers of error recovery:
-
-1. **Request Level**
-   - Automatic retries for transient failures
-   - Exponential backoff
-   - Status code based retry decisions
-
-2. **Authentication Level**
-   - Token refresh on expiry
-   - Session renewal
-   - Credential rotation
-
-3. **Service Level**
-   - Fallback implementations
-   - Cached data usage
-   - Degraded mode operation
-
-## Authentication Integration
-
-### 1. Authentication Service
-
-The BaseAPI integrates with the AuthService for credential management:
-
-```python
-def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Dict[str, Any]):
-    self.auth_service = auth_service
-    auth_type = club_details.get('auth_type', 'token_appauth')
-    cookie_name = club_details.get('cookie_name', '')
-    self.headers = auth_service.create_headers(auth_type, cookie_name, membership.auth_details)
-```
-
-### 2. Authentication Strategies
-
-Supports multiple authentication methods:
-
-1. **Token Authentication**
-   ```python
-   headers = {
-       'Authorization': auth_details['token'],
-       'Accept': 'application/json'
-   }
-   ```
-
-2. **Cookie Authentication**
-   ```python
-   headers = {
-       'Cookie': f"{cookie_name}={auth_details['cookie_value']}",
-       'Accept': 'application/json'
-   }
-   ```
-
-3. **Query Authentication**
-   ```python
-   url = f"{base_url}?token={auth_details['token']}"
-   ```
-
-## Best Practices
-
-1. **Request Handling**
-   - Use appropriate timeouts
-   - Implement retry strategies
-   - Validate responses thoroughly
-
-2. **Error Management**
-   - Use specific error types
-   - Include detailed error messages
-   - Provide recovery options
-
-3. **Authentication**
-   - Secure credential storage
-   - Implement token refresh
-   - Handle session expiry
-
-4. **Logging**
-   - Log request/response details
-   - Track authentication status
-   - Monitor error patterns
+| Code | Description | HTTP Status |
+|------|-------------|-------------|
+| 1000 | Generic API Error | 500 |
+| 1001 | Rate Limit Exceeded | 429 |
+| 1002 | Authentication Failed | 401 |
+| 1003 | Invalid Parameters | 400 |
+| 1004 | Resource Not Found | 404 |
+| 1005 | Service Unavailable | 503 |
 
 ## Implementation Example
 
-Example of implementing a new API client:
+### Weather Strategy Implementation
 
 ```python
-class CustomAPI(BaseAPI):
-    def __init__(self, club_details: Dict[str, Any], membership: Dict[str, Any]):
-        super().__init__(
-            base_url="https://api.example.com/v1",
-            auth_service=AuthService(),
-            club_details=club_details,
-            membership=membership
-        )
+from golfcal2.services.base_api import BaseAPI
+from golfcal2.services.weather_types import WeatherContext, WeatherResponse
+
+class MetWeatherStrategy(BaseAPI):
+    """Met.no weather service implementation."""
     
-    def get_data(self) -> Dict[str, Any]:
+    def __init__(self, context: WeatherContext):
+        super().__init__(context.config)
+        self.context = context
+        self.base_url = "https://api.met.no/weatherapi/locationforecast/2.0"
+    
+    def _setup_rate_limiting(self) -> None:
+        """Configure rate limiting for Met.no API."""
+        self.requests_per_minute = 60
+        self.min_request_interval = 1.0  # seconds
+    
+    def get_weather(self) -> WeatherResponse:
+        """Fetch weather data from Met.no."""
+        params = {
+            'lat': self.context.lat,
+            'lon': self.context.lon
+        }
+        
+        headers = {
+            'User-Agent': 'GolfCal2/1.0'
+        }
+        
         try:
-            response = self.session.get(
-                f"{self.base_url}/data",
-                timeout=self.DEFAULT_TIMEOUT
+            data = self._make_request(
+                method='GET',
+                url=f"{self.base_url}/compact",
+                params=params,
+                headers=headers
             )
-            self._validate_response(response)
-            return response.json()
-        except requests.Timeout as e:
-            raise APITimeoutError("Request timed out") from e
-        except requests.RequestException as e:
-            raise APIError(f"Request failed: {str(e)}") from e
+            return self._parse_response(data)
+            
+        except APIError as e:
+            self.logger.error(f"Failed to fetch Met.no weather: {str(e)}")
+            raise
+```
+
+## Best Practices
+
+### Request Handling
+
+1. Always use the `_make_request` method from `BaseAPI` for HTTP requests
+2. Include appropriate error handling and logging
+3. Respect rate limits and implement backoff strategies
+4. Use type hints and docstrings for better code clarity
+
+### Error Management
+
+1. Use appropriate error classes for different failure scenarios
+2. Include relevant context in error messages
+3. Log errors with sufficient detail for debugging
+4. Handle rate limiting gracefully with retries when appropriate
+
+### Logging
+
+1. Use the logger from `BaseAPI` for consistent logging
+2. Include request/response details at DEBUG level
+3. Log errors with stack traces at ERROR level
+4. Add correlation IDs for request tracking
+
+### Authentication
+
+1. Use environment variables for API keys
+2. Implement token refresh mechanisms when needed
+3. Handle authentication errors appropriately
+4. Log authentication failures securely
+
+## Testing
+
+```python
+import pytest
+from unittest.mock import Mock, patch
+from golfcal2.services.base_api import BaseAPI
+
+class TestAPI(BaseAPI):
+    """Test implementation of BaseAPI."""
+    def _setup_rate_limiting(self):
+        self.requests_per_minute = 60
+
+def test_rate_limiting():
+    """Test rate limiting functionality."""
+    api = TestAPI({})
+    assert api.requests_per_minute == 60
+
+@pytest.mark.integration
+def test_api_request():
+    """Test API request handling."""
+    api = TestAPI({})
+    with patch('requests.request') as mock_request:
+        mock_request.return_value.json.return_value = {'data': 'test'}
+        mock_request.return_value.status_code = 200
+        
+        response = api._make_request('GET', 'https://api.test.com')
+        assert response == {'data': 'test'}
 ``` 

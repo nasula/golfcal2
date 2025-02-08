@@ -11,13 +11,14 @@ docs/
 ├── architecture/           # System architecture documentation
 │   ├── overview.md        # High-level system overview
 │   ├── services.md        # Service layer design
+│   ├── error_handling.md  # Error handling patterns
 │   └── data-flow.md       # Data flow diagrams
 ├── services/              # Service-specific documentation
 │   ├── weather/           # Weather services
-│   │   ├── overview.md    # Weather service architecture
-│   │   ├── manager.md     # WeatherManager implementation
+│   │   ├── README.md      # Weather service overview
+│   │   ├── manager.md     # Weather service implementation
 │   │   ├── data-models.md # Weather data structures
-│   │   └── providers/     # Weather service providers
+│   │   └── providers/     # Weather service strategies
 │   ├── calendar/          # Calendar service docs
 │   ├── reservation/       # Reservation service docs
 │   └── external-events/   # External events service docs
@@ -45,12 +46,13 @@ docs/
 ### Architecture
 - [System Overview](architecture/overview.md)
 - [Service Architecture](architecture/services.md)
+- [Error Handling](architecture/error_handling.md)
 - [Data Flow](architecture/data-flow.md)
 
 ### Services
 - [Calendar Service](services/calendar/README.md)
 - [Reservation Service](services/reservation/README.md)
-- [Weather Services](services/weather/README.md)
+- [Weather Service](services/weather/README.md)
 - [External Events](services/external-events/README.md)
 
 ## Features
@@ -62,16 +64,41 @@ docs/
 - External event support
 
 ### Weather Integration
-- Multiple weather providers
-- Location-based forecasts
-- Automatic updates
-- Caching support
+- Strategy pattern implementation
+- Geographic-based provider selection:
+  - Met.no for Nordic/Baltic regions
+  - OpenMeteo for global coverage
+- Block size patterns:
+  - Short range: 1-hour blocks
+  - Medium range: 3/6-hour blocks
+  - Long range: 6/12-hour blocks
+- Automatic fallback handling
+- Efficient caching system
 
 ### Golf Club Support
 - Multiple club systems
 - Automated reservations
 - Membership management
 - Availability checking
+
+## Design Patterns
+
+### Strategy Pattern
+- Weather service providers
+- Authentication methods
+- Club system integrations
+
+### Caching
+- Weather data caching
+- Response caching
+- Cache invalidation
+- Memory optimization
+
+### Error Handling
+- Type-safe errors
+- Context-aware errors
+- Automatic fallbacks
+- Error aggregation
 
 ## Contributing
 

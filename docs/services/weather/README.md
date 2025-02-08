@@ -2,106 +2,95 @@
 
 ## Overview
 
-The weather service provides weather data for golf reservations and events through multiple providers. It uses a layered architecture with caching and database persistence, offering region-specific weather data with automatic fallback mechanisms.
+The weather service provides weather data for golf reservations and events through a strategy pattern implementation. It uses a layered architecture with caching and provider selection based on geographic location, offering region-specific weather data with automatic fallback mechanisms.
 
 ## Architecture
 
 ```mermaid
 graph TD
-    WM[Weather Manager] --> WS[Weather Service Base]
-    WS --> MET[MET Service]
-    WS --> OM[OpenMeteo Service]
-    WS --> OW[OpenWeather Service]
-    WS --> IB[Iberian Service]
-    WS --> Cache[Weather Cache]
-    WS --> DB[Weather Database]
+    WM[Weather Manager] --> WS[Weather Service]
+    WS --> SP[Strategy Provider]
+    SP --> MET[Met.no Strategy]
+    SP --> OM[OpenMeteo Strategy]
+    SP --> Cache[Weather Cache]
     
     subgraph Caching
         Cache --> MemCache[Memory Cache]
-        Cache --> DBCache[Database Cache]
+        Cache --> FileCache[File Cache]
         Cache --> LocationCache[Location Cache]
+    end
+
+    subgraph Strategy Selection
+        SP --> GeoSelector[Geographic Selector]
+        SP --> BlockSelector[Block Size Selector]
     end
 ```
 
-## Service Selection
+## Strategy Selection
 
-The Weather Manager selects services based on geographic location:
+The Weather Service selects strategies based on geographic location:
 
-1. Nordic Region (55°N-72°N, 4°E-32°E):
-   - Primary: MET.no (high-accuracy Nordic forecasts)
+1. Nordic Region (55°N-71°N, 4°E-32°E):
+   - Primary: Met.no (high-accuracy Nordic forecasts)
    - Fallback: OpenMeteo
 
-2. Iberian Region (Spain and territories):
-   - Primary: AEMET (municipality-based forecasts)
-   - Fallback: OpenMeteo
-
-3. All Other Regions:
+2. All Other Regions:
    - Primary: OpenMeteo (global coverage)
-   - Fallback: OpenWeather
+   - No fallback needed (reliable global coverage)
 
 ## Components
 
-### Base Service
+### Weather Service
 
-The base weather service defines the core interface:
+The base weather service implements the strategy pattern:
 
 ```python
-class WeatherService(EnhancedLoggerMixin):
-    """Base class for weather services."""
+class WeatherService:
+    """Weather service using strategy pattern."""
     
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo):
-        self.local_tz = local_tz
-        self.utc_tz = utc_tz
-        
-        # Initialize caching
-        self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
-        self.location_cache = WeatherLocationCache(os.path.join(data_dir, 'weather_locations.db'))
+    def __init__(self, config: WeatherConfig):
+        self.config = config
+        self.cache = WeatherCache(config.cache_path)
+        self.strategies = {
+            'met': MetWeatherStrategy(config.met),
+            'openmeteo': OpenMeteoStrategy(config.openmeteo)
+        }
     
     def get_weather(
         self,
-        lat: float,
-        lon: float,
+        location: Location,
         start_time: datetime,
         end_time: datetime,
-        club: Optional[str] = None
-    ) -> Optional[WeatherResponse]:
-        """Get weather data for location and time range."""
-        data = self._fetch_forecasts(lat, lon, start_time, end_time)
-        return WeatherResponse(data=data, expires=self.get_expiry_time())
+        block_size: Optional[BlockSize] = None
+    ) -> WeatherResponse:
+        """Get weather data using appropriate strategy."""
+        strategy = self._select_strategy(location)
+        return strategy.get_weather(location, start_time, end_time, block_size)
+        
+    def _select_strategy(self, location: Location) -> WeatherStrategy:
+        """Select appropriate strategy based on location."""
+        if self._is_nordic_region(location):
+            return self.strategies['met']
+        return self.strategies['openmeteo']
 ```
 
-### Service Implementations
+### Strategy Implementations
 
-1. MET.no Service (Nordic)
+1. Met.no Strategy (Nordic)
    - High-accuracy forecasts for Nordic regions
    - No API key required
+   - User-Agent required
    - 1-second request interval
-   - 6-hour cache duration
+   - Block sizes: 1h, 6h, 12h
    - Proprietary weather codes mapped to internal codes
 
-2. OpenMeteo Service (Global)
-   - Global coverage with hourly resolution
+2. OpenMeteo Strategy (Global)
+   - Global coverage with flexible resolution
    - No API key required
    - 10,000 requests/day limit
    - WMO weather codes
-   - 1-hour cache duration
+   - Block sizes: 1h, 3h, 6h
    - Automatic unit conversion
-
-3. OpenWeather Service (Global Fallback)
-   - Global coverage with 3-hour resolution
-   - API key required
-   - 60 calls/minute limit
-   - Region-specific configurations
-   - SQLite-based caching
-   - Enhanced error handling
-
-4. AEMET Service (Iberian)
-   - Spain and territories coverage
-   - Municipality-based forecasts
-   - API key required
-   - Multiple forecast ranges (hourly/6-hourly/daily)
-   - 90-day municipality cache
-   - Day/night condition support
 
 ### Caching System
 
@@ -109,23 +98,22 @@ The service implements a multi-layer caching system:
 
 1. Memory Cache:
    - Short-term response caching
-   - Configurable duration
+   - Strategy-specific durations
    - Request deduplication
 
-2. Database Cache:
-   - Long-term forecast storage
-   - Location-based caching
-   - Service-specific schemas
+2. File Cache:
+   - JSON-based persistent storage
+   - Location and strategy-based organization
    - Automatic expiration
 
 3. Location Cache:
-   - Municipality and coordinate caching
-   - 90-day retention
-   - Automatic updates
+   - Coordinate validation
+   - Region detection
+   - Strategy selection optimization
 
 ## Data Format
 
-All services return standardized weather data:
+All strategies return standardized weather data:
 
 ```python
 @dataclass
@@ -135,26 +123,25 @@ class WeatherData:
     precipitation_probability: float # 0-100%
     wind_speed: float             # m/s
     wind_direction: float         # Degrees (0-360)
-    symbol: str                   # Internal weather code
+    symbol: WeatherCode           # Internal weather code enum
     elaboration_time: datetime    # UTC
     thunder_probability: float    # 0-100%
-    block_duration: timedelta     # Forecast block duration
+    block_size: BlockSize         # Forecast block size enum
 ```
 
 ## Error Handling
 
 The service implements comprehensive error handling:
 
-1. Service Errors
+1. Strategy Errors
    - Network connectivity issues
-   - Authentication failures
    - Rate limiting
    - Invalid coordinates
    - Parse errors
    - Missing data
 
-2. Recovery Strategies
-   - Automatic service fallback
+2. Recovery Mechanisms
+   - Automatic strategy fallback
    - Cache utilization
    - Exponential backoff
    - Graceful degradation
@@ -166,24 +153,15 @@ Example configuration in `config.yaml`:
 ```yaml
 weather:
   cache_duration: 3600  # seconds
-  database_path: "weather.db"
+  cache_path: "~/.golfcal2/cache/weather"
   providers:
     met:
-      user_agent: "GolfCal2/1.0"
+      user_agent: "GolfCal2/1.0.0"
       timeout: 10
+      block_sizes: ["1h", "6h", "12h"]
     openmeteo:
       timeout: 10
-    openweather:
-      api_key: "your-key"
-      timeout: 10
-      regions:
-        global:
-          cache_duration: 3600
-        nordic:
-          cache_duration: 7200
-    aemet:
-      api_key: "your-key"
-      timeout: 10
+      block_sizes: ["1h", "3h", "6h"]
 ```
 
 ## Related Documentation

@@ -19,12 +19,16 @@ directories:
   ics: "ics"
   config: "config"
   logs: "logs"
+  cache: "~/.golfcal2/cache"
 
-# API Keys for weather services
-api_keys:
-  weather:
-    aemet: ""      # Spanish Meteorological Agency
-    openweather: "" # Mediterranean region
+# Weather service configuration
+weather:
+  cache_duration: 3600  # Cache duration in seconds
+  providers:
+    met:
+      user_agent: "GolfCal2/1.0.0"  # Required for Met.no
+    openmeteo:
+      enabled: true  # No API key needed
 
 # Default durations for golf rounds
 default_durations:
@@ -71,6 +75,9 @@ services:
     file:
       path: logs/weather.log
       max_size_mb: 20
+      components:
+        met: DEBUG
+        openmeteo: DEBUG
   calendar_service:
     level: DEBUG
     file:
@@ -95,7 +102,11 @@ Defines golf club specific settings and integration details:
     "url": "https://example.com/golf",
     "timezone": "Europe/Helsinki",
     "variant": "Main Course",
-    "address": "123 Golf Street, Example City"
+    "address": "123 Golf Street, Example City",
+    "coordinates": {
+      "lat": 60.1699,
+      "lon": 24.9384
+    }
   }
 }
 ```
@@ -135,14 +146,11 @@ Key settings can be overridden using environment variables:
 GOLFCAL_TIMEZONE="Europe/Helsinki"
 GOLFCAL_LOG_LEVEL="INFO"
 
-# Weather API keys
-GOLFCAL_AEMET_API_KEY="your-key"
-GOLFCAL_OPENWEATHER_API_KEY="your-key"
-
 # Directory paths
 GOLFCAL_CONFIG_DIR="/path/to/config"
 GOLFCAL_LOGS_DIR="/path/to/logs"
 GOLFCAL_ICS_DIR="/path/to/ics"
+GOLFCAL_CACHE_DIR="/path/to/cache"
 ```
 
 ## Sensitive Data Handling
@@ -184,10 +192,16 @@ The application validates configurations through:
 
 ## Service-Specific Settings
 
-### Weather Services
-- Supports multiple providers (MET, AEMET, OpenWeather, IPMA)
-- Provider-specific API keys and configurations
-- Automatic fallback between providers
+### Weather Service
+- Strategy pattern for weather providers
+- Geographic-based provider selection:
+  - Met.no: Nordic/Baltic regions (55°N-71°N, 4°E-32°E)
+  - OpenMeteo: Global coverage
+- Block size patterns:
+  - Met.no: 1h/6h/12h blocks
+  - OpenMeteo: 1h/3h/6h blocks
+- Automatic fallback handling
+- Configurable caching
 
 ### Calendar Integration
 - ICS file generation and management
@@ -196,7 +210,7 @@ The application validates configurations through:
 
 ### Logging System
 - Service-specific log files
-- Performance monitoring
+- Strategy-specific logging levels
 - Error aggregation
 - Sensitive data masking
 - Correlation ID tracking
@@ -209,4 +223,5 @@ For production environments:
 3. Set up proper file permissions for config files
 4. Enable error aggregation
 5. Configure backup settings for logs and data
+6. Set up appropriate cache directories
 ``` 
