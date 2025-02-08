@@ -2,11 +2,11 @@
 
 ## Overview
 
-GolfCal2 integrates with two primary weather service providers to ensure reliable weather data across different regions. Each provider is selected based on geographic location and availability.
+GolfCal2 implements a strategy pattern for weather services, integrating with two primary providers to ensure reliable weather data across different regions. Each strategy is selected based on geographic location and availability.
 
-## Service Selection
+## Strategy Selection
 
-The system uses the following logic to select a weather service:
+The system uses the following logic to select a weather strategy:
 
 1. Nordic and Baltic Regions:
    - Nordic (55°N-71°N, 4°E-32°E):
@@ -18,94 +18,131 @@ The system uses the following logic to select a weather service:
 
 2. All Other Regions:
    - Primary: OpenMeteo
-   - Fallback: Met.no
+   - No fallback needed (reliable global coverage)
 
 ## Weather Data Format
 
-All weather services return data in a standardized format:
+All weather strategies return data in a standardized format:
 
 ```python
 @dataclass
 class WeatherData:
     temperature: float              # Celsius
     precipitation: float           # mm/h
-    precipitation_probability: float # 0-100%
+    precipitation_probability: Optional[float] # 0-100%
     wind_speed: float             # m/s
-    wind_direction: str           # Compass direction
-    weather_code: WeatherCode     # Standardized weather code
-    time: datetime                # UTC
-    block_duration: timedelta     # Forecast block duration
+    wind_direction: Optional[float] # Degrees (0-360)
+    symbol: WeatherCode           # Weather code enum
+    elaboration_time: datetime    # UTC
+    block_size: BlockSize         # Block size enum
+    thunder_probability: Optional[float] = None  # 0-100%
 ```
 
-## Service Providers
+## Strategy Interface
 
-### [Met.no](met.md)
+Base strategy implementation:
+
+```python
+class WeatherStrategy(ABC):
+    """Base strategy for weather services."""
+    
+    service_type: str = "base"  # Should be overridden by subclasses
+    
+    def __init__(self, context: WeatherContext):
+        self.context = context
+    
+    @abstractmethod
+    def get_weather(self) -> Optional[WeatherResponse]:
+        """Get weather data for the given context."""
+        pass
+    
+    @abstractmethod
+    def get_expiry_time(self) -> datetime:
+        """Get expiry time for cached weather data."""
+        pass
+
+    @abstractmethod
+    def get_block_size(self, hours_ahead: float) -> BlockSize:
+        """Get block size for forecast range."""
+        pass
+```
+
+## Strategy Implementations
+
+### [Met.no Strategy](met.md)
 - **Coverage**: Nordic and Baltic regions
 - **Update Frequency**: Hourly
 - **Authentication**: User-Agent required
 - **Rate Limit**: 1 request/second (courtesy)
 - **Block Sizes**:
-  - 0-48h: 1-hour blocks
-  - 48h-7d: 6-hour blocks
-  - >7d: 12-hour blocks
+  - 0-48h: BlockSize.ONE_HOUR
+  - 48h-7d: BlockSize.SIX_HOURS
+  - >7d: BlockSize.TWELVE_HOURS
 
-### [OpenMeteo](openmeteo.md)
+### [OpenMeteo Strategy](openmeteo.md)
 - **Coverage**: Global
 - **Update Frequency**: 3 hours
 - **Authentication**: None required
 - **Rate Limit**: 10,000 requests/day
 - **Block Sizes**:
-  - 0-48h: 1-hour blocks
-  - 48h-7d: 3-hour blocks
-  - >7d: 6-hour blocks
+  - 0-48h: BlockSize.ONE_HOUR
+  - 48h-7d: BlockSize.THREE_HOURS
+  - >7d: BlockSize.SIX_HOURS
 
 ## Error Handling
 
-Each service implements the following error handling:
+Each strategy implements the following error handling:
 
-1. Service Errors
+1. Strategy Errors
    - `WeatherServiceUnavailable`: Service not accessible
    - `WeatherDataError`: Invalid data format
    - `WeatherAPIError`: API communication error
    - `WeatherServiceRateLimited`: Rate limit exceeded
+   - `WeatherLocationError`: Invalid coordinates
 
-2. Recovery Strategies
-   - Automatic service fallback
+2. Recovery Mechanisms
+   - Automatic strategy fallback
    - Cache utilization
-   - Exponential backoff for rate limits
+   - Exponential backoff
+   - Graceful degradation
 
 ## Caching
 
 Weather data is cached with the following rules:
 
-1. Met.no:
+1. Met.no Strategy:
    - Cache Duration: 1 hour
    - Invalidation: 5 minutes before next hour
+   - Key Format: "{lat},{lon}:met:{block_size}"
 
-2. OpenMeteo:
+2. OpenMeteo Strategy:
    - Cache Duration: 3 hours
    - Invalidation: 5 minutes before next 3-hour mark
+   - Key Format: "{lat},{lon}:openmeteo:{block_size}"
 
 ## Rate Limiting
 
-Each service implements appropriate rate limiting:
+Each strategy implements appropriate rate limiting:
 
 1. Met.no:
    ```python
-   # Courtesy rate limit
-   time.sleep(1.0)  # 1 second between requests
+   @rate_limit(requests_per_second=1)
+   def _fetch_data(self):
+       """Fetch data with courtesy rate limit."""
+       pass
    ```
 
 2. OpenMeteo:
    ```python
-   # Free tier limit
-   if daily_requests >= 10000:
-       raise WeatherServiceRateLimited()
+   @rate_limit(requests_per_day=10000)
+   def _fetch_data(self):
+       """Fetch data with free tier limit."""
+       pass
    ```
 
-## Service Integration
+## Strategy Integration
 
-To integrate a new weather service:
+To implement a new weather strategy:
 
 1. Implement the strategy interface:
    ```python
@@ -113,22 +150,26 @@ To integrate a new weather service:
        service_type: str = "new_service"
        
        def get_weather(self) -> Optional[WeatherResponse]:
+           """Implement weather data fetching."""
            pass
        
        def get_expiry_time(self) -> datetime:
+           """Implement cache expiry logic."""
            pass
        
-       def get_block_size(self, hours_ahead: float) -> int:
+       def get_block_size(self, hours_ahead: float) -> BlockSize:
+           """Implement block size selection."""
            pass
    ```
 
-2. Add service configuration:
+2. Add strategy configuration:
    ```yaml
    weather:
      providers:
        new_service:
          timeout: 10
          cache_duration: 3600
+         block_sizes: ["1h", "3h", "6h"]
    ```
 
 3. Register the strategy:
@@ -154,4 +195,4 @@ The service includes comprehensive test coverage:
 
 - [Weather Service Implementation](../../services/weather/README.md)
 - [Weather Data Models](../../services/weather/data-models.md)
-- [Weather Flow Diagrams](../../services/weather/diagrams/weather_flow.md) 
+- [Strategy Pattern Guide](../../guidelines/strategy.md) 

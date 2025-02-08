@@ -71,7 +71,6 @@ htmlcov/
 # Documentation
 docs/_build/
 docs/build/
-docs/api/
 
 # Project specific
 *.log

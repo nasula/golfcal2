@@ -14,12 +14,11 @@ Golf club management system integrations:
 
 ## Weather APIs
 
-Weather service integrations:
+Weather service integrations using strategy pattern:
 
-- [MET.no API](weather/met.md) - Nordic weather service
-- [OpenMeteo API](weather/openmeteo.md) - Global weather service
-- [OpenWeather API](weather/openweather.md) - Global weather service with fallback
-- [AEMET API](weather/aemet.md) - Spanish weather service
+- [Met.no Strategy](weather/met.md) - Nordic/Baltic regions weather service
+- [OpenMeteo Strategy](weather/openmeteo.md) - Global weather service
+- [Weather Strategy Interface](weather/strategy.md) - Base strategy implementation
 
 ## Service APIs
 
@@ -28,10 +27,13 @@ Internal service documentation:
 - [Weather Service API](services/weather.md) - Weather data management
 - [Calendar Service API](services/calendar.md) - Calendar event management
 - [External Events API](services/events.md) - External event integration
+- [Base API](services/base_api.md) - Base API implementation
 
 ## Guidelines
 
-- [Error Handling](guidelines/errors.md) - Common error patterns and handling
+- [Error Handling](guidelines/errors.md) - Error patterns and handling
+- [Strategy Pattern](guidelines/strategy.md) - Strategy implementation guide
 - [Authentication](guidelines/auth.md) - Authentication strategies
-- [Data Formats](guidelines/formats.md) - Common data formats and structures
-- [Performance](guidelines/performance.md) - Rate limiting and caching 
+- [Data Formats](guidelines/formats.md) - Common data formats
+- [Caching](guidelines/caching.md) - Caching patterns
+- [Performance](guidelines/performance.md) - Rate limiting and optimization 

@@ -22,6 +22,16 @@ docs/
 │   ├── calendar/          # Calendar service docs
 │   ├── reservation/       # Reservation service docs
 │   └── external-events/   # External events service docs
+├── api/                   # API documentation
+│   ├── README.md         # API overview
+│   ├── weather/          # Weather API docs
+│   │   ├── met.md        # Met.no strategy
+│   │   └── openmeteo.md  # OpenMeteo strategy
+│   ├── crm/              # CRM API docs
+│   │   ├── wisegolf.md   # WiseGolf API
+│   │   ├── nexgolf.md    # NexGolf API
+│   │   └── teetime.md    # TeeTime API
+│   └── guidelines/       # API guidelines
 ├── development/           # Development documentation
 │   ├── setup.md          # Development setup guide
 │   ├── testing.md        # Testing guide
@@ -54,6 +64,22 @@ docs/
 - [Reservation Service](services/reservation/README.md)
 - [Weather Service](services/weather/README.md)
 - [External Events](services/external-events/README.md)
+
+### APIs
+- [API Overview](api/README.md)
+- Weather APIs:
+  - [Met.no Strategy](api/weather/met.md)
+  - [OpenMeteo Strategy](api/weather/openmeteo.md)
+  - [Weather Strategy Interface](api/weather/strategy.md)
+- CRM APIs:
+  - [WiseGolf API](api/crm/wisegolf.md)
+  - [NexGolf API](api/crm/nexgolf.md)
+  - [TeeTime API](api/crm/teetime.md)
+- Guidelines:
+  - [Error Handling](api/guidelines/errors.md)
+  - [Strategy Pattern](api/guidelines/strategy.md)
+  - [Authentication](api/guidelines/auth.md)
+  - [Caching](api/guidelines/caching.md)
 
 ## Features
 
