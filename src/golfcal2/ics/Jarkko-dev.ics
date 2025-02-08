@@ -1,0 +1,211 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Golf Calendar//EN
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:Jarkko
+X-WR-TIMEZONE:Europe/Helsinki
+BEGIN:VEVENT
+SUMMARY:Golf: Unknown - Simulaattori 3 @11:00 (2 Players\, THCP: 53.7)
+DTSTART:20250209T110000Z
+DTEND:20250209T130000Z
+DTSTAMP:20250207T202710Z
+UID:Vantaankoski_20250209_1100_3_Jarkko
+DESCRIPTION:Teetime 2025-02-09 11:00:00\nJarkko Ahonen\, PGC\, HCP: 23.8\n
+ Nana Ahonen\, VGC\, HCP: 29.9\n\nWeather:\n11:00-12:00 ☁️ -1.5°C 1.7m
+ /s 💧0% ⚡0%\n12:00-13:00 ☁️ -1.4°C 1.6m/s 💧0% ⚡0%
+LOCATION:Martinkyläntie 9\, 01770 Vantaa\, Finland
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Winter Practice 50514#
+DTSTART;TZID=Europe/Helsinki:20250212T180000
+DTEND;TZID=Europe/Helsinki:20250212T210000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Winter_Practice_50514#_20250212_1800_60_Jarkko
+DESCRIPTION:Teetime 2025-02-12 18:00:00\n\nWeather:\n14:00-20:00 ☁️ 2.
+ 3°C 3.1m/s 💧0%\n20:00-02:00 (+1) ☁️ 1.0°C 2.8m/s 💧0%
+LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Winter Practice 50514#
+DTSTART;TZID=Europe/Helsinki:20250219T180000
+DTEND;TZID=Europe/Helsinki:20250219T210000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Winter_Practice_50514#_20250219_1800_60_Jarkko
+DESCRIPTION:Teetime 2025-02-19 18:00:00
+LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Winter Practice 50514#
+DTSTART;TZID=Europe/Helsinki:20250226T180000
+DTEND;TZID=Europe/Helsinki:20250226T210000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Winter_Practice_50514#_20250226_1800_60_Jarkko
+DESCRIPTION:Teetime 2025-02-26 18:00:00
+LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Winter Practice 50514#
+DTSTART;TZID=Europe/Helsinki:20250305T180000
+DTEND;TZID=Europe/Helsinki:20250305T210000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Winter_Practice_50514#_20250305_1800_60_Jarkko
+DESCRIPTION:Teetime 2025-03-05 18:00:00
+LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Winter Practice 50514#
+DTSTART;TZID=Europe/Helsinki:20250312T180000
+DTEND;TZID=Europe/Helsinki:20250312T210000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Winter_Practice_50514#_20250312_1800_60_Jarkko
+DESCRIPTION:Teetime 2025-03-12 18:00:00
+LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Winter Practice 50514#
+DTSTART;TZID=Europe/Helsinki:20250319T180000
+DTEND;TZID=Europe/Helsinki:20250319T210000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Winter_Practice_50514#_20250319_1800_60_Jarkko
+DESCRIPTION:Teetime 2025-03-19 18:00:00
+LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Winter Practice 50514#
+DTSTART;TZID=Europe/Helsinki:20250326T180000
+DTEND;TZID=Europe/Helsinki:20250326T210000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Winter_Practice_50514#_20250326_1800_60_Jarkko
+DESCRIPTION:Teetime 2025-03-26 18:00:00
+LOCATION:Golfluola\, KEIMOLANMÄENTIE 11\, HALLI 85\, 01700 VANTAA
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Oslo GC Tomorrow
+DTSTART;TZID=Europe/Oslo:20250208T100000
+DTEND;TZID=Europe/Oslo:20250208T140000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Oslo_GC_Tomorrow_20250208_1000_59_Jarkko
+DESCRIPTION:Teetime 2025-02-08 10:00:00\n\nWeather:\n10:00-11:00 ☁️ -0
+ .7°C 3.5m/s 💧10% ⚡1%\n11:00-12:00 ☁️ -0.5°C 3.8m/s 💧24% ⚡1
+ %\n12:00-13:00 ☁️ -0.3°C 3.7m/s 💧38% ⚡1%\n13:00-14:00 🌨️ -0
+ .3°C 3.7m/s 💧54% 0.1mm ⚡1%
+LOCATION:Oslo Golf Club\, Grønmo\, 1279 Oslo\, Norway
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Oslo GC Next Week
+DTSTART;TZID=Europe/Oslo:20250214T090000
+DTEND;TZID=Europe/Oslo:20250214T150000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Oslo_GC_Next_Week_20250214_0900_59_Jarkko
+DESCRIPTION:Teetime 2025-02-14 09:00:00\n\nWeather:\n07:00-13:00 ☁️ -6
+ .8°C 1.9m/s 💧0%\n13:00-19:00 ☁️ -0.8°C 1.7m/s 💧0%
+LOCATION:Oslo Golf Club\, Grønmo\, 1279 Oslo\, Norway
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: PDR Tomorrow
+DTSTART;TZID=Europe/Lisbon:20250208T080000
+DTEND;TZID=Europe/Lisbon:20250208T120000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:PDR_Tomorrow_20250208_0800_39_Jarkko
+DESCRIPTION:Teetime 2025-02-08 08:00:00\n\nWeather:\n08:00-09:00 ☁️ 11
+ .3°C 5.1m/s 💧0%\n09:00-10:00 ☁️ 10.8°C 6.3m/s 💧0%\n10:00-11:00
+  ☁️ 12.1°C 7.4m/s 💧0%\n11:00-12:00 ☁️ 12.9°C 3.6m/s 💧0%
+LOCATION:Praia D'El Rey Golf Club\, Vale de Janelas\, 2514-999 Óbidos\, P
+ ortugal
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: PGA Catalunya 3 Days
+DTSTART;TZID=Europe/Madrid:20250210T093000
+DTEND;TZID=Europe/Madrid:20250210T143000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:PGA_Catalunya_3_Days_20250210_0930_41_Jarkko
+DESCRIPTION:Teetime 2025-02-10 09:30:00\n\nWeather:\n09:00-10:00 ⛅ 1.9°
+ C 2.5m/s 💧0%\n10:00-11:00 ☁️ 4.8°C 2.1m/s 💧0%\n11:00-12:00 ☁
+ ️ 7.8°C 2.8m/s 💧0%\n12:00-13:00 ☁️ 11.4°C 7.3m/s 💧0%\n13:00-
+ 14:00 ☁️ 13.6°C 14.3m/s 💧0%\n14:00-15:00 ☁️ 14.3°C 15.7m/s 
+ 💧0%
+LOCATION:PGA Catalunya\, Carretera N-II km 701\, 17455 Caldes de Malavella
+ \, Girona\, Spain
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Lykia Links Tomorrow AM
+DTSTART;TZID=Europe/Istanbul:20250208T070000
+DTEND;TZID=Europe/Istanbul:20250208T110000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Lykia_Links_Tomorrow_AM_20250208_0700_36_Jarkko
+DESCRIPTION:Teetime 2025-02-08 07:00:00\n\nWeather:\n07:00-08:00 ☀️ 5.
+ 4°C 5.9m/s 💧0%\n08:00-09:00 ☀️ 5.5°C 4.9m/s 💧0%\n09:00-10:00 
+ ☀️ 6.3°C 4.6m/s 💧0%\n10:00-11:00 ☀️ 8.7°C 3.6m/s 💧0%
+LOCATION:Lykia Links Golf Club\, Denizyaka Mah\, Köprüçay Cd. No:12\, 0
+ 7600 Serik/Antalya\, Turkey
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Lykia Links Tomorrow PM
+DTSTART;TZID=Europe/Istanbul:20250208T130000
+DTEND;TZID=Europe/Istanbul:20250208T170000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Lykia_Links_Tomorrow_PM_20250208_1300_36_Jarkko
+DESCRIPTION:Teetime 2025-02-08 13:00:00\n\nWeather:\n13:00-14:00 ☀️ 13
+ .8°C 7.7m/s 💧0%\n14:00-15:00 ☀️ 14.4°C 8.2m/s 💧0%\n15:00-16:00
+  ☀️ 14.7°C 9.7m/s 💧0%\n16:00-17:00 ☀️ 14.6°C 10.0m/s 💧0%
+LOCATION:Lykia Links Golf Club\, Denizyaka Mah\, Köprüçay Cd. No:12\, 0
+ 7600 Serik/Antalya\, Turkey
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Cullinan Links 3 Days
+DTSTART;TZID=Europe/Istanbul:20250210T113000
+DTEND;TZID=Europe/Istanbul:20250210T163000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Cullinan_Links_3_Days_20250210_1130_36_Jarkko
+DESCRIPTION:Teetime 2025-02-10 11:30:00\n\nWeather:\n11:00-12:00 ☀️ 10
+ .3°C 12.6m/s 💧0%\n12:00-13:00 ☀️ 11.9°C 11.4m/s 💧0%\n13:00-14:
+ 00 ☀️ 13.0°C 9.5m/s 💧0%\n14:00-15:00 ☀️ 13.8°C 7.1m/s 💧0%\
+ n15:00-16:00 ☀️ 14.3°C 4.1m/s 💧0%\n16:00-17:00 ☀️ 14.4°C 3.6m
+ /s 💧0%
+LOCATION:Cullinan Links Golf Club\, Üçkumtepesi Mevkii\, Belek\, Antalya
+ \, Türkiye
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: PGA Catalunya Tomorrow
+DTSTART;TZID=Europe/Madrid:20250208T093000
+DTEND;TZID=Europe/Madrid:20250208T143000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:PGA_Catalunya_Tomorrow_20250208_0930_41_Jarkko
+DESCRIPTION:Teetime 2025-02-08 09:30:00\n\nWeather:\n09:00-10:00 ☁️ 5.
+ 2°C 27.4m/s 💧88% 0.5mm\n10:00-11:00 ☁️ 4.9°C 24.5m/s 💧65%\n11:
+ 00-12:00 ☁️ 6.1°C 21.1m/s 💧38%\n12:00-13:00 ⛅ 7.2°C 16.4m/s 
+ 💧20%\n13:00-14:00 ⛅ 8.6°C 14.7m/s 💧13%\n14:00-15:00 ☁️ 9.5°C
+  11.9m/s 💧15%
+LOCATION:PGA Catalunya\, Carretera N-II km 701\, 17455 Caldes de Malavella
+ \, Girona\, Spain
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Golf Costa Adeje 3 days
+DTSTART;TZID=Atlantic/Canary:20250210T093000
+DTEND;TZID=Atlantic/Canary:20250210T143000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Golf_Costa_Adeje_3_days_20250210_0930_28_Jarkko
+DESCRIPTION:Teetime 2025-02-10 09:30:00\n\nWeather:\n09:00-10:00 ☀️ 14
+ .4°C 5.1m/s 💧0%\n10:00-11:00 ☀️ 17.5°C 5.2m/s 💧0%\n11:00-12:00
+  ☀️ 19.3°C 8.0m/s 💧0%\n12:00-13:00 ☀️ 20.2°C 12.6m/s 💧0%\n
+ 13:00-14:00 ☀️ 20.6°C 14.1m/s 💧0%\n14:00-15:00 ☀️ 20.8°C 15.8
+ m/s 💧0%
+LOCATION:Golf Costa Adeje\, Calle Alcojora\, s/n\, 38670 Adeje\, Santa Cru
+ z de Tenerife\, Spain
+END:VEVENT
+BEGIN:VEVENT
+SUMMARY:Golf: Real Club de Golf de Tenerife Tomorrow
+DTSTART;TZID=Atlantic/Canary:20250208T093000
+DTEND;TZID=Atlantic/Canary:20250208T143000
+DTSTAMP;VALUE=DATE-TIME:20250207T202710Z
+UID:Real_Club_de_Golf_de_Tenerife_Tomorrow_20250208_0930_28_Jarkko
+DESCRIPTION:Teetime 2025-02-08 09:30:00\n\nWeather:\n09:00-10:00 🌤️ 1
+ 0.4°C 7.9m/s 💧0%\n10:00-11:00 🌤️ 12.5°C 8.0m/s 💧0%\n11:00-12:
+ 00 ☀️ 14.0°C 7.9m/s 💧0%\n12:00-13:00 ☀️ 15.4°C 8.1m/s 💧0%\
+ n13:00-14:00 ☀️ 16.5°C 8.6m/s 💧0%\n14:00-15:00 ☀️ 17.1°C 7.9m
+ /s 💧0%
+LOCATION:Real Club de Golf de Tenerife\, Calle Campo de Golf\, 1\, 38350 T
+ acoronte\, Santa Cruz de Tenerife\, Spain
+END:VEVENT
+END:VCALENDAR

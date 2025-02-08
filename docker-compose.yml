@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  golfcal2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: golfcal2:latest
+    container_name: golfcal2
+    restart: unless-stopped
+    volumes:
+      - ./config:/etc/golfcal2:ro
+      - golfcal2-ics:/var/lib/golfcal2/ics
+      - golfcal2-logs:/var/log/golfcal2
+    environment:
+      - GOLFCAL_CONFIG_DIR=/etc/golfcal2
+      - GOLFCAL_ICS_DIR=/var/lib/golfcal2/ics
+      - GOLFCAL_LOG_FILE=/var/log/golfcal2/golfcal.log
+      - TZ=Europe/Helsinki
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  golfcal2-ics:
+    name: golfcal2-ics
+  golfcal2-logs:
+    name: golfcal2-logs 

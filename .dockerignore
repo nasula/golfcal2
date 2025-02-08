@@ -1,29 +1,7 @@
-# Configuration files with sensitive data
-config/config.yaml
-config/users.json
-config/clubs.json
-
-# Additional config files that might contain secrets
-config/*.yaml
-config/*.yml
-config/*.env
-config/*.key
-config/*.pem
-config/*.json
-.env
-*.env
-api_keys.yaml
-credentials.json
-*_token
-*_key
-*_secret
-*_password
-users.json
-
-# Generated files
-ics/*.ics
-data/
-logs/
+# Git
+.git
+.gitignore
+.github
 
 # Python
 __pycache__/
@@ -77,6 +55,16 @@ config.local.yaml
 users.local.json
 clubs.local.json
 ics/*.ics
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Documentation
+docs/
+*.md
+LICENSE
 
 # macOS
 .DS_Store

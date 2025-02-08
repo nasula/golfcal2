@@ -162,7 +162,24 @@ class WiseGolfStrategy(ReservationStrategy):
         return players
 
 class WiseGolf0Strategy(WiseGolfStrategy):
-    """Strategy for WiseGolf0 reservations."""
+    """Strategy for WiseGolf0 reservations.
+    
+    Player Matching Logic:
+    ---------------------
+    Players are matched based on their start time and resource ID. This is because:
+    1. Each player has a reservationTimeId that points to a row in the 'rows' array
+    2. Each row contains a start time and a list of resources
+    3. Players in the same reservation will have different reservationTimeIds but the same:
+       - start time (exact match required)
+       - resource ID (exact match required)
+    4. There can be multiple reservationTimeIds for a single reservation
+    
+    The matching process:
+    1. Get the start time and resource ID from our reservation
+    2. Find all rows in player_data_list['rows'] that match both criteria
+    3. Collect the reservationTimeIds from these matching rows
+    4. Find all players whose reservationTimeId matches any of the collected IDs
+    """
     
     def parse_times(
         self,
@@ -180,7 +197,22 @@ class WiseGolf0Strategy(WiseGolfStrategy):
         data: Dict[str, Any],
         context: ReservationContext
     ) -> List[Player]:
-        """Extract players from WiseGolf0 data."""
+        """Extract players from WiseGolf0 data.
+        
+        The function follows these steps:
+        1. For future events, try to fetch additional players from the API
+        2. From the API response, find all time slots that match our start time and resource ID
+        3. Collect all players whose reservationTimeId matches any of our matching time slots
+        4. If no players found from API, try using the raw data
+        5. If still no players found, use the user as the default player
+        
+        Args:
+            data: Raw reservation data containing dateTimeStart and resource information
+            context: Context containing club, user, and membership information
+            
+        Returns:
+            List of Player objects for this reservation
+        """
         players: List[Player] = []
         
         # Try to fetch players for future events
@@ -196,7 +228,6 @@ class WiseGolf0Strategy(WiseGolfStrategy):
                 if isinstance(player_data_list, dict):
                     if 'reservationsGolfPlayers' in player_data_list and 'rows' in player_data_list:
                         # Get our reservation's details
-                        our_order_id = data.get('orderId')
                         our_start_time = data.get('dateTimeStart')
                         our_resource_id = None
                         if 'resources' in data and data['resources']:
@@ -204,26 +235,22 @@ class WiseGolf0Strategy(WiseGolfStrategy):
                         elif 'resourceId' in data:
                             our_resource_id = data.get('resourceId')
                         
-                        # First find our time slot from rows
-                        matching_rows = [
-                            row for row in player_data_list['rows']
-                            if (row.get('start') == our_start_time and
-                                any(r.get('resourceId') == our_resource_id for r in row.get('resources', []))
-                                if row.get('resources') else False)
-                        ]
+                        # Find all time slots for this resource and start time
+                        matching_time_ids = set()
+                        for row in player_data_list['rows']:
+                            if row.get('start') != our_start_time:
+                                continue
+                            
+                            # Check if this row has our resource ID
+                            for resource in row.get('resources', []):
+                                if resource.get('resourceId') == our_resource_id:
+                                    matching_time_ids.add(row.get('reservationTimeId'))
+                                    break
                         
-                        if matching_rows:
-                            matching_time_ids = [row.get('reservationTimeId') for row in matching_rows]
-                            
-                            # Then find players that match either our orderId or are in the same time slot
-                            matching_players = [
-                                player for player in player_data_list['reservationsGolfPlayers']
-                                if (player.get('orderId') == our_order_id or
-                                    player.get('reservationTimeId') in matching_time_ids)
-                            ]
-                            
-                            for player_data in matching_players:
-                                players.append(Player.from_wisegolf(player_data))
+                        # Get all players that have any of these time IDs
+                        for player in player_data_list['reservationsGolfPlayers']:
+                            if player.get('reservationTimeId') in matching_time_ids:
+                                players.append(Player.from_wisegolf(player))
             
             except Exception as e:
                 self.error(f"Failed to fetch players: {e}", exc_info=True)
@@ -231,11 +258,13 @@ class WiseGolf0Strategy(WiseGolfStrategy):
         # If no players found, try using the raw data
         if not players:
             if 'reservationsGolfPlayers' in data:
+                # Get our time ID from the raw data
+                our_time_id = data.get('reservationTimeId')
+                
+                # Find players with matching time ID
                 for player_data in data['reservationsGolfPlayers']:
-                    players.append(Player.from_wisegolf(player_data))
-            elif 'players' in data:
-                for player_data in data['players']:
-                    players.append(Player.from_wisegolf(player_data))
+                    if player_data.get('reservationTimeId') == our_time_id:
+                        players.append(Player.from_wisegolf(player_data))
         
         # If still no players found, add the user as default player
         if not players:

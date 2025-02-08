@@ -1,0 +1,143 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "golfcal2"
+version = "0.1.0"
+description = "Golf calendar management application"
+readme = "README.md"
+authors = [
+    { name = "Jarkko Ahonen", email = "jarkkoa@iki.fi" }
+]
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business :: Scheduling",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31.0,<3.0.0",
+    "PyYAML>=6.0.1,<7.0.0",
+    "icalendar>=5.0.11,<6.0.0",
+    "openmeteo-requests>=1.1.0,<2.0.0",
+    "requests-cache>=1.1.0,<2.0.0",
+    "retry-requests>=2.0.0,<3.0.0",
+    "pandas>=2.0.0,<3.0.0",
+    "typing-extensions>=4.8.0,<5.0.0",
+    "pushover-complete>=1.1.1,<2.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0,<8.0.0",
+    "pytest-cov>=4.1.0,<5.0.0",
+    "pytest-mock>=3.11.1,<4.0.0",
+    "mypy>=1.7.0,<2.0.0",
+    "ruff>=0.1.9,<0.2.0",
+    "types-requests>=2.31.0.10,<3.0.0",
+    "types-PyYAML>=6.0.12.12,<7.0.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/jahonen/golfcal2"
+Repository = "https://github.com/jahonen/golfcal2.git"
+Documentation = "https://github.com/jahonen/golfcal2#readme"
+"Bug Tracker" = "https://github.com/jahonen/golfcal2/issues"
+
+[project.scripts]
+golfcal2 = "golfcal2.cli:main"
+golfcal2-service = "golfcal2.service:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["golfcal2*"]
+
+[tool.setuptools.package-data]
+golfcal2 = [
+    "py.typed",
+    "config/*.yaml",
+    "config/*.json"
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+select = ["E", "F", "W", "I", "N", "UP", "ANN", "B", "A", "COM", "C4", "DTZ", "T10", "ERA", "PL", "RUF"]
+ignore = []
+
+[tool.ruff.mccabe]
+max-complexity = 10
+
+[tool.ruff.per-file-ignores]
+"tests/**/*.py" = ["S101", "TID252"]
+
+[tool.ruff.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+implicit_reexport = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "pandas.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "requests.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "openmeteo_requests.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "requests_cache.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "retry_requests.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "yaml.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "icalendar.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --cov=golfcal2 --cov-report=xml"
+testpaths = ["tests"]
+
+[tool.bandit]
+exclude_dirs = ["tests", "docs"]
+skips = ["B101"]  # Allow assert statements in tests
+targets = ["src/golfcal2"]
+
+[tool.bandit.assert_used]
+skips = ["*/test_*.py"] 
