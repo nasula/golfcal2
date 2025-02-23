@@ -120,6 +120,41 @@ class QueryAuthStrategy(AuthStrategy):
             url = f"{url}?token={self.auth_details['token']}"
         return url
 
+class TokenAppAuthStrategy(AuthStrategy):
+    """Token app authentication strategy for WiseGolf."""
+
+    def __init__(self, auth_details: Dict[str, Any]) -> None:
+        """Initialize token app auth strategy."""
+        self.auth_details = auth_details
+
+    def get_auth_header(self) -> Dict[str, str]:
+        """Get token app auth header."""
+        headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json',
+            'x-session-type': 'wisegolf'
+        }
+        
+        if 'token' in self.auth_details:
+            headers['Authorization'] = f'Bearer {self.auth_details["token"]}'
+            
+        return headers
+
+    def get_auth_cookie(self) -> Dict[str, str]:
+        """Get token app auth cookie."""
+        return {}
+
+    def get_auth_token(self) -> str:
+        """Get token app auth token."""
+        return str(self.auth_details.get('token', ''))
+
+    def build_full_url(self, base_url: str, path: str) -> str:
+        """Build full URL with token app auth."""
+        url = urljoin(base_url, path)
+        if 'appauth' in self.auth_details:
+            url = f"{url}?appauth={self.auth_details['appauth']}"
+        return url
+
 class UnsupportedAuthStrategy(AuthStrategy):
     """Fallback strategy for unsupported authentication types."""
 
@@ -174,6 +209,8 @@ class AuthService(LoggerMixin):
                 return self._get_basic_auth_headers(auth_details)
             elif auth_type == 'token':
                 return self._get_token_auth_headers(auth_details)
+            elif auth_type == 'token_appauth':
+                return self._get_token_app_auth_headers(auth_details)
             elif auth_type in ['cookie', 'wisegolf0', 'nexgolf']:
                 return self._get_cookie_auth_headers(auth_details)
             else:
@@ -201,6 +238,19 @@ class AuthService(LoggerMixin):
         headers = {}
         if 'token' in auth_details:
             headers['Authorization'] = f'Bearer {auth_details["token"]}'
+        return headers
+    
+    def _get_token_app_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
+        """Get headers for token app authentication."""
+        headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json',
+            'x-session-type': 'wisegolf'
+        }
+        
+        if 'token' in auth_details:
+            headers['Authorization'] = f'Bearer {auth_details["token"]}'
+            
         return headers
     
     def _get_cookie_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
@@ -250,6 +300,8 @@ class AuthService(LoggerMixin):
             return CookieAuthStrategy(auth_details)
         elif auth_type == 'query':
             return QueryAuthStrategy(auth_details)
+        elif auth_type == 'token_appauth':
+            return TokenAppAuthStrategy(auth_details)
         return BasicAuthStrategy(auth_details)
     
     def get_auth_header(self) -> Dict[str, str]:

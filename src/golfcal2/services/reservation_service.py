@@ -36,6 +36,7 @@ from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
 from golfcal2.utils.api_handler import APIResponseValidator
 from golfcal2.services.notification_service import NotificationService
 from golfcal2.utils.timezone_utils import TimezoneManager
+from golfcal2.services.wise_golf_discovery_service import WiseGolfDiscoveryService
 
 # Lazy load weather service
 _weather_service: Optional[WeatherService] = None
@@ -63,6 +64,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         self.club_factory = GolfClubFactory()
         self.auth_service = AuthService(config)
         self.notification_service = NotificationService(config)
+        self.wise_golf_discovery = WiseGolfDiscoveryService(config)
         
         # Get user configuration
         if username not in config.users:
@@ -334,8 +336,20 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             self.error(f"Error adding reservation to calendar: {e}")
             raise
 
-    def list_reservations(self, days: int = 1) -> List[Reservation]:
-        """List reservations for the user."""
+    def list_reservations(
+        self,
+        days: int = 1,
+        exclude_other_wisegolf: bool = False
+    ) -> List[Reservation]:
+        """List reservations for the user.
+        
+        Args:
+            days: Number of past days to include
+            exclude_other_wisegolf: If True, only fetch from WiseGolf clubs in user's memberships
+            
+        Returns:
+            List of reservations sorted by start time
+        """
         all_reservations: List[Reservation] = []
         
         # Calculate cutoff date
@@ -347,43 +361,49 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             try:
                 # Get club instance
                 if membership.club not in self.config.clubs:
-                    self.logger.warning(f"No configuration found for club {membership.club}")
+                    self.error(f"Club {membership.club} not found in configuration")
                     continue
-                    
+                
+                club_config = self.config.clubs[membership.club]
                 club = self.club_factory.create_club(
-                    self.config.clubs[membership.club],
+                    club_config,
                     membership,
                     self.auth_service,
                     self.config
                 )
                 if not club:
-                    self.logger.warning(f"Failed to create club instance for {membership.club}")
+                    self.error(f"Failed to create club for {membership.club}")
                     continue
                 
-                # Get reservations for this club
-                reservations = self._get_club_reservations(club, membership, days)
+                # If this is a WiseGolf club and we want all WiseGolf reservations,
+                # fetch from all clubs using that membership
+                if (
+                    not exclude_other_wisegolf and
+                    club_config.get('type') == 'wisegolf' and
+                    not club_config.get('disableGuestSignOn', False)
+                ):
+                    self.info(f"Fetching reservations from all WiseGolf clubs using {membership.club} membership")
+                    wisegolf_reservations = self.fetch_all_wisegolf_reservations(membership)
+                    all_reservations.extend(wisegolf_reservations)
+                    continue
                 
-                # Filter out old reservations
-                filtered_reservations = [
-                    r for r in reservations 
-                    if r.start_time >= cutoff
-                ]
-                
-                all_reservations.extend(filtered_reservations)
+                # Otherwise just fetch from this club
+                try:
+                    club_reservations = self._get_club_reservations(club, membership, days)
+                    all_reservations.extend(club_reservations)
+                except Exception as e:
+                    self.error(f"Failed to get reservations for club {membership.club}: {e}")
+                    continue
                 
             except Exception as e:
-                self.logger.error(f"Failed to get reservations for club {membership.club}: {e}")
+                self.error(f"Failed to process membership {membership.club}: {e}")
                 continue
         
-        # Check for player changes
-        changes = self.notification_service.check_for_changes(all_reservations)
-        if changes:
-            self.logger.info("Player changes detected:")
-            for change in changes:
-                message = self.notification_service.format_change_message(change)
-                self.logger.info("\n" + message)
-        
-        return sorted(all_reservations, key=lambda r: r.start_time)
+        # Sort all reservations by start time
+        return sorted(
+            [r for r in all_reservations if r.start_time >= cutoff],
+            key=lambda r: r.start_time
+        )
     
     def _get_club_reservations(
         self,
@@ -690,5 +710,95 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             if club:
                 courses.append(club)
         return courses
+
+    def fetch_all_wisegolf_reservations(self, membership: Membership) -> List[Reservation]:
+        """Fetch reservations from all WiseGolf clubs.
+        
+        This method uses the WiseGolfDiscoveryService to fetch reservations from all
+        available WiseGolf clubs in parallel, including those not explicitly configured
+        in the user's memberships.
+        
+        Args:
+            membership: User's membership details for authentication
+            
+        Returns:
+            List of reservations from all WiseGolf clubs
+        """
+        try:
+            # Fetch raw reservations from all clubs
+            raw_reservations = self.wise_golf_discovery.fetch_from_all_clubs(
+                membership=membership,
+                auth_service=self.auth_service
+            )
+            
+            # Process raw reservations into Reservation objects
+            reservations = []
+            for raw_reservation in raw_reservations:
+                try:
+                    # Get club details from the raw reservation
+                    club_id = str(raw_reservation.get('golfClubId', ''))
+                    club_name = raw_reservation.get('clubName', '')
+                    
+                    # Create a temporary club configuration if not in config
+                    club_config = self.config.clubs.get(club_id, {
+                        'type': 'wisegolf',
+                        'name': club_name,
+                        'auth_type': 'wisegolf',
+                        'cookie_name': 'wisegolf',
+                        'clubAbbreviation': club_id
+                    })
+                    
+                    # Create club instance
+                    club = self.club_factory.create_club(
+                        club_config,
+                        membership,
+                        self.auth_service,
+                        self.config
+                    )
+                    if not club:
+                        self.error(f"Failed to create club for {club_name}")
+                        continue
+                    
+                    # Create reservation context
+                    context = ReservationContext(
+                        club=club,
+                        user=self.user,
+                        membership=membership
+                    )
+                    
+                    # Create reservation using factory
+                    reservation = ReservationFactory.create_reservation(
+                        'wisegolf',
+                        raw_reservation,
+                        context
+                    )
+                    
+                    # Add weather data if available
+                    if reservation.start_time and club_config.get('coordinates'):
+                        coords = club_config['coordinates']
+                        weather_data = self.weather_service.get_weather(
+                            lat=coords['lat'],
+                            lon=coords['lon'],
+                            start_time=reservation.start_time,
+                            end_time=reservation.end_time
+                        )
+                        if weather_data:
+                            reservation.weather_summary = WeatherFormatter.format_forecast(
+                                weather_data,
+                                start_time=reservation.start_time,
+                                end_time=reservation.end_time
+                            )
+                    
+                    reservations.append(reservation)
+                    
+                except Exception as e:
+                    self.error(f"Failed to process reservation: {e}", exc_info=True)
+                    continue
+            
+            return sorted(reservations, key=lambda r: r.start_time)
+            
+        except Exception as e:
+            self.error(f"Failed to fetch all WiseGolf reservations: {e}", exc_info=True)
+            return []
 
     

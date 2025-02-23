@@ -47,6 +47,11 @@ class ListCommands:
                 'type': int,
                 'default': 1,
                 'help': 'Number of days to look ahead/behind (default: 1)'
+            },
+            {
+                'name': '--exclude-other-wisegolf',
+                'action': 'store_true',
+                'help': 'Only show reservations from WiseGolf clubs in your memberships'
             }
         ],
         parent_command='list'
@@ -312,7 +317,8 @@ class ProcessCommands:
                     
                     # Get reservations
                     days = getattr(ctx.args, 'days', 1)  # Use days parameter if provided
-                    reservations = reservation_service.list_reservations(days=days)
+                    exclude_other_wisegolf = getattr(ctx.args, 'exclude_other_wisegolf', False)  # Get exclude_other_wisegolf flag
+                    reservations = reservation_service.list_reservations(days=days, exclude_other_wisegolf=exclude_other_wisegolf)
                     if not reservations:
                         ctx.logger.info(f"No reservations found for user {username}")
                     elif isinstance(reservations, list):
