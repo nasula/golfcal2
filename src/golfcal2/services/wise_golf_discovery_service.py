@@ -3,7 +3,7 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
-from typing import Dict, List, Any, Set, Optional
+from typing import Dict, List, Any, Set, Optional, Tuple
 from pathlib import Path
 
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
@@ -26,6 +26,91 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
         self.endpoints_file = Path(os.path.dirname(os.path.dirname(__file__))) / 'config' / 'wisegolf_endpoints.json'
         self.seen_reservation_ids: Set[str] = set()
         
+        # Initialize club data caches
+        self.club_details_cache: Dict[str, Dict[str, Any]] = {}
+        self.coordinates_cache: Dict[str, Dict[str, Any]] = {}
+        
+        # Load static club data
+        self._load_static_club_data()
+        
+    def _load_static_club_data(self) -> None:
+        """Load static club data from configuration files."""
+        try:
+            # Load club coordinates
+            coordinates_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                'config_data',
+                'club_coordinates.json'
+            )
+            if os.path.exists(coordinates_path):
+                with open(coordinates_path, 'r') as f:
+                    self.coordinates_cache = json.load(f)
+                self.debug(f"Loaded {len(self.coordinates_cache)} club coordinates")
+            else:
+                self.warning(f"Club coordinates file not found: {coordinates_path}")
+            
+            # Load detailed club info
+            details_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                'config_data',
+                'wisegolf_club_details.json'
+            )
+            if os.path.exists(details_path):
+                with open(details_path, 'r') as f:
+                    data = json.load(f)
+                    if 'rows' in data:
+                        for club in data['rows']:
+                            if 'clubId' in club:
+                                self.club_details_cache[club['clubId']] = club
+                self.debug(f"Loaded {len(self.club_details_cache)} club details")
+            else:
+                self.warning(f"Club details file not found: {details_path}")
+                
+        except Exception as e:
+            self.error(f"Failed to load static club data: {e}", exc_info=True)
+            
+    def enrich_club_config(self, club_id: str, basic_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Enrich basic club configuration with detailed data.
+        
+        Args:
+            club_id: Club ID to look up details for
+            basic_config: Basic club configuration to enrich
+            
+        Returns:
+            Enriched club configuration
+        """
+        enriched_config = basic_config.copy()
+        
+        try:
+            # Add detailed club info if available
+            if club_id in self.club_details_cache:
+                details = self.club_details_cache[club_id]
+                enriched_config.update({
+                    'name': details.get('name', enriched_config.get('name')),
+                    'address': details.get('streetAddress'),
+                    'city': details.get('city'),
+                    'postCode': details.get('postCode'),
+                    'contact': {
+                        'phone': details.get('phoneNumber'),
+                        'email': details.get('email')
+                    },
+                    'drivingInstructions': details.get('drivingInstructions')
+                })
+            
+            # Add coordinates if available
+            club_abbr = enriched_config.get('clubAbbreviation')
+            if club_abbr and club_abbr in self.coordinates_cache:
+                coords = self.coordinates_cache[club_abbr]
+                enriched_config['coordinates'] = {
+                    'lat': float(coords.get('latitude', 0)),
+                    'lon': float(coords.get('longitude', 0))
+                }
+            
+        except Exception as e:
+            self.error(f"Failed to enrich club config for {club_id}: {e}")
+            
+        return enriched_config
+
     def load_endpoints(self) -> Dict[str, Any]:
         """Load WiseGolf API endpoints configuration."""
         try:
@@ -95,8 +180,8 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
                     self.debug(f"Skipping club {club_config['name']} due to disabled guest sign-on")
                     continue
                 
-                # Create club details with all necessary fields
-                club_details = {
+                # Create basic club details
+                basic_details = {
                     **club_config,
                     'type': 'wisegolf',
                     'auth_type': 'wisegolf',
@@ -109,18 +194,22 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
                 
                 # Add optional fields if present
                 if 'articleCategory' in club_config:
-                    club_details['articleCategory'] = club_config['articleCategory']
+                    basic_details['articleCategory'] = club_config['articleCategory']
                 if 'isNonClub' in club_config:
-                    club_details['isNonClub'] = club_config['isNonClub']
+                    basic_details['isNonClub'] = club_config['isNonClub']
+                
+                # Enrich with static data
+                club_id = str(club_config.get('golfClubId', ''))
+                enriched_details = self.enrich_club_config(club_id, basic_details)
                 
                 club = WiseGolfClub(
                     name=club_config.get('displayName', club_config['name']),
                     url=club_config['ajaxUrl'],
-                    address="",  # We don't have addresses in endpoints
+                    address=enriched_details.get('address', ""),
                     timezone="Europe/Helsinki",  # Default timezone
                     auth_service=auth_service,
-                    club_details=club_details,
-                    clubAbbreviation=str(club_config.get('golfClubId', club_config['name']))
+                    club_details=enriched_details,
+                    clubAbbreviation=club_id or club_config['name']
                 )
                 club_instances.append(club)
             except Exception as e:
@@ -145,6 +234,11 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
                         for reservation in club_reservations:
                             reservation_id = reservation.get('reservationTimeId') or reservation.get('orderId')
                             if reservation_id not in self.seen_reservation_ids:
+                                # Enrich reservation with club details
+                                reservation['clubDetails'] = self.club_details_cache.get(
+                                    str(reservation.get('golfClubId', '')),
+                                    {}
+                                )
                                 all_reservations.append(reservation)
                                 self.seen_reservation_ids.add(reservation_id)
                 except TimeoutError:

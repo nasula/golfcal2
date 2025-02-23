@@ -1,0 +1,1063 @@
+{
+    "AaG": {
+        "latitude": "66.3139491",
+        "longitude": "23.6830243",
+        "name": "Aavasaksa Golf",
+        "streetAddress": "Suksitie 4",
+        "abbreviation": "AaG"
+    },
+    "AlGo": {
+        "latitude": "60.984",
+        "longitude": "22.641",
+        "clubname": "Alastaro Golf",
+        "name": "Alastaron Golf",
+        "streetAddress": "Golfkent\u00e4ntie 195 (32560)",
+        "abbreviation": "AlGo"
+    },
+    "ArGC": {
+        "latitude": "60.312206",
+        "longitude": "22.264413",
+        "clubname": "Archipelagia Golf Club",
+        "name": "Archipelagia Golf Club",
+        "streetAddress": "Finbyntie 87 (21600)",
+        "abbreviation": "ArGC"
+    },
+    "AGK": {
+        "latitude": "61.036215",
+        "longitude": "24.462449",
+        "clubname": "Aulanko Golf",
+        "name": "Aulangon Golfklubi",
+        "streetAddress": "Eversti: Aulangon Heikkil\u00e4ntie 91 (13900)",
+        "abbreviation": "AGK"
+    },
+    "AG": {
+        "latitude": "60.424722",
+        "longitude": "22.126111",
+        "clubname": "Aura Golf ry",
+        "name": "Aura Golf",
+        "streetAddress": "Ruissalon puistotie 536 (20100)",
+        "abbreviation": "AG"
+    },
+    "AGN": {
+        "latitude": "60.499722",
+        "longitude": "22.068056",
+        "clubname": "Aurinko Golf",
+        "name": "Aurinko Golf",
+        "streetAddress": "Vengantie 58 (21110)",
+        "abbreviation": "AGN"
+    },
+    "BGCC": {
+        "latitude": "60.07385",
+        "longitude": "22.63788",
+        "clubname": "Bj\u00e4rkas Golf",
+        "name": "Bj\u00e4rkas Golf & Country Club",
+        "streetAddress": "V\u00e4stanfj\u00e4rdintie 655",
+        "abbreviation": "BGCC"
+    },
+    "BG": {
+        "latitude": "62.358889",
+        "longitude": "22.108611",
+        "clubname": "Botnia Golf (BG)",
+        "name": "Botnia Golf",
+        "streetAddress": "Hermanninm\u00e4ki 22 (61980)",
+        "abbreviation": "BG"
+    },
+    "KyGo": {
+        "latitude": "60.2144148",
+        "longitude": "19.6153584",
+        "name": "Ecker\u00f6 Golf/Kyrkoby Golfklubb",
+        "streetAddress": "Kyrkoby",
+        "abbreviation": "KyGo"
+    },
+    "EeG": {
+        "latitude": "62.9414666",
+        "longitude": "26.7700924",
+        "name": "Eerikkala Golf",
+        "streetAddress": "Eerikkalantie 19 (72210)",
+        "abbreviation": "EeG"
+    },
+    "ERG": {
+        "latitude": "60.27419795",
+        "longitude": "24.741297756939822",
+        "name": "Espoo Ringside Golf",
+        "streetAddress": "Nurmikartanontie 5 (02920)",
+        "abbreviation": "ERG"
+    },
+    "EPG": {
+        "latitude": "62.7905528",
+        "longitude": "22.9919687",
+        "name": "Etel\u00e4-Pohjanmaan Golf",
+        "streetAddress": "Isokoskentie 533",
+        "abbreviation": "EPG"
+    },
+    "GPi": {
+        "latitude": "61.43814315",
+        "longitude": "23.655991978194713",
+        "name": "Golf Pirkkala",
+        "streetAddress": "Vaittintie 95 (33960)",
+        "abbreviation": "GPi"
+    },
+    "GT": {
+        "latitude": "60.422401",
+        "longitude": "25.171008",
+        "clubname": "Golf Talma",
+        "name": "Golf Talma",
+        "streetAddress": "Nyg\u00e5rdintie 115 (04240)",
+        "abbreviation": "GT"
+    },
+    "GP": {
+        "latitude": "61.64704",
+        "longitude": "27.2592",
+        "clubname": "Golf-Porrassalmi/ Annilan Golfkeskus",
+        "name": "Golf-Porrassalmi",
+        "streetAddress": "Porrassalmentie 19 (50700)",
+        "abbreviation": "GP"
+    },
+    "GG": {
+        "latitude": "60.22001105",
+        "longitude": "24.61570329348646",
+        "name": "Gumb\u00f6le Golf",
+        "streetAddress": "Gumb\u00f6lentie 20 (02770)",
+        "abbreviation": "GG"
+    },
+    "HG": {
+        "latitude": "59.8475",
+        "longitude": "23.0725",
+        "clubname": "Hangon golf",
+        "name": "Hangon Golf",
+        "streetAddress": "Kirkkotie 28 (10900)",
+        "abbreviation": "HG"
+    },
+    "HGCC": {
+        "latitude": "60.370833",
+        "longitude": "22.290833",
+        "clubname": "Harjattula Golf & Country Club",
+        "name": "Harjattula Golf & Country Club",
+        "streetAddress": "Harjattulantie 84 (20960)",
+        "abbreviation": "HGCC"
+    },
+    "HaGK": {
+        "latitude": "61.576062050000004",
+        "longitude": "26.042259106613212",
+        "name": "Hartolan Golfklubi",
+        "streetAddress": "Kaikulantie 79 (19600)",
+        "abbreviation": "HaGK"
+    },
+    "HaG": {
+        "latitude": "61.0385984",
+        "longitude": "24.3445543",
+        "name": "Hattula Golf",
+        "streetAddress": "Hattulantie 547 (13700)",
+        "abbreviation": "HaG"
+    },
+    "HGM": {
+        "latitude": "60.1698878",
+        "longitude": "25.06352968902715",
+        "name": "Helsingin Golf",
+        "streetAddress": "Repossaarentie 15 (00840",
+        "abbreviation": "HGM"
+    },
+    "HieG": {
+        "latitude": "60.3059252",
+        "longitude": "25.05339265554838",
+        "name": "Hiekkaharju Golf",
+        "streetAddress": "Tennistie 9 (k\u00e4yntiosoite) (01370)",
+        "abbreviation": "HieG"
+    },
+    "HIFK": {
+        "latitude": "60.260986",
+        "longitude": "24.937200",
+        "clubname": "HIFK Golf / Palohein\u00e4 Golf",
+        "name": "HIFK Golf",
+        "streetAddress": "Kuusmiehentie 13 (00670)",
+        "abbreviation": "HIFK"
+    },
+    "HSG": {
+        "latitude": "61.298315",
+        "longitude": "23.778004",
+        "clubname": "Hiisi-Golf",
+        "name": "Hiisi-Golf",
+        "streetAddress": "Vaihmalantie 120 (37500)",
+        "abbreviation": "HSG"
+    },
+    "HSGC": {
+        "latitude": "60.4290452",
+        "longitude": "24.2041776",
+        "name": "Hill Side Golf Club",
+        "streetAddress": "Luolaistentie 24 (03430)",
+        "abbreviation": "HSGC"
+    },
+    "HPG": {
+        "latitude": "61.882991",
+        "longitude": "25.29022",
+        "clubname": "Himos-Patalahti Golf",
+        "name": "Himos-Patalahti Golf",
+        "streetAddress": "L\u00e4nsikeskuksentie 9 (42100)",
+        "abbreviation": "HPG"
+    },
+    "HirG": {
+        "latitude": "60.11808965",
+        "longitude": "24.521844470379428",
+        "name": "Hirsala Golf",
+        "streetAddress": "Hirsalantie 215 (02420)",
+        "abbreviation": "HirG"
+    },
+    "HiGM": {
+        "latitude": "60.628889",
+        "longitude": "25.211389",
+        "clubname": "Hirvihaaran Golf Oy",
+        "name": "Hirvihaaran Golf M\u00e4nts\u00e4l\u00e4",
+        "streetAddress": "Vanha Soukkiontie 945",
+        "abbreviation": "HiGM"
+    },
+    "HCGolf": {
+        "latitude": "61.190278",
+        "longitude": "28.718611",
+        "clubname": "Holiday Club Golf Saimaa",
+        "name": "Holiday Club Golf",
+        "streetAddress": "Kohonkankaantie 11",
+        "abbreviation": "HCGolf"
+    },
+    "HyG": {
+        "latitude": "60.6571251",
+        "longitude": "24.8242294",
+        "name": "Hyvink\u00e4\u00e4n Golf",
+        "streetAddress": "Golftie 63 (05880)",
+        "abbreviation": "HyG"
+    },
+    "HGA": {
+        "latitude": "63.141111",
+        "longitude": "22.827778",
+        "clubname": "H\u00e4rm\u00e4 Golf & Academy",
+        "name": "H\u00e4rm\u00e4 Golf & Academy",
+        "streetAddress": "Vaasantie 22 (62375)",
+        "abbreviation": "HGA"
+    },
+    "IGS": {
+        "latitude": "60.9209179",
+        "longitude": "26.3875302",
+        "name": "Iitin Golfseura",
+        "streetAddress": "Iitintie 684 (47400)",
+        "abbreviation": "IGS"
+    },
+    "IG": {
+        "latitude": "61.227070049999995",
+        "longitude": "28.85624883301742",
+        "name": "Imatran Golf",
+        "streetAddress": "Golftie 11 (55800)",
+        "abbreviation": "IG"
+    },
+    "JPG": {
+        "latitude": "63.680278",
+        "longitude": "22.785278",
+        "clubname": "Pietarsaaren Golf / Jakobstads Golf",
+        "name": "Jakobstads Golf - Pietarsaaren Golf",
+        "streetAddress": "Vanha Piril\u00f6ntie 311 (68600)",
+        "abbreviation": "JPG"
+    },
+    "JG": {
+        "latitude": "62.215556",
+        "longitude": "25.733333",
+        "clubname": "Jyv\u00e4s-Golf",
+        "name": "Jyv\u00e4s-Golf",
+        "streetAddress": "Keljonlahdentie 11 (40500)",
+        "abbreviation": "JG"
+    },
+    "JGS": {
+        "latitude": "63.2521802",
+        "longitude": "23.6380822",
+        "name": "J\u00e4rviseudun Golfseura",
+        "streetAddress": "Nyk\u00e4l\u00e4ntie 177 (62600)",
+        "abbreviation": "JGS"
+    },
+    "KaaG": {
+        "latitude": "60.596667",
+        "longitude": "27.67",
+        "clubname": "Kaakon Golf",
+        "name": "Kaakon Golf",
+        "streetAddress": "S\u00e4k\u00e4j\u00e4rventie 206",
+        "abbreviation": "KaaG"
+    },
+    "KaG": {
+        "latitude": "64.2095382",
+        "longitude": "27.6634107671152",
+        "name": "Kajaanin Golf",
+        "streetAddress": "Mainuantie 350 (87700)",
+        "abbreviation": "KaG"
+    },
+    "KLG": {
+        "latitude": "64.2286598",
+        "longitude": "23.7933308",
+        "name": "Kalajokilaakson Golf",
+        "streetAddress": "Tiitaival 59 (85100)",
+        "abbreviation": "KLG"
+    },
+    "KanG": {
+        "latitude": "61.156790900000004",
+        "longitude": "25.571346722899584",
+        "name": "Kanavagolf V\u00e4\u00e4ksy",
+        "streetAddress": "Tehtaantie 3 (17200)",
+        "abbreviation": "KanG"
+    },
+    "KGM": {
+        "latitude": "60.5486909",
+        "longitude": "22.1098829468496",
+        "name": "Kankaisten Golf",
+        "streetAddress": "Maskuntie 281 (21250)",
+        "abbreviation": "KGM"
+    },
+    "KarG": {
+        "latitude": "62.7480889",
+        "longitude": "29.8158517",
+        "name": "Karelia Golf",
+        "streetAddress": "Vaskiportintie (80780)",
+        "abbreviation": "KarG"
+    },
+    "KGOLF": {
+        "latitude": "62.17539505",
+        "longitude": "27.879079649339847",
+        "name": "Kartanogolf",
+        "streetAddress": "Golftie 14 B (79600)",
+        "abbreviation": "KGOLF"
+    },
+    "KkG": {
+        "latitude": "64.148181",
+        "longitude": "28.234835",
+        "clubname": "Katinkulta Golf",
+        "name": "Katinkulta Golf",
+        "streetAddress": "Katinkullantie 15 (88610)",
+        "abbreviation": "KkG"
+    },
+    "KGV": {
+        "latitude": "60.3234465",
+        "longitude": "24.809937946384924",
+        "name": "Keimola Golf",
+        "streetAddress": "Kirkantie 32 (01750)",
+        "abbreviation": "KGV"
+    },
+    "KGK": {
+        "latitude": "65.747222",
+        "longitude": "24.593333",
+        "clubname": "Kemin Golf Klubi ry",
+        "name": "Kemin Golf Klubi",
+        "streetAddress": "Jungonkatu 2 (94600)",
+        "abbreviation": "KGK"
+    },
+    "KeG": {
+        "latitude": "61.884599550000004",
+        "longitude": "29.167551180834614",
+        "name": "Kerigolf",
+        "streetAddress": "Torvelantie 67 (58200)",
+        "abbreviation": "KeG"
+    },
+    "KoG": {
+        "latitude": "63.8193479",
+        "longitude": "23.0867179",
+        "clubname": "Kokkolan Golf",
+        "name": "Kokkolan Golf",
+        "streetAddress": "Hepo-Ventuksentie 2 (67800)",
+        "abbreviation": "KoG"
+    },
+    "KosG": {
+        "latitude": "60.9255918",
+        "longitude": "26.6586396",
+        "name": "Koski-Golf",
+        "streetAddress": "Eerolanv\u00e4yl\u00e4 126 (45700)",
+        "abbreviation": "KosG"
+    },
+    "KGCN": {
+        "latitude": "60.455278",
+        "longitude": "21.955833",
+        "clubname": "Kultaranta Resort",
+        "name": "Kultaranta Golf Club Naantali",
+        "streetAddress": "S\u00e4rk\u00e4nsalmentie 178 (21100)",
+        "abbreviation": "KGCN"
+    },
+    "KuGo": {
+        "latitude": "62.760556",
+        "longitude": "23.518611",
+        "clubname": "Kuortane Golf",
+        "name": "Kuortane Golf",
+        "streetAddress": "Vierteentie 89",
+        "abbreviation": "KuGo"
+    },
+    "KuuG": {
+        "latitude": "65.99740645",
+        "longitude": "29.183181204650047",
+        "name": "Kuusamo Golf",
+        "streetAddress": "Kylpyl\u00e4ntie 4 (93600)",
+        "abbreviation": "KuuG"
+    },
+    "KG": {
+        "latitude": "60.449722",
+        "longitude": "26.896389",
+        "clubname": "Kotka Golf Center",
+        "name": "Kymen Golf",
+        "streetAddress": "Mussalo (48310)",
+        "abbreviation": "KG"
+    },
+    "KyG": {
+        "latitude": "60.6067654",
+        "longitude": "24.6853231",
+        "name": "Kyt\u00e4j\u00e4 Golf",
+        "streetAddress": "Kyt\u00e4j\u00e4ntie 1265 (05720)",
+        "abbreviation": "KyG"
+    },
+    "K\u00e4G": {
+        "latitude": "61.3674477",
+        "longitude": "24.7382799",
+        "name": "K\u00e4kiGolf",
+        "streetAddress": "Lintum\u00e4entie 41",
+        "abbreviation": "K\u00e4G"
+    },
+    "LG": {
+        "latitude": "61.026944",
+        "longitude": "25.724722",
+        "clubname": "Lahden Golf",
+        "name": "Lahden Golf",
+        "streetAddress": "Takkulantie 20",
+        "abbreviation": "LG"
+    },
+    "LGV": {
+        "latitude": "61.4291807",
+        "longitude": "23.0042883",
+        "name": "Lakeside Golf Vammala",
+        "streetAddress": "Sastamalantie 1901 (38100)",
+        "abbreviation": "LGV"
+    },
+    "LPG": {
+        "latitude": "62.4387672",
+        "longitude": "25.8578306",
+        "name": "Laukaan Peurunkagolf",
+        "streetAddress": "Valkolantie 68",
+        "abbreviation": "LPG"
+    },
+    "LeG": {
+        "latitude": "61.114167",
+        "longitude": "24.343333",
+        "clubname": "Lepaa Golf",
+        "name": "Lepaa Golf",
+        "streetAddress": "Viinitilantie 12",
+        "abbreviation": "LeG"
+    },
+    "LGS": {
+        "latitude": "62.5292993",
+        "longitude": "27.7908704",
+        "name": "Lepp\u00e4virran Golfseura",
+        "streetAddress": "Konnuksentie 400 (79100)",
+        "abbreviation": "LGS"
+    },
+    "LoG": {
+        "latitude": "60.814444",
+        "longitude": "23.233333",
+        "clubname": "Loimijoki Golf",
+        "name": "Loimijoki Golf",
+        "streetAddress": "Jaakkolantie 190 (32100)",
+        "abbreviation": "LoG"
+    },
+    "L\u00f6G": {
+        "latitude": "60.2146783",
+        "longitude": "24.6575373761182",
+        "name": "L\u00f6fkulla Golf",
+        "streetAddress": "Lehtim\u00e4entie 2 (02770)",
+        "abbreviation": "L\u00f6G"
+    },
+    "Master": {
+        "latitude": "60.25729365",
+        "longitude": "24.696568174985153",
+        "name": "Master Golf Club",
+        "streetAddress": "Bodominkuja 7 (02940)",
+        "abbreviation": "Master"
+    },
+    "MLGK": {
+        "latitude": "65.857778",
+        "longitude": "24.131667",
+        "clubname": "Meri-Lapin Golfklubi",
+        "name": "Meri-Lapin Golfklubi",
+        "streetAddress": "N\u00e4r\u00e4ntie (95400)",
+        "abbreviation": "MLGK"
+    },
+    "MeG": {
+        "latitude": "61.012222",
+        "longitude": "25.554722",
+        "clubname": "Messil\u00e4 golf",
+        "name": "Messil\u00e4n Golf",
+        "streetAddress": "Messil\u00e4ntie 240 (15980)",
+        "abbreviation": "MeG"
+    },
+    "MG": {
+        "latitude": "61.6875",
+        "longitude": "27.220556",
+        "clubname": "Mikkelin Golf",
+        "name": "Mikkelin Golf",
+        "streetAddress": "Lentokent\u00e4nkatu 2 (50150)",
+        "abbreviation": "MG"
+    },
+    "MUU": {
+        "latitude": "63.4744799",
+        "longitude": "26.6045947",
+        "name": "Muu seura / ei seuraa",
+        "streetAddress": null,
+        "abbreviation": "MUU"
+    },
+    "MGS": {
+        "latitude": "62.1429256",
+        "longitude": "25.6594117",
+        "name": "Muuramen Golfseura",
+        "streetAddress": "Pyypp\u00f6l\u00e4ntie 316 (40950)",
+        "abbreviation": "MGS"
+    },
+    "NaG": {
+        "latitude": "61.410169",
+        "longitude": "22.054262",
+        "clubname": "Nakkila Golf",
+        "name": "Nakkila Golf",
+        "streetAddress": "Suomalaisentie 71 (29250)",
+        "abbreviation": "NaG"
+    },
+    "NG": {
+        "latitude": "60.2889644",
+        "longitude": "25.41143311201467",
+        "name": "Nevas Golf",
+        "streetAddress": "Spr\u00e4ngmanintie 79 (ajo Nevaksentiet\u00e4) (01150)",
+        "abbreviation": "NG"
+    },
+    "NSG": {
+        "latitude": "63.906667",
+        "longitude": "25.026111",
+        "clubname": "Nivalan Seudun Golf",
+        "name": "Nivalan Seudun Golf",
+        "streetAddress": "Ravitie 60 (85500)",
+        "abbreviation": "NSG"
+    },
+    "NRG": {
+        "latitude": "61.4541188",
+        "longitude": "23.3985553",
+        "name": "Nokia River Golf",
+        "streetAddress": "Alastalontie 33 (37120)",
+        "abbreviation": "NRG"
+    },
+    "NGCC": {
+        "latitude": "60.0818756",
+        "longitude": "23.5598014",
+        "name": "Nordcenter Golf & Country Club",
+        "streetAddress": "\u00c5minnen kartanon tie 4 (10410)",
+        "abbreviation": "NGCC"
+    },
+    "OjlG": {
+        "latitude": "64.8538326",
+        "longitude": "26.0186443",
+        "name": "Oulujokilaakson Golfklubi ry",
+        "streetAddress": "Golffarintie 60 (91500)",
+        "abbreviation": "OjlG"
+    },
+    "OGK": {
+        "latitude": "64.9784235",
+        "longitude": "25.6952604",
+        "name": "Oulun Golfkerho",
+        "streetAddress": "Mikonm\u00e4entie 201",
+        "abbreviation": "OGK"
+    },
+    "OGS": {
+        "latitude": "62.7257082",
+        "longitude": "28.9868628",
+        "name": "Outokummun Golfseura",
+        "streetAddress": "Keretintie 1",
+        "abbreviation": "OGS"
+    },
+    "PaG": {
+        "latitude": "64.3990778",
+        "longitude": "27.8591351",
+        "name": "Paltamon Golf",
+        "streetAddress": "Golftie 9 (88300)",
+        "abbreviation": "PaG"
+    },
+    "PGH": {
+        "latitude": "60.10057355",
+        "longitude": "24.460713868442326",
+        "name": "Peuramaa Golf Hjortlandet",
+        "streetAddress": "Peuramaantie 152 (02480)",
+        "abbreviation": "PGH"
+    },
+    "PGC": {
+        "latitude": "60.075036",
+        "longitude": "24.282303",
+        "clubname": "Pickala Golf Club",
+        "name": "Pickala Golf Club",
+        "streetAddress": "Golfkuja 5",
+        "abbreviation": "PGC"
+    },
+    "PG": {
+        "latitude": "63.5311144",
+        "longitude": "29.19592969232643",
+        "name": "Pielis-Golf",
+        "streetAddress": "Lomatie 10 (75500)",
+        "abbreviation": "PG"
+    },
+    "PirG": {
+        "latitude": "61.481944",
+        "longitude": "23.841667",
+        "clubname": "Pirkanmaan Golf",
+        "name": "Pirkanmaan Golf",
+        "streetAddress": "Kivikirkontie 23 (33700)",
+        "abbreviation": "PirG"
+    },
+    "PGCK": {
+        "latitude": "61.28153055",
+        "longitude": "22.327396821202605",
+        "name": "Pitk\u00e4j\u00e4rvi Golf Club",
+        "streetAddress": "Porolantie 193",
+        "abbreviation": "PGCK"
+    },
+    "PkG": {
+        "latitude": "61.898333",
+        "longitude": "23.036389",
+        "clubname": "Poltinkoski Golf",
+        "name": "Poltinkoski Golf",
+        "streetAddress": "Yliskyl\u00e4ntie 1411 (39580)",
+        "abbreviation": "PkG"
+    },
+    "PBG": {
+        "latitude": "60.421111",
+        "longitude": "25.6975",
+        "clubname": "Porvoo Golf",
+        "name": "Porvoo Golf - Borg\u00e5 Golf",
+        "streetAddress": "Klubitie 46",
+        "abbreviation": "PBG"
+    },
+    "PuulaG": {
+        "latitude": "62.00269835",
+        "longitude": "26.68455932566437",
+        "name": "PuulaGolf",
+        "streetAddress": "Syv\u00e4lahdentie 20 (51200)",
+        "abbreviation": "PuulaG"
+    },
+    "RTG": {
+        "latitude": "64.813333",
+        "longitude": "24.729444",
+        "clubname": "Raahentienoon Golf",
+        "name": "Raahentienoon Golf",
+        "streetAddress": "Raahentie 151 (92320)",
+        "abbreviation": "RTG"
+    },
+    "RanG": {
+        "latitude": "62.043611",
+        "longitude": "28.411111",
+        "clubname": "Rantasalmi Golf",
+        "name": "Rantasalmi Golf",
+        "streetAddress": "Hovintie 135 B (58900)",
+        "abbreviation": "RanG"
+    },
+    "RG": {
+        "latitude": "61.14014805",
+        "longitude": "21.561707762316477",
+        "name": "Rauma Golf",
+        "streetAddress": "Ala-Pomppustentie 20 (26510)",
+        "abbreviation": "RG"
+    },
+    "RGC": {
+        "latitude": "63.6077024",
+        "longitude": "22.777185",
+        "name": "Remson Golf Club",
+        "streetAddress": "P\u00e4nn\u00e4istentie 415 (68910)",
+        "abbreviation": "RGC"
+    },
+    "ReG": {
+        "latitude": "62.329676",
+        "longitude": "26.520736",
+        "clubname": "Revontuli Golf",
+        "name": "Revontuli Golf",
+        "streetAddress": "Revontulentie 1 (41500)",
+        "abbreviation": "ReG"
+    },
+    "SaG": {
+        "latitude": "60.375833",
+        "longitude": "23.140833",
+        "clubname": "Salo Golf",
+        "name": "Salo Golf",
+        "streetAddress": "Anistenkatu 1 (24100)",
+        "abbreviation": "SaG"
+    },
+    "SantaGC": {
+        "latitude": "66.505833",
+        "longitude": "25.808056",
+        "clubname": "Santa Claus Golf",
+        "name": "Santa Claus Golf Club",
+        "streetAddress": "Golfkent\u00e4ntie 43 (96600)",
+        "abbreviation": "SantaGC"
+    },
+    "SGT": {
+        "latitude": "60.4177318",
+        "longitude": "22.219058810213916",
+        "name": "Smart Golf Turku",
+        "streetAddress": "Syv\u00e4lahdentie 55",
+        "abbreviation": "SGT"
+    },
+    "StLG": {
+        "latitude": "60.22",
+        "longitude": "24.0525",
+        "clubname": "St. Laurence Golf",
+        "name": "St. Laurence Golf",
+        "streetAddress": "Gunnarlankatu 210 (08200)",
+        "abbreviation": "StLG"
+    },
+    "SyG": {
+        "latitude": "63.19912205",
+        "longitude": "28.173276660538644",
+        "name": "Syv\u00e4ri Golf",
+        "streetAddress": "Tiirinniementie 7 (73320)",
+        "abbreviation": "SyG"
+    },
+    "TG": {
+        "latitude": "61.50772705",
+        "longitude": "23.851038275170808",
+        "name": "Tammer-Golf",
+        "streetAddress": "Tenniskatu 25 (33560)",
+        "abbreviation": "TG"
+    },
+    "TaG": {
+        "latitude": "60.1977",
+        "longitude": "24.7844",
+        "clubname": "Tapiola Golf",
+        "name": "Tapiola Golf",
+        "streetAddress": "Turveradantie 17 (02180)",
+        "abbreviation": "TaG"
+    },
+    "Tarina": {
+        "latitude": "63.060833",
+        "longitude": "27.653611",
+        "clubname": "Tarinagolf",
+        "name": "Tarinagolf",
+        "streetAddress": "Tarinagolfintie 19 (71800)",
+        "abbreviation": "Tarina"
+    },
+    "TawG": {
+        "latitude": "60.998056",
+        "longitude": "24.525",
+        "clubname": "Tawast Golf & Country Club",
+        "name": "Tawast Golf",
+        "streetAddress": "Tawastintie 48 (13270)",
+        "abbreviation": "TawG"
+    },
+    "TiGo": {
+        "latitude": "40.3843304",
+        "longitude": "-75.4203885",
+        "name": "Tiirin Golf",
+        "streetAddress": "-",
+        "abbreviation": "TiGo"
+    },
+    "TGK": {
+        "latitude": "60.415501",
+        "longitude": "25.0499734",
+        "name": "Tuusulan Golfklubi",
+        "streetAddress": "Kirkkotie 51 (04310)",
+        "abbreviation": "TGK"
+    },
+    "VaG": {
+        "latitude": "63.087778",
+        "longitude": "21.740833",
+        "clubname": "Vaasan Golf",
+        "name": "Vaasan Golf",
+        "streetAddress": "Golfkent\u00e4ntie 61 (65370)",
+        "abbreviation": "VaG"
+    },
+    "VLG": {
+        "latitude": "60.979207294694746",
+        "longitude": "24.5594484",
+        "clubname": "Linna Golf",
+        "name": "Vanajanlinna Golf & Country Club",
+        "streetAddress": "Vanajanlinnantie 485 (13330)",
+        "abbreviation": "VLG"
+    },
+    "Vantaankoski": {
+        "latitude": "60.287503",
+        "longitude": "24.855956",
+        "clubname": "Vantaankosken Golfhalli",
+        "name": "Vantaankosken Golfhalli",
+        "streetAddress": "Martinkyläntie 9 01770 Vantaa",
+        "abbreviation": "Vantaankoski"
+    },
+    "VaGo": {
+        "latitude": "60.31519765",
+        "longitude": "24.784032350000004",
+        "name": "Vantaan Golfpuisto",
+        "streetAddress": "Pyymosantie 95 (00680)",
+        "abbreviation": "VaGo"
+    },
+    "VGC": {
+        "latitude": "60.3820841",
+        "longitude": "24.3641812",
+        "clubname": "Vihti Golf",
+        "name": "Vihti Golf Club",
+        "streetAddress": "Jussinrinne 1 (03250)",
+        "abbreviation": "VGC"
+    },
+    "VG": {
+        "latitude": "61.065278",
+        "longitude": "28.214167",
+        "clubname": "Viipurin Golf",
+        "name": "Viipurin Golf",
+        "streetAddress": "Vehkataipaleentie 589 (53300)",
+        "abbreviation": "VG"
+    },
+    "ViGC": {
+        "latitude": "65.133424",
+        "longitude": "25.248362",
+        "clubname": "Virpiniemi Golf Club",
+        "name": "Virpiniemi Golf Club",
+        "streetAddress": "Virpiniementie 501 (90810)",
+        "abbreviation": "ViGC"
+    },
+    "ViG": {
+        "latitude": "60.3518307",
+        "longitude": "25.9031749",
+        "name": "Virvik Golf",
+        "streetAddress": "Virvikintie 346 (06200)",
+        "abbreviation": "ViG"
+    },
+    "VGH": {
+        "latitude": "60.2082453",
+        "longitude": "25.1713646",
+        "clubname": "Vuosaari Golf",
+        "name": "Vuosaari Golf Helsinki",
+        "streetAddress": "Etel\u00e4reimarintie 9",
+        "abbreviation": "VGH"
+    },
+    "YSG": {
+        "latitude": "63.533889",
+        "longitude": "27.276667",
+        "clubname": "Yl\u00e4-Savon Golfseura",
+        "name": "Yl\u00e4-Savon Golfseura",
+        "streetAddress": "Kotaniementie 84 (74140)",
+        "abbreviation": "YSG"
+    },
+    "YG": {
+        "latitude": "61.5843167",
+        "longitude": "21.5014438",
+        "name": "Yyteri Golf",
+        "streetAddress": "Karhuluodontie 85",
+        "abbreviation": "YG"
+    },
+    "\u00c4G": {
+        "latitude": "62.528333",
+        "longitude": "24.206389",
+        "clubname": "\u00c4ht\u00e4rin Golf",
+        "name": "\u00c4ht\u00e4rin Golf",
+        "streetAddress": "Moksuntie 109 (63700)",
+        "abbreviation": "\u00c4G"
+    },
+    "MTG": {
+        "latitude": "60.238611",
+        "longitude": "22.935",
+        "clubname": "Meri-Teijo Golf",
+        "name": "Meri-Teijo Golf",
+        "streetAddress": "Lanskalantie 56 (25570)",
+        "abbreviation": "MTG"
+    },
+    "WGCC": {
+        "latitude": "60.377778",
+        "longitude": "23.058333",
+        "clubname": "Wiurila Golf & Country Club",
+        "name": "Wiurila Golf & Country Club",
+        "streetAddress": "Viurilantie 126 (24800)",
+        "abbreviation": "WGCC"
+    },
+    "UGK": {
+        "latitude": "60.792222",
+        "longitude": "21.426944",
+        "clubname": "Uudenkaupungin Golfklubi",
+        "name": "Uudenkaupungin Golfklubi",
+        "streetAddress": "Kasarmilahdentie",
+        "abbreviation": "UGK"
+    },
+    "SGR": {
+        "latitude": "60.371667",
+        "longitude": "26.04",
+        "clubname": "Sea Golf R\u00f6nn\u00e4s",
+        "name": "Sea Golf R\u00f6nn\u00e4s",
+        "streetAddress": "Ruukinrannatie 4 (07750)",
+        "abbreviation": "SGR"
+    },
+    "RuG": {
+        "latitude": "60.105278",
+        "longitude": "23.485833",
+        "clubname": "Ruukkigolf",
+        "name": "Ruukkigolf",
+        "streetAddress": "Hiekkam\u00e4entie 100 (10420)",
+        "abbreviation": "RuG"
+    },
+    "EkeG": {
+        "latitude": "59.961111",
+        "longitude": "23.493611",
+        "clubname": "Eke Golf",
+        "name": "Eke Golf ry",
+        "streetAddress": "Lustigkullantie 19 (10600)",
+        "abbreviation": "EkeG"
+    },
+    "NGK": {
+        "latitude": "60.499722",
+        "longitude": "24.574722",
+        "clubname": "Nurmij\u00e4rven Golfklubi",
+        "name": "Nurmij\u00e4rven Golfklubi",
+        "streetAddress": "Ratasillantie 70 (05100)",
+        "abbreviation": "NGK"
+    },
+    "LeviG": {
+        "latitude": "67.799444",
+        "longitude": "24.875",
+        "clubname": "Levi Golf & Country Club",
+        "name": "Levi Golf",
+        "streetAddress": "Golfv\u00e4yl\u00e4 9 (99130)",
+        "abbreviation": "LeviG"
+    },
+    "GV": {
+        "latitude": "62.210833",
+        "longitude": "23.823889",
+        "clubname": "Golf-Virrat",
+        "name": "Golf-Virrat",
+        "streetAddress": "Lakarintie 350, PL 89 (34801)",
+        "abbreviation": "GV"
+    },
+    "Keg": {
+        "latitude": "61.884167",
+        "longitude": "29.162222",
+        "clubname": "Kerigolf"
+    },
+    "KlG": {
+        "latitude": "64.227778",
+        "longitude": "23.789444",
+        "clubname": "Kalajoki Golf"
+    },
+    "AGC": {
+        "latitude": "62.299774",
+        "longitude": "27.156811",
+        "clubname": "Anola Golf",
+        "name": "Anola Golf Club",
+        "streetAddress": "Suonenjoentie 522 (76100)",
+        "abbreviation": "AGC"
+    },
+    "SYG": {
+        "latitude": "63.19309774704418",
+        "longitude": "28.177607372019516",
+        "clubname": "Syv\u00e4ri Golf"
+    },
+    "EGS": {
+        "latitude": "60.209707",
+        "longitude": "24.608812",
+        "name": "Espoon Golfseura",
+        "streetAddress": "Blominmets\u00e4tie 2 (02780)",
+        "abbreviation": "EGS"
+    },
+    "HGK": {
+        "latitude": "60.213041",
+        "longitude": "24.857775",
+        "name": "Helsingin Golfklubi",
+        "streetAddress": "Talin puistotie 12 , 00380",
+        "abbreviation": "HGK"
+    },
+    "IGYC": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Isosaari Golf & Yacht Club",
+        "streetAddress": "Piispanportti 11 3krs",
+        "abbreviation": "IGYC"
+    },
+    "KJKG": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Kotoj\u00e4rven Kartanogolf",
+        "streetAddress": "Kotoj\u00e4rventie 15 (07150)",
+        "abbreviation": "KJKG"
+    },
+    "KGC": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Kullo Golf Club",
+        "streetAddress": "Golftie 119 (06830)",
+        "abbreviation": "KGC"
+    },
+    "Kurk": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Kurk Golf",
+        "streetAddress": "Kuperkeikantie 20 (02550)",
+        "abbreviation": "Kurk"
+    },
+    "LaG": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Lampila Golf",
+        "streetAddress": "K\u00e4yntiosoite: Paloj\u00e4rvenkuja 16 (47710)",
+        "abbreviation": "LaG"
+    },
+    "PeG": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Peltola Golf",
+        "streetAddress": "K\u00e4yntiosoite: L\u00f6yttym\u00e4entie 571 (14200)",
+        "abbreviation": "PeG"
+    },
+    "PGK": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Porin Golfkerho",
+        "streetAddress": "Kalafornian golfkentt\u00e4, PL 25 (28601)",
+        "abbreviation": "PGK"
+    },
+    "SGC": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Sarfvik Golfklubi",
+        "streetAddress": "Niittyrinteenaukio 2",
+        "abbreviation": "SGC"
+    },
+    "StLGC": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "St. Lake Golf Club",
+        "streetAddress": "Niemel\u00e4ntie 30 (86800)",
+        "abbreviation": "StLGC"
+    },
+    "SHG": {
+        "latitude": "60.358970",
+        "longitude": "24.652800",
+        "name": "Suur-Helsingin Golf",
+        "streetAddress": "Rinnekodintie 23, 02980, Espoo",
+        "abbreviation": "SHG"
+    },
+    "TGS": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Tahko Golf",
+        "streetAddress": "Klubitie 12 (73310)",
+        "abbreviation": "TGS"
+    },
+    "ViGS": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "Vierum\u00e4en Golfseura",
+        "streetAddress": "Kaskelantie 10 (19120)",
+        "abbreviation": "ViGS"
+    },
+    "V\u00f6G": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "V\u00f6r\u00e5 Golf - V\u00f6yrin Golf",
+        "streetAddress": "c/o Torolf H\u00f6glund, L\u00e5tnev\u00e4gen 113",
+        "abbreviation": "V\u00f6G"
+    },
+    "\u00c5GK": {
+        "latitude": "Unknown",
+        "longitude": "Unknown",
+        "name": "\u00c5lands Golfklubb",
+        "streetAddress": "Kastelholmsn\u00e4sv\u00e4gen 22",
+        "abbreviation": "\u00c5GK"
+    },
+    "VKG": {
+        "latitude": "60.2859",
+        "longitude": "24.8675",
+        "name": "Vantaankoski Golf",
+        "streetAddress": "Martinkyläntie 9 (01770)",
+        "abbreviation": "VKG"
+    }
+}

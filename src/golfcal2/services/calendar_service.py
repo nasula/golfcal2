@@ -11,6 +11,7 @@ from pathlib import Path
 import requests
 from icalendar import Event, Calendar  # type: ignore
 from types import TracebackType
+import traceback
 
 from golfcal2.models.golf_club import GolfClubFactory
 from golfcal2.models.reservation import Reservation
@@ -60,7 +61,8 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         self,
         config: ConfigProtocol,
         weather_service: Optional[WeatherService] = None,
-        dev_mode: bool = False
+        dev_mode: bool = False,
+        external_event_service: Optional[ExternalEventService] = None
     ):
         """Initialize service."""
         super().__init__()
@@ -81,8 +83,8 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                 config=self.config.__dict__
             )
             
-            # Initialize external event service
-            self.external_event_service = ExternalEventService(
+            # Use provided external event service or create new one
+            self.external_event_service = external_event_service or ExternalEventService(
                 weather_service=self.weather_service,
                 config=config
             )
@@ -98,8 +100,13 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                 config=config
             )
             
-            # Setup ICS directory
-            self.ics_dir = Path(str(config.ics_dir))
+            # Setup ICS directory - ensure absolute path
+            ics_dir = str(config.ics_dir)
+            if not os.path.isabs(ics_dir):
+                # Use workspace directory as base for relative paths
+                workspace_dir = Path(__file__).parent.parent.parent.parent
+                ics_dir = str(workspace_dir / ics_dir)
+            self.ics_dir = Path(ics_dir)
             self.ics_dir.mkdir(parents=True, exist_ok=True)
             self.logger.info(f"Using ICS directory: {self.ics_dir}")
 
@@ -183,8 +190,8 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                     "operation": "process_user_reservations"
                 }
             )
-            aggregate_error(str(error), "calendar", str(e.__traceback__))
-            raise error
+            # Pass the actual traceback object
+            aggregate_error(str(error), "calendar", e.__traceback__)
 
     def _process_reservation(self, reservation: Reservation, calendar: Calendar, user_name: str) -> None:
         """Process a single reservation."""

@@ -17,10 +17,12 @@ from golfcal2.config.logging import setup_logging
 from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
 from golfcal2.services import WeatherService, CalendarService, ExternalEventService
 from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
+from golfcal2.services.reservation_service import ReservationService
 from golfcal2.models.user import User
 from golfcal2.utils.cli_utils import CLIContext, CLIBuilder, add_common_options
 from golfcal2.server import HealthCheckServer
 from golfcal2.metrics import Metrics, Timer, track_time
+from golfcal2.config.logging import load_logging_config
 
 @dataclass
 class EventState:
@@ -97,6 +99,8 @@ def create_args() -> argparse.Namespace:
     parser.add_argument('-u', '--user', help='Username to use for operations (default: from config)')
     parser.add_argument('--host', default='localhost', help='Host to bind health check server to')
     parser.add_argument('--port', type=int, default=8080, help='Port for health check server')
+    parser.add_argument('--dry-run', action='store_true', help='Dry run mode - no changes will be made')
+    parser.add_argument('--list-only', action='store_true', help='Only list events, do not write calendar')
     return parser.parse_args()
 
 @track_time("get_next_event_time")
@@ -110,19 +114,35 @@ def get_next_event_time(calendar_service: CalendarService, service_state: Servic
         now = datetime.now(service_state.timezone)
         end = now + timedelta(days=7)  # Look ahead 7 days
         
-        for user in calendar_service.get_users():
-            events = calendar_service.get_user_events(user, now, end)
-            for event in events:
-                event_time = event.get('start_time')
-                event_uid = event.get('uid')
+        # Process each user's reservations
+        for user_name, user_config in calendar_service.config.users.items():
+            try:
+                # Create user object
+                user = User.from_config(user_name, dict(user_config))
                 
-                if not event_time or not event_uid:
-                    continue
+                # Create reservation service for this user
+                reservation_service = ReservationService(user_name, calendar_service.config)
+                
+                # Get reservations for next 7 days
+                reservations = reservation_service.list_reservations(days=7)
+                
+                # Convert reservations to events
+                for reservation in reservations:
+                    event_time = reservation.start_time
+                    event_uid = reservation.uid
                     
-                if service_state.needs_processing(event_uid, event_time, now):
-                    if not next_event_time or event_time < next_event_time:
-                        next_event_time = event_time
-                        next_event_uid = event_uid
+                    if not event_time or not event_uid:
+                        continue
+                        
+                    if service_state.needs_processing(event_uid, event_time, now):
+                        if not next_event_time or event_time < next_event_time:
+                            next_event_time = event_time
+                            next_event_uid = event_uid
+                            
+            except Exception as e:
+                logger = get_logger(__name__)
+                logger.error(f"Error processing user {user_name}: {e}", exc_info=True)
+                continue
     
     except Exception as e:
         logger = get_logger(__name__)
@@ -164,43 +184,41 @@ def get_next_processing_time(now: datetime, next_event: Optional[datetime] = Non
 def main():
     """Main service entry point."""
     try:
+        # Initialize metrics first
+        metrics = Metrics()
+
         # Initialize configuration
         config_manager = ConfigurationManager()
         args = create_args()
         
-        # Force debug mode for the service
-        args.dev = True
-        args.verbose = True
-        
         config = config_manager.load_config(dev_mode=args.dev, verbose=args.verbose)
         
-        # Set up logging with service-specific file and force debug level
-        setup_logging(config, dev_mode=True, verbose=True, log_file=args.log_file)
+        # Set up logging with proper configuration
+        logging_config = load_logging_config()
+        logging_config.default_level = "INFO"  # Set default level to INFO
+        
+        # Set up logging with the full configuration
+        setup_logging(
+            config,
+            dev_mode=args.dev,
+            verbose=args.verbose,
+            log_file=None,  # Don't use file logging
+            logging_config=logging_config  # Use the logging config we set up earlier
+        )
+        
         logger = get_logger(__name__)
-        logger.setLevel(logging.DEBUG)  # Ensure main logger is at DEBUG level
         
-        # Set root logger to DEBUG
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.DEBUG)
-        
-        # Set all existing handlers to DEBUG level
-        for handler in root_logger.handlers:
-            handler.setLevel(logging.DEBUG)
-        
-        # Initialize error aggregator
+        # Initialize error aggregator with configuration from logging_config
         error_config = ErrorAggregationConfig(
-            enabled=True,
-            report_interval=config.global_config.get('ERROR_REPORT_INTERVAL', 3600),
-            error_threshold=config.global_config.get('ERROR_THRESHOLD', 5),
-            time_threshold=config.global_config.get('ERROR_TIME_THRESHOLD', 300),
-            categorize_by=['service', 'message']
+            enabled=logging_config.error_aggregation.enabled,
+            report_interval=logging_config.error_aggregation.report_interval,
+            error_threshold=logging_config.error_aggregation.error_threshold,
+            time_threshold=logging_config.error_aggregation.time_threshold,
+            categorize_by=logging_config.error_aggregation.categorize_by
         )
         init_error_aggregator(error_config)
         
-        logger.debug("Starting GolfCal2 service in debug mode")
-        
-        # Initialize metrics
-        metrics = Metrics()
+        logger.info("Starting GolfCal2 service")
         
         # Start health check server
         health_server = HealthCheckServer(args.host, args.port)
@@ -212,13 +230,17 @@ def main():
         
         # Initialize services and state
         weather_service = WeatherService(
-            config=config.global_config
+            config=config
         )
         
-        # Pass the entire config object instead of just global_config
         calendar_service = CalendarService(
             config=config,
             weather_service=weather_service
+        )
+        
+        external_event_service = ExternalEventService(
+            weather_service=weather_service,
+            config=config
         )
         
         service_state = ServiceState()
@@ -235,11 +257,37 @@ def main():
                     logger.info("Starting calendar processing")
                     
                     with Timer("calendar_processing"):
-                        # Process calendars
-                        ctx = CLIContext(args=args, logger=logger, config=config, parser=parser)
-                        ProcessCommands.process_calendar(ctx)
-                        metrics.increment("calendar_processing_success")
-                        logger.info("Calendar processing completed successfully")
+                        # Process calendars for all configured users
+                        for user_name, user_config in config.users.items():
+                            try:
+                                logger.info(f"Processing calendar for user {user_name}")
+                                args.user = user_name  # Set current user
+                                ctx = CLIContext(args=args, logger=logger, config=config, parser=parser)
+                                logger.info("Processing external events")
+                                external_events = external_event_service.process_events(user_name, dev_mode=args.dev)
+                                logger.info(f"Found {len(external_events)} external events")
+                                
+                                # Create calendar service with external events
+                                calendar_service = CalendarService(
+                                    config=config,
+                                    weather_service=weather_service,
+                                    dev_mode=args.dev,
+                                    external_event_service=external_event_service  # Pass the service directly
+                                )
+                                
+                                user = User.from_config(user_name, dict(user_config))
+                                reservation_service = ReservationService(user_name, config)
+                                reservations = reservation_service.list_reservations()
+                                
+                                # Process calendar with both reservations and external events
+                                calendar = calendar_service.process_user_reservations(user, reservations)
+                                
+                                metrics.increment("calendar_processing_success")
+                                logger.info(f"Calendar processing completed successfully for user {user_name}")
+                            except Exception as e:
+                                logger.error(f"Error processing calendar for user {user_name}: {e}", exc_info=True)
+                                metrics.increment("calendar_processing_errors")
+                                continue
                     
                     # Mark current event as processed if applicable
                     now = datetime.now(service_state.timezone)

@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import logging
+import logging.config
 import logging.handlers
 from datetime import datetime
 from pathlib import Path
@@ -249,24 +250,107 @@ def init_error_aggregator(config: Optional[Dict[str, Any]] = None) -> None:
     # Currently a placeholder - can be implemented later if error aggregation is needed
     pass
 
-def setup_logging(config: AppConfig, dev_mode: bool = False, verbose: bool = False, log_file: Optional[str] = None) -> None:
-    """Set up logging based on configuration and mode.
+def setup_logging(
+    config: AppConfig,
+    dev_mode: bool = False,
+    verbose: bool = False,
+    log_file: Optional[str] = None,
+    logging_config: Optional[LoggingConfig] = None
+) -> None:
+    """Set up logging configuration.
     
     Args:
         config: Application configuration
         dev_mode: Whether to run in development mode
-        verbose: Whether to enable verbose (DEBUG) logging
-        log_file: Optional path to log file, overrides config setting
+        verbose: Whether to enable verbose logging
+        log_file: Optional log file path
+        logging_config: Optional logging configuration
     """
-    # Load logging config
-    logging_config = load_logging_config()
+    if logging_config is None:
+        logging_config = load_logging_config()
+    
+    # Determine log level
+    if verbose:
+        level = logging_config.verbose_level
+    elif dev_mode:
+        level = logging_config.dev_level
+    else:
+        level = logging_config.default_level
+    
+    # Convert level string to logging level
+    log_level = getattr(logging, level.upper())
+    
+    # Create base configuration
+    log_config = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'console': {
+                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            },
+            'file': {
+                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            },
+            'journald': {
+                'format': '%(name)s: %(levelname)s %(message)s'
+            }
+        },
+        'handlers': {},
+        'root': {
+            'level': log_level,
+            'handlers': []
+        }
+    }
+    
+    # Add console handler if enabled
+    if logging_config.console.enabled:
+        log_config['handlers']['console'] = {
+            'class': 'logging.StreamHandler',
+            'formatter': 'console',
+            'level': log_level
+        }
+        log_config['root']['handlers'].append('console')
+    
+    # Add file handler if enabled and path provided
+    if logging_config.file.enabled and (log_file or logging_config.file.path):
+        path = log_file or logging_config.file.path
+        log_config['handlers']['file'] = {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': path,
+            'formatter': 'file',
+            'maxBytes': logging_config.file.max_size_mb * 1024 * 1024,
+            'backupCount': logging_config.file.backup_count,
+            'level': log_level
+        }
+        log_config['root']['handlers'].append('file')
+    
+    # Add journald handler if enabled
+    if logging_config.journald.enabled:
+        try:
+            from systemd import journal
+            log_config['handlers']['journald'] = {
+                'class': 'systemd.journal.JournalHandler',
+                'formatter': 'journald',
+                'level': getattr(logging, logging_config.journald.level.upper()),
+                'SYSLOG_IDENTIFIER': logging_config.journald.identifier
+            }
+            log_config['root']['handlers'].append('journald')
+        except ImportError:
+            print("Warning: systemd module not available, journald logging disabled")
+    
+    # Configure logging
+    logging.config.dictConfig(log_config)
+    
+    # Set library log levels
+    for lib, level in logging_config.libraries.items():
+        logging.getLogger(lib).setLevel(getattr(logging, level.upper()))
     
     # Initialize error aggregator first
     init_error_aggregator(logging_config.error_aggregation)
     
     # Set root logger level based on verbose flag
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    root_logger.setLevel(log_level)
     
     # Remove any existing handlers to avoid duplicates
     for handler in root_logger.handlers[:]:

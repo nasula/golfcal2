@@ -3,6 +3,13 @@ default_level: WARNING
 dev_level: INFO
 verbose_level: DEBUG
 
+# Journald settings
+journald:
+  enabled: true
+  identifier: golfcal2
+  format: "%(name)s: %(levelname)s %(message)s"
+  level: DEBUG
+
 # Error aggregation settings
 error_aggregation:
   enabled: true
@@ -16,7 +23,7 @@ error_aggregation:
 
 # File logging settings
 file:
-  enabled: true
+  enabled: false  # Disable file logging
   path: logs/golfcal.log
   max_size_mb: 50  # Larger file size for golf calendar data
   backup_count: 7  # Keep a week's worth of logs
@@ -56,7 +63,7 @@ services:
       - openweather_key
     performance_logging: true
     file:
-      enabled: true
+      enabled: false  # Disable file logging
       path: logs/weather.log
       max_size_mb: 20
       backup_count: 5
@@ -75,7 +82,7 @@ services:
       - ics_token
       - calendar_id
     file:
-      enabled: true
+      enabled: false  # Disable file logging
       path: logs/calendar.log
       max_size_mb: 30
       backup_count: 7
@@ -93,7 +100,7 @@ services:
       - nexgolf_token
     performance_logging: true
     file:
-      enabled: true
+      enabled: false  # Disable file logging
       path: logs/auth.log
       max_size_mb: 10
       backup_count: 5
@@ -113,7 +120,7 @@ services:
       - booking_token
     performance_logging: true
     file:
-      enabled: true
+      enabled: false  # Disable file logging
       path: logs/reservation.log
       max_size_mb: 40
       backup_count: 7
@@ -133,7 +140,7 @@ services:
       - access_token
     performance_logging: true
     file:
-      enabled: true
+      enabled: false  # Disable file logging
       path: logs/club.log
       max_size_mb: 20
       backup_count: 5

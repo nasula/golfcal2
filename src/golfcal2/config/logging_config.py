@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Union
 
 import yaml
+import os
 
 @dataclass
 class FileConfig:
@@ -84,6 +85,14 @@ class ErrorAggregationConfig:
     categorize_by: List[str]
 
 @dataclass
+class JournaldConfig:
+    """Journald logging configuration."""
+    enabled: bool
+    identifier: str
+    format: str
+    level: str
+
+@dataclass
 class LoggingConfig:
     """Complete logging configuration."""
     default_level: str
@@ -98,42 +107,43 @@ class LoggingConfig:
     correlation: CorrelationConfig
     sensitive_data: SensitiveDataConfig
     error_aggregation: ErrorAggregationConfig
+    journald: JournaldConfig
 
-def load_logging_config() -> LoggingConfig:
-    """Load logging configuration from YAML file.
-    
-    Returns:
-        Loaded logging configuration
-    """
-    config_path = Path(__file__).parent / 'logging_config.yaml'
-    with open(config_path) as f:
+def load_logging_config(config_path=None):
+    """Load logging configuration from YAML file."""
+    if config_path is None:
+        config_path = os.path.join(os.path.dirname(__file__), 'logging_config.yaml')
+
+    with open(config_path, 'r') as f:
         config_dict = yaml.safe_load(f)
-    
-    # Convert nested dictionaries to appropriate config objects
-    if 'file' in config_dict:
-        config_dict['file'] = FileConfig(**config_dict['file'])
-    if 'console' in config_dict:
-        config_dict['console'] = ConsoleConfig(**config_dict['console'])
-    if 'sampling' in config_dict:
-        config_dict['sampling'] = SamplingConfig(**config_dict['sampling'])
-    if 'performance' in config_dict:
-        config_dict['performance'] = PerformanceConfig(**config_dict['performance'])
-    if 'correlation' in config_dict:
-        config_dict['correlation'] = CorrelationConfig(**config_dict['correlation'])
-    if 'sensitive_data' in config_dict:
-        config_dict['sensitive_data'] = SensitiveDataConfig(**config_dict['sensitive_data'])
-    if 'error_aggregation' in config_dict:
-        config_dict['error_aggregation'] = ErrorAggregationConfig(**config_dict['error_aggregation'])
-    
-    # Convert service configurations
+
+    # Convert journald config to JournaldConfig object
+    journald_config = config_dict.get('journald', {})
+    journald = JournaldConfig(
+        enabled=journald_config.get('enabled', True),
+        identifier=journald_config.get('identifier', 'golfcal2'),
+        format=journald_config.get('format', '%(name)s: %(levelname)s %(message)s'),
+        level=journald_config.get('level', 'DEBUG')
+    )
+
+    # Convert services config to ServiceConfig objects
+    services = {}
     if 'services' in config_dict:
-        services = {}
-        for name, service_dict in config_dict['services'].items():
-            if 'file' in service_dict:
-                service_dict['file'] = ServiceFileConfig(**service_dict['file'])
-            if 'sampling' in service_dict:
-                service_dict['sampling'] = SamplingConfig(**service_dict['sampling'])
-            services[name] = ServiceConfig(**service_dict)
-        config_dict['services'] = services
-    
-    return LoggingConfig(**config_dict) 
+        for service_name, service_config in config_dict['services'].items():
+            services[service_name] = ServiceConfig(**service_config)
+
+    # Create and return the LoggingConfig object
+    return LoggingConfig(
+        default_level=config_dict.get('default_level', 'WARNING'),
+        dev_level=config_dict.get('dev_level', 'INFO'),
+        verbose_level=config_dict.get('verbose_level', 'DEBUG'),
+        file=FileConfig(**config_dict.get('file', {})) if 'file' in config_dict else None,
+        console=ConsoleConfig(**config_dict.get('console', {})) if 'console' in config_dict else None,
+        sampling=SamplingConfig(**config_dict.get('sampling', {})) if 'sampling' in config_dict else None,
+        services=services,
+        performance=PerformanceConfig(**config_dict.get('performance', {})) if 'performance' in config_dict else None,
+        correlation=CorrelationConfig(**config_dict.get('correlation', {})) if 'correlation' in config_dict else None,
+        sensitive_data=SensitiveDataConfig(**config_dict.get('sensitive_data', {})) if 'sensitive_data' in config_dict else None,
+        error_aggregation=ErrorAggregationConfig(**config_dict.get('error_aggregation', {})) if 'error_aggregation' in config_dict else None,
+        journald=journald
+    ) 

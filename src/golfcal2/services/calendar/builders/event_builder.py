@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 from icalendar import Event, vText, vDatetime  # type: ignore[import]
 
 from golfcal2.models.reservation import Reservation
+from golfcal2.models.golf_club import ExternalGolfClub
+from golfcal2.models.user import User, Membership
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.config.settings import AppConfig
@@ -126,9 +128,7 @@ class ExternalEventBuilder(EventBuilder):
     def build(self, event_data: Dict[str, Any], person_name: str, start: datetime, end: datetime) -> Optional[Event]:
         """Build an event from external event data."""
         try:
-            # Check if person is included
-            if 'users' in event_data and person_name not in event_data['users']:
-                return None
+            self.logger.debug(f"Building external event for {event_data.get('name', 'Unknown')}")
             
             # Create base event
             event = Event()
@@ -163,68 +163,74 @@ class ExternalEventBuilder(EventBuilder):
             if 'location' in event_data:
                 event.add('location', vText(self._get_location(event_data)))
             
-            # Create a temporary Reservation object to use its formatting methods
-            from golfcal2.models.golf_club import ExternalGolfClub
-            from golfcal2.models.user import User, Membership
-            from golfcal2.models.reservation import Reservation
-            
-            club = ExternalGolfClub(
-                name=event_data['name'],
-                url="",
-                coordinates=event_data.get('coordinates'),
-                timezone=timezone_name,
-                address=event_data.get('address', event_data.get('location', ''))
-            )
-            
-            # Create minimal user and membership objects
-            membership = Membership(
-                club=club.name,
-                clubAbbreviation="EXT",
-                duration={"hours": 0, "minutes": 0},
-                auth_details={}
-            )
-            user = User(
-                name=person_name,
-                email="",
-                handicap=0,
-                memberships=[membership]
-            )
-            
-            # Create reservation object
-            reservation = Reservation(
-                club=club,
-                user=user,
-                membership=membership,
-                start_time=start,
-                end_time=end,
-                players=[],
-                raw_data=event_data
-            )
+            try:
+                self.logger.debug("Creating ExternalGolfClub instance")
+                club = ExternalGolfClub(
+                    name=event_data['name'],
+                    url="",
+                    coordinates=event_data.get('coordinates'),
+                    timezone=timezone_name,
+                    address=event_data.get('address', event_data.get('location', ''))
+                )
+                
+                self.logger.debug("Creating Membership instance")
+                membership = Membership(
+                    club=club.name,
+                    clubAbbreviation="EXT",
+                    duration={"hours": 0, "minutes": 0},
+                    auth_details={}
+                )
+                
+                self.logger.debug("Creating User instance")
+                user = User(
+                    name=person_name,
+                    email="",
+                    handicap=0,
+                    memberships=[membership]
+                )
+                
+                self.logger.debug("Creating Reservation instance")
+                reservation = Reservation(
+                    club=club,
+                    user=user,
+                    membership=membership,
+                    start_time=start,
+                    end_time=end,
+                    players=[],
+                    raw_data=event_data  # Pass the entire event_data as raw_data
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to create event objects: {str(e)}", exc_info=True)
+                raise
             
             # Get weather data if coordinates available
             weather_data = None
             if 'coordinates' in event_data:
-                coords = event_data['coordinates']
-                location = Location(
-                    id=str(coords['lat']) + ',' + str(coords['lon']),
-                    name=event_data.get('name', 'Golf Event'),
-                    latitude=coords['lat'],
-                    longitude=coords['lon']
-                )
-                weather_response = self._get_weather(
-                    location,
-                    start,
-                    end
-                )
-                if weather_response is not None:
-                    weather_data = weather_response.data
+                try:
+                    coords = event_data['coordinates']
+                    location = Location(
+                        id=str(coords['lat']) + ',' + str(coords['lon']),
+                        name=event_data.get('name', 'Golf Event'),
+                        latitude=coords['lat'],
+                        longitude=coords['lon']
+                    )
+                    weather_response = self._get_weather(
+                        location,
+                        start,
+                        end
+                    )
+                    if weather_response is not None:
+                        weather_data = weather_response.data
+                except Exception as e:
+                    self.logger.warning(f"Failed to get weather data: {str(e)}")
+                    # Continue without weather data
             
             # Use reservation's description formatting
             event.add('description', vText(reservation.get_event_description(weather_data)))
             return event
             
         except Exception as e:
-            self.logger.error(f"Failed to build external event: {e}")
+            self.logger.error(f"Failed to build external event for {event_data.get('name', 'Unknown')}: {str(e)}", exc_info=True)
             return None
     
     def _generate_unique_id(self, event_data: Dict[str, Any], start: datetime, person_name: str) -> str:

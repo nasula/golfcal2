@@ -447,8 +447,13 @@ class Reservation(LoggerMixin):
             else:
                 description.append("Teetime Unknown")
             
+            # Add event description if available in raw_data
+            if isinstance(self.raw_data, dict) and 'description' in self.raw_data:
+                description.append(f"\nDescription:\n{self.raw_data['description']}")
+            
             # Add player details with safe handling
             if self.players:
+                description.append("\nPlayers:")
                 for player in self.players:
                     if player:
                         name = str(player.name) if player.name else "Unknown"

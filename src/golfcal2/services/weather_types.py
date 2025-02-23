@@ -397,7 +397,7 @@ def _handle_weather_error(error: Exception, service: str, operation: str) -> Dic
         "service": service,
         "operation": operation,
         "error_type": type(error).__name__,
-        "traceback": "".join(traceback.format_tb(error.__traceback__)) if error.__traceback__ else ""
+        "traceback": ''.join(traceback.format_tb(error.__traceback__)) if error.__traceback__ else ""
     }
     
     if isinstance(error, requests.exceptions.RequestException):

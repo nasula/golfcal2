@@ -84,27 +84,27 @@ class ErrorAggregator:
                 del self._errors[message]
     
     def _report_error_group(self, message: str, error_group: ErrorGroup) -> None:
-        """Report an error group to the logger.
-        
-        Args:
-            message: Error message
-            error_group: Error group to report
-        """
-        # Log the error message with count
+        """Report a single error group."""
         self.logger.error(
-            f"{message} (occurred {error_group.count} times)",
-            extra={"error_group": error_group}
+            message,
+            extra={"error_count": error_group.count}
         )
-        
-        # Log unique stack traces if available
         if error_group.stack_traces:
-            trace_list = list(error_group.stack_traces)
-            for trace in trace_list:
-                if trace:
-                    self.logger.error(
-                        "Stack trace:",
-                        extra={"stack_trace": ''.join(traceback.format_tb(trace))}
-                    )
+            for trace in error_group.stack_traces:
+                if trace:  # Only log non-empty traces
+                    try:
+                        # Format the traceback if it's a traceback object
+                        if hasattr(trace, 'tb_frame'):
+                            trace_str = ''.join(traceback.format_tb(trace))
+                        else:
+                            trace_str = str(trace)
+                        if trace_str.strip():  # Only log non-empty formatted traces
+                            self.logger.error(
+                                "Stack trace:",
+                                extra={"stack_trace": trace_str}
+                            )
+                    except Exception as e:
+                        self.logger.error(f"Failed to format traceback: {str(e)}")
     
     def _periodic_report(self) -> None:
         """Periodically report all accumulated errors."""

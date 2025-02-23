@@ -117,25 +117,20 @@ def handle_errors(
     try:
         yield
     except error_type as e:
-        # Format traceback as string
-        tb_str = ''.join(traceback.format_tb(e.__traceback__)) if e.__traceback__ else None
-        
-        # Aggregate error with formatted traceback
-        aggregate_error(str(e), service, tb_str)
+        # Pass the actual traceback object
+        aggregate_error(str(e), service, e.__traceback__)
         
         if fallback:
             return fallback()
         raise
     except Exception as e:
-        # Format traceback as string
-        tb_str = ''.join(traceback.format_tb(e.__traceback__)) if e.__traceback__ else None
-        
-        # Log unexpected error with formatted traceback
+        # Log unexpected error with traceback
         logger.error(
             f"Unexpected error in {service}.{operation}: {e}",
             exc_info=True
         )
-        aggregate_error(str(e), service, tb_str)
+        # Pass the actual traceback object
+        aggregate_error(str(e), service, e.__traceback__)
         
         if fallback:
             return fallback()

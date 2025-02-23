@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import requests
 from icalendar import Event, Calendar, vText, vDatetime  # type: ignore
 import yaml
+import traceback
 
 from golfcal2.models.golf_club import GolfClubFactory, GolfClub, AppConfigProtocol as GolfClubConfigProtocol
 from golfcal2.models.reservation import Reservation
@@ -190,19 +191,19 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                             
                         except Exception as e:
                             self.error(f"Failed to process reservation: {e}", exc_info=True)
-                            aggregate_error(str(e), "reservation_service", str(e.__traceback__))
+                            aggregate_error(str(e), "reservation_service", ''.join(traceback.format_tb(e.__traceback__)) if e.__traceback__ else None)
                             continue
                     
                 except Exception as e:
                     self.error(f"Failed to process club {membership.club}: {e}", exc_info=True)
-                    aggregate_error(str(e), "reservation_service", str(e.__traceback__))
+                    aggregate_error(str(e), "reservation_service", ''.join(traceback.format_tb(e.__traceback__)) if e.__traceback__ else None)
                     continue
             
             return sorted(reservations, key=lambda r: r.start_time)
             
         except Exception as e:
             self.error(f"Failed to process user {user_name}: {e}", exc_info=True)
-            aggregate_error(str(e), "reservation_service", str(e.__traceback__))
+            aggregate_error(str(e), "reservation_service", ''.join(traceback.format_tb(e.__traceback__)) if e.__traceback__ else None)
             return []
     
     def clear_weather_cache(self) -> None:
