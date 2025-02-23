@@ -125,7 +125,8 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
         endpoints = self.load_endpoints()
         wisegolf_clubs_raw = [
             club for club in endpoints.get('hosts', [])
-            if club.get('sessionType') == 'wisegolf'
+            if club.get('sessionType') == 'wisegolf' and
+            club.get('softwareVendorName', 'WiseNetwork') == 'WiseNetwork'  # Only include WiseNetwork clubs
         ]
         
         # Deduplicate clubs based on golfClubId
