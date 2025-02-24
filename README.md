@@ -1,139 +1,69 @@
 # GolfCal2
 
-A Python application for managing golf reservations and creating calendar integrations.
+A Python application for managing golf calendar and tee time reservations.
 
-## Features
+## Requirements
 
-- Fetch golf reservations from multiple booking systems:
-  - WiseGolf
-  - NexGolf
-  - TeeTime
-- Create iCalendar files for easy calendar integration
-- Weather forecast integration for golf sessions
-- Automated notifications via Pushover
-- Service mode for continuous calendar updates
-- Command-line interface for manual operations
+- Python 3.11 or higher
+- Git
 
-## Installation
+## Development Setup
 
-### Using pip
-
+1. Clone the repository:
 ```bash
-pip install golfcal2
+git clone https://github.com/yourusername/golfcal2.git
+cd golfcal2
 ```
 
-### Development Installation
-
+2. Create and activate a virtual environment:
 ```bash
-# Clone the repository
-git clone https://github.com/jahonen/golfcal2
-cd golfcal2
+python -m venv .venv
+source .venv/bin/activate  # On Unix/macOS
+# OR
+.venv\Scripts\activate  # On Windows
+```
 
-# Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install with development dependencies
+3. Install dependencies:
+```bash
 pip install -e ".[dev]"
 ```
 
-## Configuration
+## Running Tests
 
-1. Create a configuration directory:
+Run tests with coverage:
 ```bash
-mkdir -p ~/.config/golfcal2
-```
-
-2. Copy the example configuration files:
-```bash
-cp src/golfcal2/config/config.yaml ~/.config/golfcal2/
-cp src/golfcal2/config/clubs.json ~/.config/golfcal2/
-cp src/golfcal2/config/users.json ~/.config/golfcal2/
-```
-
-3. Edit the configuration files according to your needs:
-- `config.yaml`: Global settings and API keys
-- `clubs.json`: Golf club configurations
-- `users.json`: User profiles and memberships
-
-## Usage
-
-### Command Line Interface
-
-```bash
-# List all reservations
-golfcal2 list reservations
-
-# Process calendar for all users
-golfcal2 process calendar
-
-# Process calendar for a specific user
-golfcal2 process calendar -u username
-
-# Check configuration
-golfcal2 check config
-
-# Get weather forecast for a specific location
-golfcal2 get weather --lat 60.1699 --lon 24.9384
-```
-
-### Service Mode
-
-Run as a system service for continuous calendar updates:
-
-```bash
-# Install the service
-sudo cp golfcal2.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable golfcal2
-sudo systemctl start golfcal2
-
-# Check service status
-sudo systemctl status golfcal2
-```
-
-## Development
-
-### Running Tests
-
-```bash
-# Run all tests
 pytest
-
-# Run with coverage
-pytest --cov=golfcal2
-
-# Run specific test file
-pytest tests/test_cli.py
 ```
 
-### Code Style
+## Code Quality
 
-The project uses Ruff for code formatting and linting:
-
+Run type checking:
 ```bash
-# Check code style
-ruff check .
-
-# Fix code style issues
-ruff check --fix .
-```
-
-### Type Checking
-
-```bash
-# Run type checking
 mypy src/golfcal2
+```
+
+Run linting:
+```bash
+ruff check src/golfcal2
+```
+
+## Project Structure
+
+```
+golfcal2/
+├── .github/
+│   └── workflows/        # CI/CD workflows
+├── src/
+│   └── golfcal2/        # Main package
+│       ├── api/         # API integration
+│       │   └── crm/     # CRM implementations
+│       └── ...
+├── tests/               # Test files
+├── .gitignore          # Git ignore rules
+├── pyproject.toml      # Project configuration
+└── README.md           # This file
 ```
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request 
+MIT License 
