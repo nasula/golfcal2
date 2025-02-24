@@ -2,7 +2,7 @@
 WiseGolf API client for golf calendar application.
 """
 
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Tuple, TYPE_CHECKING
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
 import time
@@ -11,7 +11,6 @@ from abc import ABC, abstractmethod
 
 from golfcal2.api.base_api import BaseAPI
 from golfcal2.models.mixins import (
-    RequestHandlerMixin,
     APIError,
     APIResponseError,
     APITimeoutError,
@@ -19,6 +18,9 @@ from golfcal2.models.mixins import (
 )
 from golfcal2.services.auth_service import AuthService
 from golfcal2.utils.api_handler import APIResponseValidator
+
+if TYPE_CHECKING:
+    from golfcal2.models.golf_club import GolfClub
 
 __all__ = ['WiseGolfAPI', 'WiseGolf0API']
 
@@ -34,7 +36,7 @@ class WiseGolfResponseError(WiseGolfAPIError):
     """Response error for WiseGolf API."""
     pass
 
-class BaseWiseGolfAPI(BaseAPI, RequestHandlerMixin):
+class BaseWiseGolfAPI(BaseAPI):
     """Base class for WiseGolf API implementations."""
     
     def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
@@ -44,110 +46,82 @@ class BaseWiseGolfAPI(BaseAPI, RequestHandlerMixin):
         super().__init__(base_url, auth_service, club_details, membership)
         self._setup_auth_headers()
         
-    def _setup_auth_headers(self):
+    def _setup_auth_headers(self) -> None:
         """Setup authentication headers based on auth type."""
         try:
             # Add common headers first
             self.session.headers.update({
-                'Accept': 'application/json, text/plain, */*',
+                'Accept': 'application/json',
                 'Content-Type': 'application/json'
             })
             
-            if not self.club:
-                self.logger.warning("No club instance available for auth headers")
-                return
-                
-            if not self.auth_service:
-                self.logger.warning("No auth service available")
-                return
-                
-            # Get auth headers from auth service
-            auth_headers = self.auth_service.get_auth_headers(self.club, self.auth_details)
+            # Get auth type from club details
+            auth_type = self.club_details.get('auth_type', 'token')
             
-            # Update session headers
-            if auth_headers:
-                self.session.headers.update(auth_headers)
-                self.logger.debug(f"Set up auth headers: {dict(self.session.headers)}")
-            else:
-                self.logger.warning("No auth headers returned from auth service")
-                
+            if auth_type == 'token':
+                # Add token to headers
+                token = self.auth_details.get('token')
+                if token:
+                    self.session.headers.update({
+                        'Authorization': f'Bearer {token}'
+                    })
+            elif auth_type == 'cookie':
+                # Add cookie to session
+                cookie_name = self.auth_details.get('cookie_name')
+                cookie_value = self.auth_details.get('cookie_value')
+                if cookie_name and cookie_value:
+                    self.session.cookies.set(cookie_name, cookie_value)
+                    
         except Exception as e:
-            self.logger.error(f"Failed to set up auth headers: {e}")
-        
-    def get_players(self, reservation_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Get players for a specific reservation.
-        
-        Note: While orderId is included in the API parameters for backward compatibility,
-        it is not used for player matching. Players are instead matched based on their
-        start time and resource ID.
+            self.logger.error(f"Failed to setup auth headers: {e}")
+            raise WiseGolfAuthError(f"Failed to setup auth headers: {str(e)}")
+    
+    def _make_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, str]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        timeout: Optional[Tuple[int, int]] = None,
+        validate_response: bool = True
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]], None]:
+        """Make request to WiseGolf API with proper error handling.
         
         Args:
-            reservation_data: Dictionary containing reservation details
-                
+            method: HTTP method
+            endpoint: API endpoint
+            params: Query parameters
+            data: Request body data
+            timeout: Request timeout (connection timeout, read timeout)
+            validate_response: Whether to validate the response
+            
         Returns:
-            Dictionary containing player information with:
-            - reservationsGolfPlayers: List of player details
-            - rows: List of time slots with their resource information
+            Response data as dictionary
+            
+        Raises:
+            WiseGolfAPIError: If the request fails
         """
         try:
-            self.logger.debug("WiseGolf0API.get_players - Starting with reservation data:")
-            self.logger.debug(f"WiseGolf0API.get_players - {reservation_data}")
-            
-            # Extract date from dateTimeStart
-            date = datetime.strptime(
-                reservation_data["dateTimeStart"],
-                "%Y-%m-%d %H:%M:%S"
-            ).strftime("%Y-%m-%d")
-                
-            # Get product ID from reservation
-            product_id = reservation_data.get("productId")
-            if not product_id and 'resources' in reservation_data:
-                resources = reservation_data.get('resources', [{}])
-                if resources:
-                    product_id = resources[0].get('resourceId')
-                    
-            if not product_id:
-                raise WiseGolfResponseError("No productId found in reservation")
-                
-            # Include orderId for backward compatibility, but it's not used for player matching
-            params = {
-                "productid": str(product_id),
-                "date": date,
-                "golf": 1,
-                "orderid": str(reservation_data.get('orderId'))
-            }
-            
-            self.logger.debug(f"WiseGolf0API.get_players - Calling _fetch_players with params: {params}")
-            response = self._fetch_players(params)
-            self.logger.debug(f"WiseGolf0API.get_players - Got response: {response}")
-            
-            # Return the response directly - it should contain reservationsGolfPlayers and rows
-            return response
-            
-        except Exception as e:
-            self.logger.error(f"Failed to fetch players: {e}", exc_info=True)
-            return {"reservationsGolfPlayers": []}
+            result = super()._make_request(
+                method=method,
+                endpoint=endpoint,
+                params=params,
+                data=data,
+                timeout=timeout,
+                validate_response=validate_response
+            )
+            if result is None:
+                return {}
+            if isinstance(result, list):
+                return {"data": result}
+            return result
+        except APIError as e:
+            raise WiseGolfAPIError(f"WiseGolf API request failed: {str(e)}")
             
     @abstractmethod
     def _fetch_players(self, params: Dict[str, str]) -> Dict[str, Any]:
-        """
-        Fetch players from API with given parameters.
-        Must be implemented by subclasses.
-        """
-        raise NotImplementedError
-
-    def _make_request(self, method: str, endpoint: str, **kwargs) -> Any:
-        """Make an API request with proper error handling."""
-        try:
-            # Ensure we have auth headers
-            if not self.session.headers.get('Authorization') and not self.session.headers.get('Cookie'):
-                self._setup_auth_headers()
-                
-            return super()._make_request(method, endpoint, **kwargs)
-        except Exception as e:
-            self.logger.error(f"Request failed: {e}")
-            raise
+        """Fetch players for a reservation."""
+        pass
 
 class WiseGolfAPI(BaseWiseGolfAPI):
     """WiseGolf API client implementation."""
@@ -156,7 +130,7 @@ class WiseGolfAPI(BaseWiseGolfAPI):
         """Initialize WiseGolf API client."""
         super().__init__(base_url, auth_service, club_details, membership, club)
         self.logger.debug(f"WiseGolfAPI initialized with headers: {dict(self.session.headers)}")
-
+    
     def get_reservations(self) -> List[Dict[str, Any]]:
         """Get user's reservations."""
         try:
@@ -195,7 +169,7 @@ class WiseGolfAPI(BaseWiseGolfAPI):
             raise WiseGolfResponseError(f"Failed to fetch reservations: {str(e)}")
         except Exception as e:
             raise WiseGolfResponseError(f"Unexpected error fetching reservations: {str(e)}")
-            
+    
     def _fetch_players(self, params: Dict[str, str]) -> Dict[str, Any]:
         """Fetch players from WiseGolf API."""
         rest_url = self.club_details.get('restUrl')
@@ -204,7 +178,6 @@ class WiseGolfAPI(BaseWiseGolfAPI):
             
         response = self._make_request("GET", "/reservations/", params=params)
         return response if isinstance(response, dict) else {"reservationsGolfPlayers": []}
-
 
 class WiseGolf0API(BaseWiseGolfAPI):
     """WiseGolf0 API client implementation."""
@@ -233,7 +206,7 @@ class WiseGolf0API(BaseWiseGolfAPI):
         self.logger.debug("WiseGolf0API final headers:")
         self.logger.debug(f"Final headers: {dict(self.session.headers)}")
     
-    def _setup_auth_headers(self):
+    def _setup_auth_headers(self) -> None:
         """Setup authentication headers specific to WiseGolf0."""
         try:
             if not self.club or not self.auth_service:
@@ -265,6 +238,7 @@ class WiseGolf0API(BaseWiseGolfAPI):
                 
         except Exception as e:
             self.logger.error(f"Failed to set up auth headers: {e}")
+            raise WiseGolfAuthError(f"Failed to setup auth headers: {str(e)}")
     
     def get_reservations(self) -> List[Dict[str, Any]]:
         """Get user's reservations."""

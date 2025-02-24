@@ -144,21 +144,21 @@ class BaseAPI(LoggerMixin):
             raise APIResponseError(f"Request failed: {error_msg}")
     
     def _parse_response(self, response: requests.Response) -> Union[Dict[str, Any], List[Dict[str, Any]], None]:
-        """
-        Parse response content, handling different formats.
+        """Parse response content.
         
         Args:
-            response: Response to parse
+            response: Response object to parse
             
         Returns:
-            Parsed response data
+            Parsed response data or None if empty
             
         Raises:
             APIValidationError: If response cannot be parsed
         """
         try:
             # Try to parse as JSON first
-            return response.json()
+            result: Union[Dict[str, Any], List[Dict[str, Any]]] = response.json()
+            return result
         except ValueError:
             # If JSON parsing fails, try to handle other formats
             content = response.text.strip()
@@ -170,7 +170,8 @@ class BaseAPI(LoggerMixin):
             # Handle text that looks like a JSON array
             if content.startswith("[") and content.endswith("]"):
                 try:
-                    return json.loads(content)
+                    array_result: List[Dict[str, Any]] = json.loads(content)
+                    return array_result
                 except json.JSONDecodeError:
                     pass
             

@@ -41,7 +41,7 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
         self.session = requests.Session()
         self._setup_session()
         
-    def _setup_session(self):
+    def _setup_session(self) -> None:
         """Set up session headers."""
         headers = {
             'Accept': 'application/json, text/plain, */*',
@@ -57,13 +57,26 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
         }
         self.session.headers.update(headers)
 
-    def _make_request(self, method: str, endpoint: str, **kwargs) -> Any:
+    def _make_request(
+        self,
+        method: str,
+        endpoint: str,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
         """Make an API request with proper error handling."""
         try:
             url = urljoin(self.base_url, endpoint)
             response = self.session.request(method, url, **kwargs)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # Convert list responses to dict format
+            if isinstance(result, list):
+                return {"data": result}
+            elif isinstance(result, dict):
+                return result
+            else:
+                raise APIResponseError(f"Unexpected response type: {type(result)}")
             
         except requests.exceptions.HTTPError as e:
             self.logger.error(f"HTTP error: {e}")
@@ -98,14 +111,15 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
             # Make the request to the correct endpoint with parameters
             response = self._make_request("GET", "/backend/player/flight", params=params)
             
-            # Response should be a list of tee times
-            if not isinstance(response, list):
-                self.logger.error(f"Invalid response format: expected list, got {type(response)}")
+            # Response should be a list of tee times wrapped in a dict with 'data' key
+            tee_times = response.get('data', [])
+            if not isinstance(tee_times, list):
+                self.logger.error(f"Invalid response format: expected list in 'data', got {type(tee_times)}")
                 return []
             
             # Convert tee times to reservations format
             reservations = []
-            for tee_time in response:
+            for tee_time in tee_times:
                 # Skip if no reservations
                 if not tee_time.get('reservations'):
                     continue
@@ -177,11 +191,7 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
             
             # Make request
             response = self._make_request("GET", endpoint, params=params)
-            
-            if isinstance(response, dict):
-                return response
-            
-            return None
+            return response
             
         except APITimeoutError as e:
             raise TeeTimeAPIError(f"Request timed out: {str(e)}")

@@ -76,7 +76,7 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
                 debug_headers[sensitive_key] = '***'
         self.debug("Session headers", headers=debug_headers)
     
-    def _setup_auth_headers(self):
+    def _setup_auth_headers(self) -> None:
         """Setup authentication headers."""
         try:
             if not self.auth_service:
@@ -118,7 +118,12 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
         except Exception as e:
             self.logger.error(f"Failed to set up auth headers: {e}")
             
-    def _make_request(self, method: str, endpoint: str, **kwargs) -> Any:
+    def _make_request(
+        self,
+        method: str,
+        endpoint: str,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
         """Make an API request with proper error handling."""
         try:
             # Log actual request headers and cookies before making the request
@@ -133,7 +138,15 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
             url = urljoin(self.base_url, endpoint)
             response = self.session.request(method, url, **kwargs)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # Convert list responses to dict format
+            if isinstance(result, list):
+                return {"data": result}
+            elif isinstance(result, dict):
+                return result
+            else:
+                raise APIResponseError(f"Unexpected response type: {type(result)}")
             
         except requests.exceptions.HTTPError as e:
             self.logger.error(f"HTTP error: {e}")
@@ -165,12 +178,13 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
             # Make request to get reservations using the correct endpoint
             response = self._make_request("GET", endpoint, params=params)
             
-            # Handle the new response format
-            if isinstance(response, list):
+            # Handle different response formats
+            result: List[Dict[str, Any]] = []
+            
+            if "data" in response and isinstance(response["data"], list):
                 # Convert tee times to reservations
-                reservations = []
-                for tee_time in response:
-                    if 'reservations' in tee_time and tee_time['reservations']:
+                for tee_time in response["data"]:
+                    if isinstance(tee_time, dict) and 'reservations' in tee_time and tee_time['reservations']:
                         # Create a single reservation for the tee time
                         reservation = {
                             'startTime': tee_time.get('startTime'),
@@ -178,43 +192,16 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
                             'status': tee_time.get('status'),
                             'players': tee_time['reservations']  # Store all players in the reservation
                         }
-                        reservations.append(reservation)
-                return reservations
-            elif isinstance(response, dict):
-                # Handle old format for backward compatibility
-                if 'reservations' in response:
-                    return response['reservations']
-                elif 'rows' in response:
-                    return response['rows']
-            
-            self.logger.error(f"Invalid response format: {response}")
-            return []
+                        result.append(reservation)
+            elif "reservations" in response and isinstance(response["reservations"], list):
+                result = response["reservations"]
+            elif "rows" in response and isinstance(response["rows"], list):
+                result = response["rows"]
+            else:
+                self.logger.error(f"Invalid response format: {response}")
+                
+            return result
             
         except Exception as e:
             self.logger.error(f"Failed to get reservations: {e}")
             return []
-
-    def _extract_data_from_response(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract reservation data from API response.
-        
-        Args:
-            response: API response data
-            
-        Returns:
-            List of reservation dictionaries
-        """
-        if not response:
-            self.logger.error("Empty response from API")
-            return []
-            
-        # Check if response is a list first since that's the expected type
-        if isinstance(response, list):
-            return response
-            
-        # If not a list, check if it's a dict with reservations
-        if isinstance(response, dict) and 'reservations' in response:
-            return response['reservations']
-            
-        # Log error for invalid response type
-        self.logger.error(f"Invalid response type: {type(response)}")
-        return []
