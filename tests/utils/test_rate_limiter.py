@@ -1,7 +1,7 @@
 """Tests for the rate limiter implementation."""
 
 import time
-import pytest
+
 from golfcal2.utils.rate_limiter import RateLimiter
 
 

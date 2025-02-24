@@ -2,11 +2,16 @@
 User model for golf calendar application.
 """
 
-from dataclasses import dataclass
-from typing import Dict, Any, List, Optional, Union, cast
-import os
 import json
 import logging
+import os
+from dataclasses import dataclass
+from typing import Any
+from typing import Union
+from typing import cast
+
+from golfcal2.models.membership import Membership
+
 
 def get_club_abbreviation(club_name: str) -> str:
     """Get club abbreviation from clubs.json configuration."""
@@ -14,7 +19,7 @@ def get_club_abbreviation(club_name: str) -> str:
     config_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
     clubs_file = os.path.join(config_dir, 'clubs.json')
     
-    with open(clubs_file, 'r') as f:
+    with open(clubs_file) as f:
         clubs_config = json.load(f)
     
     for abbr, club_info in clubs_config.items():
@@ -23,25 +28,18 @@ def get_club_abbreviation(club_name: str) -> str:
     
     return club_name  # Fallback to using the club name itself
 
-@dataclass
-class Membership:
-    """Golf club membership details."""
-    club: str
-    clubAbbreviation: str
-    duration: Dict[str, int]
-    auth_details: Dict[str, str]
 
 @dataclass
 class User:
     """User model."""
     name: str
-    memberships: List[Membership]
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    handicap: Optional[float] = None
+    memberships: list[Membership]
+    email: str | None = None
+    phone: str | None = None
+    handicap: float | None = None
 
     @classmethod
-    def from_config(cls, name: str, config: Union[Dict[str, Any], "User"]) -> "User":
+    def from_config(cls, name: str, config: Union[dict[str, Any], "User"]) -> "User":
         """
         Create User instance from configuration dictionary.
         
@@ -71,7 +69,7 @@ class User:
         
         # Handle nested memberships structure
         if isinstance(config, dict) and isinstance(config.get('memberships'), dict):
-            memberships_data = cast(Dict[str, Any], config['memberships'])
+            memberships_data = cast(dict[str, Any], config['memberships'])
             config = {
                 'email': memberships_data.get('email'),
                 'phone': memberships_data.get('phone'),
@@ -100,7 +98,7 @@ class User:
                 
                 membership = Membership(
                     club=club,
-                    clubAbbreviation=club_abbreviation,
+                    club_abbreviation=club_abbreviation,
                     auth_details=membership_config.get("auth_details", {}),
                     duration=membership_config.get("duration", {"hours": 4})
                 )

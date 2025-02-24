@@ -1,9 +1,9 @@
 """Timezone utilities for the application."""
 
 from datetime import datetime
-from typing import Optional
-from zoneinfo import ZoneInfo, available_timezones
-import pytz
+from zoneinfo import ZoneInfo
+from zoneinfo import available_timezones
+
 
 class TimezoneManager:
     """Manages timezone operations throughout the application."""
@@ -32,7 +32,7 @@ class TimezoneManager:
             self.local_tz = ZoneInfo(timezone)
             self.utc_tz = ZoneInfo("UTC")
         except Exception as e:
-            raise ValueError(f"Invalid timezone {timezone}: {str(e)}")
+            raise ValueError(f"Invalid timezone {timezone}: {e!s}")
     
     def localize_datetime(self, dt: datetime) -> datetime:
         """Convert naive datetime to local timezone-aware datetime."""

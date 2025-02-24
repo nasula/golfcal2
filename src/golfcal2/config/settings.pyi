@@ -1,21 +1,20 @@
 """Type stubs for configuration settings."""
 
-from typing import Optional, Dict, Any
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from golfcal2.config.types import AppConfig, GlobalConfig, UserConfig, ClubConfig
+from golfcal2.config.types import AppConfig
 
 class ConfigurationManager:
     """Centralized configuration management with caching."""
     
-    _instance: Optional['ConfigurationManager']
+    _instance: ConfigurationManager | None
     _initialized: bool
-    _config: Optional[AppConfig]
-    _config_path: Optional[Path]
-    _timezone_cache: Dict[str, ZoneInfo]
+    _config: AppConfig | None
+    _config_path: Path | None
+    _timezone_cache: dict[str, ZoneInfo]
     
-    def __new__(cls) -> 'ConfigurationManager': ...
+    def __new__(cls) -> ConfigurationManager: ...
     
     def __init__(self) -> None: ...
     
@@ -24,6 +23,6 @@ class ConfigurationManager:
     
     def get_timezone(self, tz_name: str) -> ZoneInfo: ...
     
-    def load_config(self, config_dir: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig: ...
+    def load_config(self, config_dir: str | None = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig: ...
     
     def reload_config(self) -> AppConfig: ... 

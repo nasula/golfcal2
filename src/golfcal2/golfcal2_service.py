@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 
-import time
 import argparse
-from datetime import datetime, timedelta
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from datetime import timedelta
 from zoneinfo import ZoneInfo
-from pathlib import Path
-from typing import Dict, Set, Optional, Tuple
-from dataclasses import dataclass, field
 
 from golfcal2.cli import process_command
-from golfcal2.config.settings import ConfigurationManager
-from golfcal2.utils.logging_utils import get_logger
+from golfcal2.config.error_aggregator import ErrorAggregationConfig
+from golfcal2.config.error_aggregator import init_error_aggregator
 from golfcal2.config.logging import setup_logging
-from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
-from golfcal2.services import WeatherService, CalendarService, ExternalEventService
-from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
-from golfcal2.models.user import User
+from golfcal2.config.settings import ConfigurationManager
+from golfcal2.services import CalendarService
+from golfcal2.services import WeatherService
+from golfcal2.utils.logging_utils import get_logger
+
 
 @dataclass
 class EventState:
@@ -27,11 +27,11 @@ class EventState:
 class ServiceState:
     """Track the state of the calendar service."""
     def __init__(self):
-        self.processed_events: Dict[str, EventState] = {}  # uid -> EventState
-        self.calendar_mtimes: Dict[str, float] = {}  # path -> mtime
-        self.next_event: Optional[datetime] = None
-        self.next_event_uid: Optional[str] = None
-        self._timezone: Optional[ZoneInfo] = None
+        self.processed_events: dict[str, EventState] = {}  # uid -> EventState
+        self.calendar_mtimes: dict[str, float] = {}  # path -> mtime
+        self.next_event: datetime | None = None
+        self.next_event_uid: str | None = None
+        self._timezone: ZoneInfo | None = None
         
     @property
     def timezone(self) -> ZoneInfo:
@@ -91,7 +91,7 @@ def create_args() -> argparse.Namespace:
     parser.add_argument('--log-file', help='Path to log file')
     return parser.parse_args()
 
-def get_next_event_time(calendar_service: CalendarService, service_state: ServiceState) -> Tuple[Optional[datetime], Optional[str]]:
+def get_next_event_time(calendar_service: CalendarService, service_state: ServiceState) -> tuple[datetime | None, str | None]:
     """Get the next event time that needs processing."""
     next_event_time = None
     next_event_uid = None
@@ -121,7 +121,7 @@ def get_next_event_time(calendar_service: CalendarService, service_state: Servic
     
     return next_event_time, next_event_uid
 
-def get_next_processing_time(now: datetime, next_event: Optional[datetime] = None) -> datetime:
+def get_next_processing_time(now: datetime, next_event: datetime | None = None) -> datetime:
     """Calculate the next processing time."""
     if not next_event:
         # If no next event, check every hour
@@ -215,7 +215,7 @@ def main():
                 logger.info(f"Sleeping for {sleep_seconds:.0f} seconds until next processing")
                 time.sleep(sleep_seconds)
             
-    except Exception as e:
+    except Exception:
         logger = get_logger(__name__)
         logger.exception("Fatal error in service")
         return 1

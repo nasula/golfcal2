@@ -4,33 +4,23 @@ Source: Open-Meteo
 API Documentation: https://open-meteo.com/en/docs
 """
 
-import logging
 import os
-import time
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional, Union, Iterator
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
-import openmeteo_requests
-import requests_cache
-import pandas as pd
-from retry_requests import retry
+
 import requests
 
+from golfcal2.exceptions import ErrorCode
+from golfcal2.exceptions import GolfCalError
+from golfcal2.exceptions import handle_errors
 from golfcal2.services.base_service import WeatherService
-from golfcal2.services.weather_types import WeatherData, WeatherCode, WeatherResponse, WeatherError
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.utils.logging_utils import log_execution, EnhancedLoggerMixin, get_logger
-from golfcal2.exceptions import (
-    GolfCalError,
-    APIError,
-    APITimeoutError,
-    APIRateLimitError,
-    APIResponseError,
-    ErrorCode,
-    handle_errors
-)
-from golfcal2.config.error_aggregator import aggregate_error
-from golfcal2.config.types import AppConfig
+from golfcal2.services.weather_types import WeatherCode
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherResponse
+
 
 @handle_errors(GolfCalError, service="weather", operation="open_meteo")
 class OpenMeteoService(WeatherService):
@@ -45,7 +35,7 @@ class OpenMeteoService(WeatherService):
     SIX_HOURLY_RANGE: int = 216  # 9 days
     MAX_FORECAST_RANGE: int = 216  # 9 days
 
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: dict[str, Any]):
         """Initialize service."""
         super().__init__(local_tz, utc_tz, config)
         
@@ -130,11 +120,11 @@ class OpenMeteoService(WeatherService):
         except Exception as e:
             self._handle_errors(
                 ErrorCode.WEATHER_PARSE_ERROR,
-                f"Failed to map weather code {code}: {str(e)}"
+                f"Failed to map weather code {code}: {e!s}"
             )
             return WeatherCode.UNKNOWN
 
-    def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
+    def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> dict[str, Any] | None:
         """Fetch forecasts from Open-Meteo API."""
         if (end_time - start_time).total_seconds() / 3600 > self.MAX_FORECAST_RANGE:
             self._handle_errors(
@@ -144,7 +134,7 @@ class OpenMeteoService(WeatherService):
             return None
 
         try:
-            url = f"https://api.open-meteo.com/v1/forecast"
+            url = "https://api.open-meteo.com/v1/forecast"
             params = {
                 'latitude': latitude,
                 'longitude': longitude,
@@ -159,11 +149,11 @@ class OpenMeteoService(WeatherService):
         except requests.exceptions.RequestException as e:
             self._handle_errors(
                 ErrorCode.WEATHER_REQUEST_ERROR,
-                f"Failed to fetch weather data: {str(e)}"
+                f"Failed to fetch weather data: {e!s}"
             )
             return None
 
-    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+    def _parse_response(self, response_data: dict[str, Any]) -> WeatherResponse | None:
         """Parse response from Open-Meteo API."""
         try:
             if not isinstance(response_data, dict) or 'hourly' not in response_data:
@@ -213,7 +203,7 @@ class OpenMeteoService(WeatherService):
                 except (KeyError, IndexError, ValueError) as e:
                     self._handle_errors(
                         ErrorCode.WEATHER_PARSE_ERROR,
-                        f"Failed to parse weather entry: {str(e)}"
+                        f"Failed to parse weather entry: {e!s}"
                     )
 
             if not weather_data:
@@ -227,7 +217,7 @@ class OpenMeteoService(WeatherService):
         except Exception as e:
             self._handle_errors(
                 ErrorCode.WEATHER_PARSE_ERROR,
-                f"Failed to parse weather data: {str(e)}"
+                f"Failed to parse weather data: {e!s}"
             )
             return None
 
@@ -244,8 +234,8 @@ class OpenMeteoService(WeatherService):
         lon: float,
         start_time: datetime,
         end_time: datetime,
-        club: Optional[str] = None
-    ) -> Optional[WeatherResponse]:
+        club: str | None = None
+    ) -> WeatherResponse | None:
         """Get weather data from Open-Meteo.
         
         Args:

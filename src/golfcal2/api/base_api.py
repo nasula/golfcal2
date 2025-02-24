@@ -2,20 +2,21 @@
 Base API client for golf calendar application.
 """
 
-from datetime import datetime
 import json
 import time
-from typing import Dict, Any, Optional, Tuple, Union, List
+from typing import Any
 from urllib.parse import urljoin
-from dataclasses import dataclass
 
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
+from golfcal2.exceptions import APIError
+from golfcal2.exceptions import APIResponseError
+from golfcal2.exceptions import APITimeoutError
+from golfcal2.exceptions import APIValidationError
 from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.services.auth_service import AuthService
-from golfcal2.exceptions import APIError, APITimeoutError, APIResponseError, APIValidationError
+
 
 class BaseAPI(LoggerMixin):
     """Base class for API clients."""
@@ -31,9 +32,9 @@ class BaseAPI(LoggerMixin):
     def __init__(
         self,
         base_url: str,
-        auth_service: Optional[Any] = None,
-        club_details: Optional[Dict[str, Any]] = None,
-        membership: Optional[Union[Dict[str, Any], Any]] = None
+        auth_service: Any | None = None,
+        club_details: dict[str, Any] | None = None,
+        membership: dict[str, Any] | Any | None = None
     ):
         """Initialize API client.
 
@@ -78,7 +79,7 @@ class BaseAPI(LoggerMixin):
                 if isinstance(membership, dict):
                     membership_obj = Membership(
                         club=membership.get('club', ''),
-                        clubAbbreviation=membership.get('clubAbbreviation', ''),
+                        club_abbreviation=membership.get('club_abbreviation', ''),
                         duration=membership.get('duration', {'hours': 4}),
                         auth_details=membership.get('auth_details', {})
                     )
@@ -143,7 +144,7 @@ class BaseAPI(LoggerMixin):
             
             raise APIResponseError(f"Request failed: {error_msg}")
     
-    def _parse_response(self, response: requests.Response) -> Union[Dict[str, Any], List[Dict[str, Any]], None]:
+    def _parse_response(self, response: requests.Response) -> dict[str, Any] | list[dict[str, Any]] | None:
         """Parse response content.
         
         Args:
@@ -157,7 +158,7 @@ class BaseAPI(LoggerMixin):
         """
         try:
             # Try to parse as JSON first
-            result: Union[Dict[str, Any], List[Dict[str, Any]]] = response.json()
+            result: dict[str, Any] | list[dict[str, Any]] = response.json()
             return result
         except ValueError:
             # If JSON parsing fails, try to handle other formats
@@ -170,7 +171,7 @@ class BaseAPI(LoggerMixin):
             # Handle text that looks like a JSON array
             if content.startswith("[") and content.endswith("]"):
                 try:
-                    array_result: List[Dict[str, Any]] = json.loads(content)
+                    array_result: list[dict[str, Any]] = json.loads(content)
                     return array_result
                 except json.JSONDecodeError:
                     pass
@@ -186,11 +187,11 @@ class BaseAPI(LoggerMixin):
         self,
         method: str,
         endpoint: str,
-        params: Optional[Dict[str, str]] = None,
-        data: Optional[Dict[str, Any]] = None,
-        timeout: Optional[Tuple[int, int]] = None,
+        params: dict[str, str] | None = None,
+        data: dict[str, Any] | None = None,
+        timeout: tuple[int, int] | None = None,
         validate_response: bool = True
-    ) -> Union[Dict[str, Any], List[Dict[str, Any]], None]:
+    ) -> dict[str, Any] | list[dict[str, Any]] | None:
         """
         Make an API request.
         
@@ -239,12 +240,12 @@ class BaseAPI(LoggerMixin):
         except requests.exceptions.Timeout as e:
             elapsed = time.time() - start_time
             self.logger.error(f"BaseAPI: Request timed out after {elapsed:.2f} seconds with timeout settings {timeout}: {e}")
-            raise APITimeoutError(f"Request timed out after {elapsed:.2f} seconds: {str(e)}")
+            raise APITimeoutError(f"Request timed out after {elapsed:.2f} seconds: {e!s}")
             
         except requests.exceptions.RequestException as e:
             elapsed = time.time() - start_time
             self.logger.error(f"BaseAPI: Request failed after {elapsed:.2f} seconds: {e}")
-            raise APIResponseError(f"Request failed after {elapsed:.2f} seconds: {str(e)}")
+            raise APIResponseError(f"Request failed after {elapsed:.2f} seconds: {e!s}")
             
         except (APIResponseError, APIValidationError) as e:
             elapsed = time.time() - start_time
@@ -254,4 +255,4 @@ class BaseAPI(LoggerMixin):
         except Exception as e:
             elapsed = time.time() - start_time
             self.logger.error(f"BaseAPI: Unexpected error after {elapsed:.2f} seconds: {e}")
-            raise APIError(f"Unexpected error after {elapsed:.2f} seconds: {str(e)}") 
+            raise APIError(f"Unexpected error after {elapsed:.2f} seconds: {e!s}") 

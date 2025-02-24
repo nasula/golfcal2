@@ -2,11 +2,12 @@
 
 import logging
 import random
-from typing import Optional, Set, Dict, Any
-from functools import wraps
 import time
 import uuid
 from contextvars import ContextVar
+from functools import wraps
+from typing import Any
+
 
 # Context variable for correlation ID
 correlation_id: ContextVar[str] = ContextVar('correlation_id', default='')
@@ -30,7 +31,7 @@ class SamplingFilter(logging.Filter):
 class SensitiveDataFilter(logging.Filter):
     """Filter to mask sensitive data in logs."""
 
-    def __init__(self, sensitive_fields: Optional[Set[str]] = None):
+    def __init__(self, sensitive_fields: set[str] | None = None):
         """Initialize filter.
         
         Args:

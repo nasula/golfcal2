@@ -2,18 +2,21 @@
 
 import os
 import sqlite3
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
-from math import radians, sin, cos, sqrt, atan2
-import json
+from datetime import datetime
+from datetime import timedelta
+from math import atan2
+from math import cos
+from math import radians
+from math import sin
+from math import sqrt
+from typing import Any
+
 import requests
-import logging
-from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from golfcal2.exceptions import handle_errors
-from golfcal2.services.weather_types import WeatherError, WeatherResponse
+from golfcal2.services.weather_types import WeatherError
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+
 
 class WeatherLocationCache(EnhancedLoggerMixin):
     """Cache for weather service location data."""
@@ -88,7 +91,7 @@ class WeatherLocationCache(EnhancedLoggerMixin):
         c = 2 * atan2(sqrt(a), sqrt(1-a))
         return R * c
     
-    def get_municipality(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
+    def get_municipality(self, lat: float, lon: float) -> dict[str, Any] | None:
         """Get nearest municipality for coordinates."""
         with handle_errors(WeatherError, "weather_cache", "get municipality"):
             with sqlite3.connect(self.db_path) as conn:
@@ -176,7 +179,7 @@ class WeatherLocationCache(EnhancedLoggerMixin):
                 
                 conn.commit()
     
-    def get_ipma_location(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
+    def get_ipma_location(self, lat: float, lon: float) -> dict[str, Any] | None:
         """Get cached IPMA location for coordinates."""
         try:
             with self.get_connection() as conn:
@@ -202,7 +205,7 @@ class WeatherLocationCache(EnhancedLoggerMixin):
             self.error(f"Failed to get IPMA location from cache: {e}")
             return None
             
-    def get_aemet_municipality(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
+    def get_aemet_municipality(self, lat: float, lon: float) -> dict[str, Any] | None:
         """Get nearest AEMET municipality for coordinates."""
         with handle_errors(WeatherError, "weather_cache", "get aemet municipality"):
             with sqlite3.connect(self.db_path) as conn:
@@ -374,5 +377,5 @@ class WeatherLocationCache(EnhancedLoggerMixin):
                     return
                 
         except Exception as e:
-            self.error(f"Failed to load municipalities: {str(e)}", exc_info=True)
+            self.error(f"Failed to load municipalities: {e!s}", exc_info=True)
             raise 

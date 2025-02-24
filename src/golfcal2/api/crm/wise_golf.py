@@ -1,10 +1,13 @@
-from typing import Dict, List, Any
+from typing import Any
+
 import requests
-from datetime import datetime
 
 from golfcal2.api.crm.base import BaseCRM
-from golfcal2.api.models.reservation import Reservation, Player, CourseInfo
+from golfcal2.api.models.reservation import CourseInfo
+from golfcal2.api.models.reservation import Player
+from golfcal2.api.models.reservation import Reservation
 from golfcal2.models.mixins import APIAuthError
+
 
 class WiseGolfCRM(BaseCRM):
     """WiseGolf CRM implementation"""
@@ -33,12 +36,12 @@ class WiseGolfCRM(BaseCRM):
             'Authorization': f'Bearer {token}'
         })
     
-    def get_reservations(self) -> List[Reservation]:
+    def get_reservations(self) -> list[Reservation]:
         """Get list of reservations."""
         raw_reservations = self._fetch_reservations()
         return [self.parse_reservation(res) for res in raw_reservations]
     
-    def get_players(self, reservation: Reservation) -> List[Dict[str, Any]]:
+    def get_players(self, reservation: Reservation) -> list[dict[str, Any]]:
         """Get players for a reservation."""
         response = self._make_request(
             'GET', 
@@ -46,12 +49,12 @@ class WiseGolfCRM(BaseCRM):
         )
         return response.get('players', []) if response else []
     
-    def _fetch_reservations(self) -> List[Dict[str, Any]]:
+    def _fetch_reservations(self) -> list[dict[str, Any]]:
         """Fetch raw reservations from API."""
         response = self._make_request('GET', '/reservations/my')
         return response.get('reservations', []) if response else []
     
-    def parse_reservation(self, raw_reservation: Dict[str, Any]) -> Reservation:
+    def parse_reservation(self, raw_reservation: dict[str, Any]) -> Reservation:
         """Parse raw reservation data into Reservation model."""
         return Reservation(
             datetime_start=self._parse_datetime(
@@ -62,7 +65,7 @@ class WiseGolfCRM(BaseCRM):
             course_info=self._parse_course_info(raw_reservation)
         )
     
-    def _parse_players(self, raw_reservation: Dict[str, Any]) -> List[Player]:
+    def _parse_players(self, raw_reservation: dict[str, Any]) -> list[Player]:
         """Parse player data from reservation."""
         return [
             Player(
@@ -74,7 +77,7 @@ class WiseGolfCRM(BaseCRM):
             for player in raw_reservation.get('players', [])
         ]
     
-    def _parse_course_info(self, raw_reservation: Dict[str, Any]) -> CourseInfo:
+    def _parse_course_info(self, raw_reservation: dict[str, Any]) -> CourseInfo:
         """Parse course info from reservation."""
         course = raw_reservation.get('course', {})
         return CourseInfo(

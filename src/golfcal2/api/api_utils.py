@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import time
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, Tuple, List, Union
-from typing_extensions import TypeGuard
-import requests
 from enum import Enum
+from typing import Any
+from typing import TypeGuard
+
+import requests
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +28,8 @@ class APIError(Exception):
     """Base exception for API-related errors."""
     message: str
     code: APIErrorCode
-    response: Optional[requests.Response] = None
-    details: Optional[Dict[str, Any]] = None
+    response: requests.Response | None = None
+    details: dict[str, Any] | None = None
 
 class APITimeoutError(APIError):
     """Raised when an API request times out."""
@@ -45,17 +47,17 @@ class APIConnectionError(APIError):
 class APIResponse:
     """Structured response from API requests."""
     success: bool
-    data: Optional[Dict[str, Any]] = None
-    errors: Optional[List[str]] = None
-    raw_response: Optional[requests.Response] = None
+    data: dict[str, Any] | None = None
+    errors: list[str] | None = None
+    raw_response: requests.Response | None = None
 
 def _single_request(
     method: str,
     url: str,
-    headers: Optional[Dict[str, str]] = None,
-    data: Optional[Dict[str, Any]] = None,
-    params: Optional[Dict[str, str]] = None,
-    timeout: Tuple[int, int] = (7, 20),
+    headers: dict[str, str] | None = None,
+    data: dict[str, Any] | None = None,
+    params: dict[str, str] | None = None,
+    timeout: tuple[int, int] = (7, 20),
     verify_ssl: bool = True
 ) -> APIResponse:
     """Make a single API request without retries."""
@@ -120,20 +122,20 @@ def _single_request(
             code=APIErrorCode.CONNECTION_ERROR
         )
     except Exception as e:
-        if isinstance(e, (APIError, APIAuthenticationError, APITimeoutError, APIConnectionError)):
+        if isinstance(e, APIError | APIAuthenticationError | APITimeoutError | APIConnectionError):
             raise
         raise APIError(
             message=f"Unexpected error: {e}",
             code=APIErrorCode.INVALID_RESPONSE
-        )
+        ) from e
 
 def make_api_request(
     method: str,
     url: str,
-    headers: Optional[Dict[str, str]] = None,
-    data: Optional[Dict[str, Any]] = None,
-    params: Optional[Dict[str, str]] = None,
-    timeout: Tuple[int, int] = (7, 20),
+    headers: dict[str, str] | None = None,
+    data: dict[str, Any] | None = None,
+    params: dict[str, str] | None = None,
+    timeout: tuple[int, int] = (7, 20),
     retry_count: int = 3,
     retry_delay: int = 5,
     verify_ssl: bool = True
@@ -179,7 +181,7 @@ def make_api_request(
         except (APITimeoutError, APIConnectionError) as e:
             last_error = e
             if attempt < retry_count - 1:
-                logger.warning(f"Request failed (attempt {attempt + 1}/{retry_count}): {str(e)}")
+                logger.warning(f"Request failed (attempt {attempt + 1}/{retry_count}): {e!s}")
                 time.sleep(retry_delay * (2 ** attempt))
             else:
                 raise
@@ -190,24 +192,24 @@ def make_api_request(
     assert last_error is not None
     raise last_error
 
-def is_dict_response(data: Any) -> TypeGuard[Dict[str, Any]]:
+def is_dict_response(data: Any) -> TypeGuard[dict[str, Any]]:
     """Type guard to verify if data is a dictionary response."""
     return isinstance(data, dict)
 
-def is_list_response(data: Any) -> TypeGuard[List[Dict[str, Any]]]:
+def is_list_response(data: Any) -> TypeGuard[list[dict[str, Any]]]:
     """Type guard to verify if data is a list of dictionaries response."""
     if not isinstance(data, list):
         return False
     return all(isinstance(x, dict) for x in data)
 
-def _validate_wisegolf_response(data: Dict[str, Any]) -> bool:
+def _validate_wisegolf_response(data: dict[str, Any]) -> bool:
     """Validate WiseGolf API response."""
     if 'success' in data and not data['success']:
         logger.error(f"WiseGolf API error: {data.get('errors', ['Unknown error'])}")
         return False
     return True
 
-def _validate_nexgolf_response(data: List[Dict[str, Any]], required_keys: Optional[set] = None) -> bool:
+def _validate_nexgolf_response(data: list[dict[str, Any]], required_keys: set | None = None) -> bool:
     """Validate NexGolf API response."""
     if required_keys is None:
         return True
@@ -219,7 +221,7 @@ def _validate_nexgolf_response(data: List[Dict[str, Any]], required_keys: Option
             return False
     return True
 
-def _validate_dict_response(data: Dict[str, Any], required_keys: set) -> bool:
+def _validate_dict_response(data: dict[str, Any], required_keys: set) -> bool:
     """Validate dictionary response against required keys."""
     missing = required_keys - set(data.keys())
     if missing:
@@ -227,7 +229,7 @@ def _validate_dict_response(data: Dict[str, Any], required_keys: set) -> bool:
         return False
     return True
 
-def _validate_list_response(data: List[Dict[str, Any]], required_keys: set) -> bool:
+def _validate_list_response(data: list[dict[str, Any]], required_keys: set) -> bool:
     """Validate list response against required keys."""
     for item in data:
         missing = required_keys - set(item.keys())
@@ -237,9 +239,9 @@ def _validate_list_response(data: List[Dict[str, Any]], required_keys: set) -> b
     return True
 
 def validate_api_response(
-    data: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]],
-    required_keys: Optional[set] = None,
-    response_type: Optional[str] = None
+    data: dict[str, Any] | list[dict[str, Any]] | None,
+    required_keys: set | None = None,
+    response_type: str | None = None
 ) -> bool:
     """
     Validate API response data structure.
@@ -284,7 +286,7 @@ def validate_api_response(
         return False
 
     except Exception as e:
-        logger.error(f"Error validating API response: {str(e)}")
+        logger.error(f"Error validating API response: {e!s}")
         return False
 
 def get_error_details(response: requests.Response) -> str:

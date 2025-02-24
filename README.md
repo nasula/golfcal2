@@ -4,7 +4,7 @@ A Python application for managing golf calendar and tee time reservations.
 
 ## Requirements
 
-- Python 3.11 or higher
+- Python 3.12 or higher
 - Git
 
 ## Development Setup

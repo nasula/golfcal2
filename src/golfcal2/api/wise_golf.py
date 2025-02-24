@@ -2,27 +2,24 @@
 WiseGolf API client for golf calendar application.
 """
 
-from typing import Dict, Any, Optional, List, Union, Tuple, TYPE_CHECKING
-from datetime import datetime, timedelta
+from abc import abstractmethod
+from typing import TYPE_CHECKING
+from typing import Any
+from typing import Optional
 from urllib.parse import urljoin
-import time
+
 import requests
-from abc import ABC, abstractmethod
 
 from golfcal2.api.base_api import BaseAPI
-from golfcal2.models.mixins import (
-    APIError,
-    APIResponseError,
-    APITimeoutError,
-    APIAuthError
-)
+from golfcal2.models.mixins import APIError
+from golfcal2.models.mixins import APIResponseError
 from golfcal2.services.auth_service import AuthService
-from golfcal2.utils.api_handler import APIResponseValidator
+
 
 if TYPE_CHECKING:
     from golfcal2.models.golf_club import GolfClub
 
-__all__ = ['WiseGolfAPI', 'WiseGolf0API']
+__all__ = ['WiseGolf0API', 'WiseGolfAPI']
 
 class WiseGolfAPIError(APIError):
     """WiseGolf API error."""
@@ -39,7 +36,7 @@ class WiseGolfResponseError(WiseGolfAPIError):
 class BaseWiseGolfAPI(BaseAPI):
     """Base class for WiseGolf API implementations."""
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: dict[str, Any], membership: dict[str, Any] | Any, club: Optional['GolfClub'] = None):
         """Initialize base WiseGolf API client."""
         self.auth_service = auth_service  # Set auth_service before super().__init__
         self.club = club
@@ -74,17 +71,17 @@ class BaseWiseGolfAPI(BaseAPI):
                     
         except Exception as e:
             self.logger.error(f"Failed to setup auth headers: {e}")
-            raise WiseGolfAuthError(f"Failed to setup auth headers: {str(e)}")
+            raise WiseGolfAuthError(f"Failed to setup auth headers: {e!s}")
     
     def _make_request(
         self,
         method: str,
         endpoint: str,
-        params: Optional[Dict[str, str]] = None,
-        data: Optional[Dict[str, Any]] = None,
-        timeout: Optional[Tuple[int, int]] = None,
+        params: dict[str, str] | None = None,
+        data: dict[str, Any] | None = None,
+        timeout: tuple[int, int] | None = None,
         validate_response: bool = True
-    ) -> Union[Dict[str, Any], List[Dict[str, Any]], None]:
+    ) -> dict[str, Any] | list[dict[str, Any]] | None:
         """Make request to WiseGolf API with proper error handling.
         
         Args:
@@ -116,22 +113,22 @@ class BaseWiseGolfAPI(BaseAPI):
                 return {"data": result}
             return result
         except APIError as e:
-            raise WiseGolfAPIError(f"WiseGolf API request failed: {str(e)}")
+            raise WiseGolfAPIError(f"WiseGolf API request failed: {e!s}")
             
     @abstractmethod
-    def _fetch_players(self, params: Dict[str, str]) -> Dict[str, Any]:
+    def _fetch_players(self, params: dict[str, str]) -> dict[str, Any]:
         """Fetch players for a reservation."""
         pass
 
 class WiseGolfAPI(BaseWiseGolfAPI):
     """WiseGolf API client implementation."""
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: dict[str, Any], membership: dict[str, Any] | Any, club: Optional['GolfClub'] = None):
         """Initialize WiseGolf API client."""
         super().__init__(base_url, auth_service, club_details, membership, club)
         self.logger.debug(f"WiseGolfAPI initialized with headers: {dict(self.session.headers)}")
     
-    def get_reservations(self) -> List[Dict[str, Any]]:
+    def get_reservations(self) -> list[dict[str, Any]]:
         """Get user's reservations."""
         try:
             params = {
@@ -166,11 +163,11 @@ class WiseGolfAPI(BaseWiseGolfAPI):
         except APIResponseError as e:
             if "401" in str(e) or "403" in str(e):
                 raise WiseGolfAuthError("Invalid or expired authentication")
-            raise WiseGolfResponseError(f"Failed to fetch reservations: {str(e)}")
+            raise WiseGolfResponseError(f"Failed to fetch reservations: {e!s}")
         except Exception as e:
-            raise WiseGolfResponseError(f"Unexpected error fetching reservations: {str(e)}")
+            raise WiseGolfResponseError(f"Unexpected error fetching reservations: {e!s}")
     
-    def _fetch_players(self, params: Dict[str, str]) -> Dict[str, Any]:
+    def _fetch_players(self, params: dict[str, str]) -> dict[str, Any]:
         """Fetch players from WiseGolf API."""
         rest_url = self.club_details.get('restUrl')
         if not rest_url:
@@ -182,7 +179,7 @@ class WiseGolfAPI(BaseWiseGolfAPI):
 class WiseGolf0API(BaseWiseGolfAPI):
     """WiseGolf0 API client implementation."""
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: dict[str, Any], membership: dict[str, Any] | Any, club: Optional['GolfClub'] = None):
         """Initialize WiseGolf0 API client."""
         # Ensure auth_details has the correct type and cookie_name
         if isinstance(membership, dict):
@@ -194,7 +191,7 @@ class WiseGolf0API(BaseWiseGolfAPI):
             auth_details = getattr(membership, 'auth_details', {})
             auth_details['type'] = 'wisegolf0'
             auth_details['cookie_name'] = club_details.get('cookie_name', 'wisenetwork_session')
-            setattr(membership, 'auth_details', auth_details)
+            membership.auth_details = auth_details
             
         super().__init__(base_url, auth_service, club_details, membership, club)
         
@@ -238,9 +235,9 @@ class WiseGolf0API(BaseWiseGolfAPI):
                 
         except Exception as e:
             self.logger.error(f"Failed to set up auth headers: {e}")
-            raise WiseGolfAuthError(f"Failed to setup auth headers: {str(e)}")
+            raise WiseGolfAuthError(f"Failed to setup auth headers: {e!s}")
     
-    def get_reservations(self) -> List[Dict[str, Any]]:
+    def get_reservations(self) -> list[dict[str, Any]]:
         """Get user's reservations."""
         try:
             params = {
@@ -272,11 +269,11 @@ class WiseGolf0API(BaseWiseGolfAPI):
             return rows
             
         except APIResponseError as e:
-            raise WiseGolfResponseError(f"Request failed: {str(e)}")
+            raise WiseGolfResponseError(f"Request failed: {e!s}")
         except Exception as e:
-            raise WiseGolfResponseError(f"Unexpected error: {str(e)}")
+            raise WiseGolfResponseError(f"Unexpected error: {e!s}")
     
-    def _fetch_players(self, params: Dict[str, str]) -> Dict[str, Any]:
+    def _fetch_players(self, params: dict[str, str]) -> dict[str, Any]:
         """Fetch players from WiseGolf0 API."""
         if not self.rest_url:
             self.logger.warning("No restUrl available for fetching players")
@@ -309,7 +306,7 @@ class WiseGolf0API(BaseWiseGolfAPI):
                 self.logger.debug(f"Got player data response: {data}")
             except ValueError as e:
                 self.logger.error(f"Invalid JSON in player response: {response.text}")
-                raise WiseGolfResponseError(f"Invalid JSON response: {str(e)}")
+                raise WiseGolfResponseError(f"Invalid JSON response: {e!s}")
             
             # Validate response structure
             if not isinstance(data, dict):
@@ -322,13 +319,13 @@ class WiseGolf0API(BaseWiseGolfAPI):
             return data
             
         except requests.RequestException as e:
-            self.logger.error(f"Request failed: {str(e)}")
+            self.logger.error(f"Request failed: {e!s}")
             return {"reservationsGolfPlayers": []}
         except Exception as e:
-            self.logger.error(f"Unexpected error in _fetch_players: {str(e)}", exc_info=True)
+            self.logger.error(f"Unexpected error in _fetch_players: {e!s}", exc_info=True)
             return {"reservationsGolfPlayers": []}
 
-    def _extract_data_from_response(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_data_from_response(self, response: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract reservation data from API response.
         
         Args:
@@ -380,4 +377,4 @@ class WiseGolf0API(BaseWiseGolfAPI):
             return reservations
             
         except Exception as e:
-            raise WiseGolfResponseError(f"Failed to extract data from response: {str(e)}")
+            raise WiseGolfResponseError(f"Failed to extract data from response: {e!s}")

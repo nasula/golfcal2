@@ -1,5 +1,6 @@
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
+from typing import Any
+
 
 @dataclass
 class Player:
@@ -9,7 +10,7 @@ class Player:
     handicap: float = 0.0  # Default to 0.0 if not provided
 
     @classmethod
-    def from_wisegolf(cls, data: Dict[str, Any]) -> "Player":
+    def from_wisegolf(cls, data: dict[str, Any]) -> "Player":
         """Create Player instance from WiseGolf data."""
         # Get name components
         first_name = data.get("firstName", "")
@@ -21,8 +22,8 @@ class Player:
         else:
             name = f"{first_name} {family_name}".strip()
         
-        # Get club abbreviation or name
-        club = data.get("clubAbbreviation", data.get("clubName", "Unknown"))
+        # Get club name from data
+        club = data.get("club_abbreviation", data.get("clubName", "Unknown"))
         
         # Get handicap with fallback to 0
         handicap = float(data.get("handicapActive", 0))
@@ -34,7 +35,7 @@ class Player:
         )
 
     @classmethod
-    def from_nexgolf(cls, data: Dict[str, Any]) -> "Player":
+    def from_nexgolf(cls, data: dict[str, Any]) -> "Player":
         """Create Player instance from NexGolf data."""
         # Get name components directly from data
         first_name = data.get("firstName", "")
@@ -60,7 +61,7 @@ class Player:
         )
 
     @classmethod
-    def from_teetime(cls, data: Dict[str, Any], club_info: Optional[Dict[str, Any]] = None) -> "Player":
+    def from_teetime(cls, data: dict[str, Any], club_info: dict[str, Any] | None = None) -> "Player":
         """Create Player instance from TeeTime data.
         
         Args:

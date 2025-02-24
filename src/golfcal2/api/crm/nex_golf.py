@@ -1,10 +1,14 @@
-from typing import Dict, List, Any, cast
-import requests
 from datetime import datetime
+from typing import Any
+
+import requests
 
 from golfcal2.api.crm.base import BaseCRM
-from golfcal2.api.models.reservation import Reservation, Player, CourseInfo
+from golfcal2.api.models.reservation import CourseInfo
+from golfcal2.api.models.reservation import Player
+from golfcal2.api.models.reservation import Reservation
 from golfcal2.models.mixins import APIAuthError
+
 
 class NexGolfCRM(BaseCRM):
     """NexGolf CRM implementation"""
@@ -33,7 +37,7 @@ class NexGolfCRM(BaseCRM):
         # Update session with cookie
         self.session.cookies.set('JSESSIONID', session_cookie)
     
-    def get_reservations(self) -> List[Reservation]:
+    def get_reservations(self) -> list[Reservation]:
         """Get list of reservations.
         
         Returns:
@@ -42,7 +46,7 @@ class NexGolfCRM(BaseCRM):
         raw_reservations = self._fetch_reservations()
         return [self.parse_reservation(res) for res in raw_reservations]
     
-    def get_players(self, reservation: Reservation) -> List[Dict[str, Any]]:
+    def get_players(self, reservation: Reservation) -> list[dict[str, Any]]:
         """Get players for a reservation.
         
         Args:
@@ -68,7 +72,7 @@ class NexGolfCRM(BaseCRM):
             
         return players
     
-    def _fetch_reservations(self) -> List[Dict[str, Any]]:
+    def _fetch_reservations(self) -> list[dict[str, Any]]:
         """Fetch raw reservations from API.
         
         Returns:
@@ -93,7 +97,7 @@ class NexGolfCRM(BaseCRM):
             
         return reservations
     
-    def parse_reservation(self, raw_reservation: Dict[str, Any]) -> Reservation:
+    def parse_reservation(self, raw_reservation: dict[str, Any]) -> Reservation:
         """Convert raw NexGolf reservation to standard format.
         
         Args:
@@ -113,7 +117,7 @@ class NexGolfCRM(BaseCRM):
             course_info=self._parse_course_details(raw_reservation)
         )
     
-    def _parse_players(self, raw_reservation: Dict[str, Any]) -> List[Player]:
+    def _parse_players(self, raw_reservation: dict[str, Any]) -> list[Player]:
         """Parse player information from raw reservation.
         
         Args:
@@ -135,7 +139,7 @@ class NexGolfCRM(BaseCRM):
             ))
         return players
     
-    def _parse_course_details(self, raw_reservation: Dict[str, Any]) -> CourseInfo:
+    def _parse_course_details(self, raw_reservation: dict[str, Any]) -> CourseInfo:
         """Parse course information from raw reservation.
         
         Args:

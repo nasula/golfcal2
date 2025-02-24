@@ -1,20 +1,26 @@
 """Base class for weather services."""
 
-import os
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
 
-from golfcal2.utils.logging_utils import EnhancedLoggerMixin
-from golfcal2.services.weather_types import (
-    WeatherData, WeatherResponse, WeatherError, WeatherServiceUnavailable,
-    WeatherServiceInvalidResponse, WeatherServiceTimeout, WeatherServiceRateLimited,
-    WeatherAuthError, WeatherValidationError, WeatherServiceError, WeatherLocationError
-)
-from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.error_codes import ErrorCode
+from golfcal2.services.weather_database import WeatherResponseCache
+from golfcal2.services.weather_types import WeatherAuthError
+from golfcal2.services.weather_types import WeatherError
+from golfcal2.services.weather_types import WeatherLocationError
+from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherServiceError
+from golfcal2.services.weather_types import WeatherServiceInvalidResponse
+from golfcal2.services.weather_types import WeatherServiceRateLimited
+from golfcal2.services.weather_types import WeatherServiceTimeout
+from golfcal2.services.weather_types import WeatherServiceUnavailable
+from golfcal2.services.weather_types import WeatherValidationError
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+
 
 class WeatherService(EnhancedLoggerMixin):
     """Base class for weather services."""
@@ -23,7 +29,7 @@ class WeatherService(EnhancedLoggerMixin):
     HOURLY_RANGE: int = 48  # Default hourly forecast range in hours
     SIX_HOURLY_RANGE: int = 240  # Default 6-hourly forecast range in hours
     
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: dict[str, Any]):
         """Initialize service."""
         super().__init__()
         self.local_tz = local_tz
@@ -38,7 +44,7 @@ class WeatherService(EnhancedLoggerMixin):
         })
         
         # Initialize caches as None - they will be set by the manager
-        self.cache: Optional[WeatherResponseCache] = None
+        self.cache: WeatherResponseCache | None = None
     
     def _handle_errors(self, error_code: ErrorCode, message: str) -> None:
         """Handle errors by logging and raising appropriate exceptions.
@@ -83,8 +89,8 @@ class WeatherService(EnhancedLoggerMixin):
         lon: float,
         start_time: datetime,
         end_time: datetime,
-        club: Optional[str] = None
-    ) -> Optional[WeatherResponse]:
+        club: str | None = None
+    ) -> WeatherResponse | None:
         """Get weather data for a location and time range.
         
         Args:
@@ -156,11 +162,11 @@ class WeatherService(EnhancedLoggerMixin):
         except Exception as e:
             self.error("Error in get_weather", exc_info=e)
             raise WeatherServiceError(
-                f"Unexpected error in {self.service_type} weather service: {str(e)}",
+                f"Unexpected error in {self.service_type} weather service: {e!s}",
                 self.service_type
             )
             
-    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
+    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> dict[str, Any] | None:
         """Fetch forecasts from the weather service.
         
         Args:
@@ -177,7 +183,7 @@ class WeatherService(EnhancedLoggerMixin):
         """
         raise NotImplementedError("Subclasses must implement _fetch_forecasts")
         
-    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+    def _parse_response(self, response_data: dict[str, Any]) -> WeatherResponse | None:
         """Parse the response data into a WeatherResponse object.
         
         Args:

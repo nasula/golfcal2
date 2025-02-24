@@ -2,18 +2,21 @@
 Service for handling external golf events.
 """
 
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Set
-from zoneinfo import ZoneInfo
-import yaml
 import os
+from datetime import datetime
+from datetime import timedelta
 from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
 
+import yaml
 from icalendar import Event
-from golfcal2.utils.logging_utils import EnhancedLoggerMixin
-from golfcal2.services.weather_service import WeatherService
-from golfcal2.services.calendar.builders import ExternalEventBuilder
+
 from golfcal2.config.types import AppConfig
+from golfcal2.services.calendar.builders import ExternalEventBuilder
+from golfcal2.services.weather_service import WeatherService
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+
 
 class ExternalEventService(EnhancedLoggerMixin):
     """Service for handling external golf events."""
@@ -30,7 +33,7 @@ class ExternalEventService(EnhancedLoggerMixin):
         # Configure logger
         self.set_log_context(service="external_events")
         
-        self.seen_uids: Set[str] = set()  # Track seen UIDs for deduplication
+        self.seen_uids: set[str] = set()  # Track seen UIDs for deduplication
         # Ensure we're using ZoneInfo for default timezone
         self.default_timezone = ZoneInfo('Europe/Helsinki')  # Default timezone if not specified
         
@@ -38,10 +41,10 @@ class ExternalEventService(EnhancedLoggerMixin):
         self.config_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'config'
         
         # Cache for processed events
-        self._processed_events: List[Event] = []
-        self._last_process_time: Optional[datetime] = None
+        self._processed_events: list[Event] = []
+        self._last_process_time: datetime | None = None
     
-    def get_events(self) -> List[Event]:
+    def get_events(self) -> list[Event]:
         """Get the list of processed events.
         
         Returns:
@@ -49,7 +52,7 @@ class ExternalEventService(EnhancedLoggerMixin):
         """
         return self._processed_events
     
-    def load_events(self, dev_mode: bool = False) -> List[Dict[str, Any]]:
+    def load_events(self, dev_mode: bool = False) -> list[dict[str, Any]]:
         """Load external events from YAML file."""
         try:
             # Load regular events
@@ -57,7 +60,7 @@ class ExternalEventService(EnhancedLoggerMixin):
             events_file = self.config_dir / 'external_events.yaml'
             
             if events_file.exists():
-                with open(events_file, 'r', encoding='utf-8') as file:
+                with open(events_file, encoding='utf-8') as file:
                     self.logger.info(f"Loading external events from {events_file}")
                     data = yaml.safe_load(file)
                     events.extend(data.get('events', []))
@@ -66,7 +69,7 @@ class ExternalEventService(EnhancedLoggerMixin):
             if dev_mode:
                 test_file = self.config_dir / 'test_events.yaml'
                 if test_file.exists():
-                    with open(test_file, 'r', encoding='utf-8') as file:
+                    with open(test_file, encoding='utf-8') as file:
                         self.logger.info(f"Loading test events from {test_file}")
                         data = yaml.safe_load(file)
                         events.extend(data or [])
@@ -81,7 +84,7 @@ class ExternalEventService(EnhancedLoggerMixin):
             self.logger.error(f"Error parsing external events file: {e}")
             return []
 
-    def process_events(self, user_name: str, dev_mode: bool = False) -> List[Event]:
+    def process_events(self, user_name: str, dev_mode: bool = False) -> list[Event]:
         """Process external events for a user."""
         try:
             events = []
@@ -103,14 +106,14 @@ class ExternalEventService(EnhancedLoggerMixin):
             return events
             
         except Exception as e:
-            self.logger.error(f"Failed to process external events: {str(e)}")
+            self.logger.error(f"Failed to process external events: {e!s}")
             return []
 
     def _process_recurring_event(
         self,
-        event_data: Dict[str, Any],
+        event_data: dict[str, Any],
         person_name: str
-    ) -> List[Event]:
+    ) -> list[Event]:
         """Process a recurring event and return all instances."""
         events = []
         # Get event timezone
@@ -152,9 +155,9 @@ class ExternalEventService(EnhancedLoggerMixin):
 
     def _create_event(
         self,
-        event_data: Dict[str, Any],
+        event_data: dict[str, Any],
         person_name: str
-    ) -> Optional[Event]:
+    ) -> Event | None:
         """Create an event from external event data."""
         try:
             # Parse start and end times
@@ -174,7 +177,7 @@ class ExternalEventService(EnhancedLoggerMixin):
             return event
             
         except Exception as e:
-            self.logger.error(f"Failed to create external event: {str(e)}")
+            self.logger.error(f"Failed to create external event: {e!s}")
             return None
 
     def _parse_datetime(self, datetime_str: str) -> datetime:

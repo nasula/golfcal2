@@ -1,9 +1,13 @@
-from typing import Dict, List, Any, cast
+from typing import Any
+
 import requests
 
 from golfcal2.api.crm.base import BaseCRM
-from golfcal2.api.models.reservation import Reservation, Player, CourseInfo
-from golfcal2.models.mixins import APIAuthError, APIResponseError, APITimeoutError
+from golfcal2.api.models.reservation import CourseInfo
+from golfcal2.api.models.reservation import Player
+from golfcal2.api.models.reservation import Reservation
+from golfcal2.models.mixins import APIAuthError
+
 
 class TeeTimeAPI(BaseCRM):
     """Implementation of the TeeTime API."""
@@ -23,7 +27,7 @@ class TeeTimeAPI(BaseCRM):
         if not test_response:
             raise APIAuthError("Invalid API credentials")
     
-    def get_reservations(self) -> List[Reservation]:
+    def get_reservations(self) -> list[Reservation]:
         """Get list of reservations from TeeTime API.
         
         Returns:
@@ -32,7 +36,7 @@ class TeeTimeAPI(BaseCRM):
         raw_reservations = self._fetch_reservations()
         return [self.parse_reservation(res) for res in raw_reservations]
     
-    def get_players(self, reservation: Reservation) -> List[Dict[str, Any]]:
+    def get_players(self, reservation: Reservation) -> list[dict[str, Any]]:
         """Get players for a reservation.
         
         Args:
@@ -49,7 +53,7 @@ class TeeTimeAPI(BaseCRM):
             'club_abbreviation': player.club_abbreviation
         } for player in reservation.players]
     
-    def _fetch_reservations(self) -> List[Dict[str, Any]]:
+    def _fetch_reservations(self) -> list[dict[str, Any]]:
         """Fetch raw reservation data from TeeTime API.
         
         Returns:
@@ -70,7 +74,7 @@ class TeeTimeAPI(BaseCRM):
             
         return data
     
-    def parse_reservation(self, raw_reservation: Dict[str, Any]) -> Reservation:
+    def parse_reservation(self, raw_reservation: dict[str, Any]) -> Reservation:
         """Convert raw TeeTime reservation to standard format.
         
         Args:
@@ -88,7 +92,7 @@ class TeeTimeAPI(BaseCRM):
             course_info=self._parse_course_details(raw_reservation)
         )
     
-    def _parse_players(self, raw_reservation: Dict[str, Any]) -> List[Player]:
+    def _parse_players(self, raw_reservation: dict[str, Any]) -> list[Player]:
         """Parse player information from raw reservation.
         
         Args:
@@ -107,7 +111,7 @@ class TeeTimeAPI(BaseCRM):
             for player in raw_reservation.get('playerList', [])
         ]
     
-    def _parse_course_details(self, raw_reservation: Dict[str, Any]) -> CourseInfo:
+    def _parse_course_details(self, raw_reservation: dict[str, Any]) -> CourseInfo:
         """Parse course information from raw reservation.
         
         Args:

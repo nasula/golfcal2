@@ -2,13 +2,20 @@
 MET weather service strategy implementation.
 """
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
+
 import requests
 
+from golfcal2.exceptions import APIError
+from golfcal2.exceptions import ErrorCode
 from golfcal2.services.weather_service import WeatherStrategy
-from golfcal2.services.weather_types import WeatherResponse, WeatherData, WeatherCode
-from golfcal2.exceptions import APIError, ErrorCode
+from golfcal2.services.weather_types import WeatherCode
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherResponse
+
 
 class MetWeatherStrategy(WeatherStrategy):
     """Weather strategy for Norwegian Meteorological Institute (MET)."""
@@ -30,7 +37,7 @@ class MetWeatherStrategy(WeatherStrategy):
         else:
             return 6
     
-    def get_weather(self) -> Optional[WeatherResponse]:
+    def get_weather(self) -> WeatherResponse | None:
         """Get weather data from MET."""
         try:
             # Check if request is beyond maximum forecast range
@@ -62,7 +69,7 @@ class MetWeatherStrategy(WeatherStrategy):
         # MET forecasts are updated every hour
         return datetime.now(self.context.utc_tz) + timedelta(hours=1)
     
-    def _fetch_forecasts(self) -> Optional[Dict[str, Any]]:
+    def _fetch_forecasts(self) -> dict[str, Any] | None:
         """Fetch forecast data from MET API."""
         try:
             # Build API URL
@@ -101,14 +108,14 @@ class MetWeatherStrategy(WeatherStrategy):
             self.error(f"Unexpected error: {e}")
             return None
     
-    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+    def _parse_response(self, response_data: dict[str, Any]) -> WeatherResponse | None:
         """Parse MET API response into WeatherResponse."""
         try:
             if 'properties' not in response_data:
                 return None
             
             timeseries = response_data['properties']['timeseries']
-            weather_data: List[WeatherData] = []
+            weather_data: list[WeatherData] = []
             
             for entry in timeseries:
                 try:
@@ -116,10 +123,10 @@ class MetWeatherStrategy(WeatherStrategy):
                     time_str = entry['time']
                     if time_str.endswith('Z'):
                         time_str = time_str[:-1]  # Remove Z
-                    time = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
+                    time = datetime.fromisoformat(time_str).replace(tzinfo=UTC)
                     
                     # Calculate hours ahead for block size (ensure UTC)
-                    now_utc = datetime.now(timezone.utc)
+                    now_utc = datetime.now(UTC)
                     hours_ahead = (time - now_utc).total_seconds() / 3600
                     block_duration = timedelta(hours=self.get_block_size(hours_ahead))
                     
@@ -157,7 +164,7 @@ class MetWeatherStrategy(WeatherStrategy):
                     continue
             
             # Get elaboration time in UTC
-            elaboration_time = datetime.now(timezone.utc)
+            elaboration_time = datetime.now(UTC)
             
             return WeatherResponse(
                 data=weather_data,

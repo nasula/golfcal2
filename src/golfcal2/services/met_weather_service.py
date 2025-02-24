@@ -2,22 +2,26 @@
 Weather service implementation for Norwegian Meteorological Institute (MET).
 """
 
-import logging
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Any, Union, cast, Iterator
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
 
 from golfcal2.exceptions import ErrorCode
 from golfcal2.services.base_service import WeatherService
-from golfcal2.services.weather_types import (
-    WeatherData, WeatherResponse, WeatherCode, WeatherError,
-    WeatherServiceUnavailable, WeatherServiceTimeout, WeatherServiceRateLimited
-)
-from golfcal2.utils.logging_utils import get_logger
 from golfcal2.services.weather_database import WeatherResponseCache
+from golfcal2.services.weather_types import WeatherCode
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherError
+from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherServiceRateLimited
+from golfcal2.services.weather_types import WeatherServiceTimeout
+from golfcal2.services.weather_types import WeatherServiceUnavailable
+
 
 class MetWeatherService(WeatherService):
     """Weather service implementation for Norwegian Meteorological Institute (MET)."""
@@ -27,7 +31,7 @@ class MetWeatherService(WeatherService):
     SIX_HOURLY_RANGE: int = 240  # 10 days
     MAX_FORECAST_RANGE: int = 216  # 9 days
 
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: dict[str, Any]):
         """Initialize service."""
         super().__init__(local_tz, utc_tz, config)
         
@@ -45,8 +49,8 @@ class MetWeatherService(WeatherService):
         lon: float,
         start_time: datetime,
         end_time: datetime,
-        club: Optional[str] = None
-    ) -> Optional[WeatherResponse]:
+        club: str | None = None
+    ) -> WeatherResponse | None:
         """Get weather data from MET.
         
         Args:
@@ -84,7 +88,7 @@ class MetWeatherService(WeatherService):
             self.error("Failed to get weather data from MET", exc_info=e)
             return None
 
-    def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
+    def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> dict[str, Any] | None:
         """Fetch forecasts from MET API."""
         if (end_time - start_time).total_seconds() / 3600 > self.MAX_FORECAST_RANGE:
             self._handle_errors(
@@ -93,7 +97,7 @@ class MetWeatherService(WeatherService):
             )
 
         try:
-            url = f"https://api.met.no/weatherapi/locationforecast/2.0/complete"
+            url = "https://api.met.no/weatherapi/locationforecast/2.0/complete"
             headers = {
                 'User-Agent': 'GolfCal2/2.0 (https://github.com/jarkko/golfcal2; jarkkoahonen@icloud.com)'
             }
@@ -118,10 +122,10 @@ class MetWeatherService(WeatherService):
         except requests.exceptions.RequestException as e:
             self._handle_errors(
                 ErrorCode.WEATHER_REQUEST_ERROR,
-                f"Request failed: {str(e)}"
+                f"Request failed: {e!s}"
             )
 
-    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+    def _parse_response(self, response_data: dict[str, Any]) -> WeatherResponse | None:
         """Parse MET API response into WeatherData objects.
         
         Args:
@@ -138,15 +142,15 @@ class MetWeatherService(WeatherService):
             if not timeseries:
                 return None
                 
-            weather_data: List[WeatherData] = []
-            prev_time: Optional[datetime] = None
+            weather_data: list[WeatherData] = []
+            prev_time: datetime | None = None
             
             for entry in timeseries:
                 # MET API always returns UTC times with 'Z' suffix
                 time_str = entry['time']
                 if time_str.endswith('Z'):
                     time_str = time_str[:-1]  # Remove Z
-                time = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
+                time = datetime.fromisoformat(time_str).replace(tzinfo=UTC)
                 
                 if prev_time and time <= prev_time:
                     continue
@@ -178,12 +182,12 @@ class MetWeatherService(WeatherService):
                 
             return WeatherResponse(
                 data=weather_data,
-                elaboration_time=datetime.now(timezone.utc)
+                elaboration_time=datetime.now(UTC)
             )
             
         except Exception as e:
             raise WeatherError(
-                f"Failed to parse Met weather response: {str(e)}",
+                f"Failed to parse Met weather response: {e!s}",
                 str(ErrorCode.WEATHER_PARSE_ERROR)
             )
 

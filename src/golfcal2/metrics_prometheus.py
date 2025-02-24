@@ -1,7 +1,7 @@
 """Prometheus metrics formatting for golfcal2."""
 
-from typing import Dict, Any, List, Iterator
-from datetime import datetime
+from typing import Any
+
 
 class PrometheusFormatter:
     """Format metrics in Prometheus text format."""
@@ -33,7 +33,7 @@ class PrometheusFormatter:
         return f"# TYPE {name} {type_name}"
     
     @staticmethod
-    def format_metric(name: str, value: float, labels: Dict[str, str] = None) -> str:
+    def format_metric(name: str, value: float, labels: dict[str, str] = None) -> str:
         """Format metric line.
         
         Args:
@@ -63,7 +63,7 @@ class PrometheusFormatter:
         return ''.join(c if c.isalnum() else '_' for c in name)
     
     @classmethod
-    def format_counter(cls, name: str, value: int, help_text: str = "") -> List[str]:
+    def format_counter(cls, name: str, value: int, help_text: str = "") -> list[str]:
         """Format a counter metric.
         
         Args:
@@ -83,7 +83,7 @@ class PrometheusFormatter:
         return lines
     
     @classmethod
-    def format_gauge(cls, name: str, value: float, help_text: str = "") -> List[str]:
+    def format_gauge(cls, name: str, value: float, help_text: str = "") -> list[str]:
         """Format a gauge metric.
         
         Args:
@@ -103,7 +103,7 @@ class PrometheusFormatter:
         return lines
     
     @classmethod
-    def format_histogram(cls, name: str, stats: Dict[str, float], help_text: str = "") -> List[str]:
+    def format_histogram(cls, name: str, stats: dict[str, float], help_text: str = "") -> list[str]:
         """Format histogram metrics from timer stats.
         
         Args:
@@ -143,7 +143,7 @@ class PrometheusFormatter:
         
         return lines
 
-def format_prometheus_metrics(metrics: Dict[str, Any]) -> str:
+def format_prometheus_metrics(metrics: dict[str, Any]) -> str:
     """Convert metrics dictionary to Prometheus format.
     
     Args:

@@ -2,16 +2,20 @@
 NexGolf API client for golf calendar application.
 """
 
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
-from urllib.parse import urljoin
 import time
+from typing import TYPE_CHECKING
+from typing import Any
+from typing import Optional
+from urllib.parse import urljoin
+
 import requests
 
-from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.models.mixins import APIError
+from golfcal2.models.mixins import APIResponseError
 from golfcal2.models.mixins import RequestHandlerMixin
-from golfcal2.models.mixins import APIError, APITimeoutError, APIResponseError, APIAuthError
 from golfcal2.services.auth_service import AuthService
+from golfcal2.utils.logging_utils import LoggerMixin
+
 
 # Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:
@@ -20,7 +24,7 @@ if TYPE_CHECKING:
 class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
     """NexGolf API client implementation."""
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: dict[str, Any], membership: dict[str, Any] | Any, club: Optional['GolfClub'] = None):
         """Initialize NexGolf API client."""
         super().__init__()
         self.base_url = base_url.rstrip('/')  # Remove trailing slash
@@ -123,7 +127,7 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
         method: str,
         endpoint: str,
         **kwargs: Any
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Make an API request with proper error handling."""
         try:
             # Log actual request headers and cookies before making the request
@@ -158,7 +162,7 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
             self.logger.error(f"Unexpected error: {e}")
             raise
 
-    def get_reservations(self) -> List[Dict[str, Any]]:
+    def get_reservations(self) -> list[dict[str, Any]]:
         """Get user's reservations."""
         try:
             # Build the URL based on club configuration
@@ -179,7 +183,7 @@ class NexGolfAPI(LoggerMixin, RequestHandlerMixin):
             response = self._make_request("GET", endpoint, params=params)
             
             # Handle different response formats
-            result: List[Dict[str, Any]] = []
+            result: list[dict[str, Any]] = []
             
             if "data" in response and isinstance(response["data"], list):
                 # Convert tee times to reservations

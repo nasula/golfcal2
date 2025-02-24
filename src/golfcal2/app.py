@@ -1,10 +1,5 @@
 """Application initialization."""
 
-import os
-import logging
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from typing import Optional, Dict, Any, Callable
 
 from flask import Flask
 from flask_cors import CORS
@@ -14,13 +9,13 @@ from .config.settings import ConfigurationManager
 from .services.calendar_service import CalendarService
 from .services.weather_service import WeatherService
 from .utils.logging_utils import setup_logging
-from .config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
+
 
 # Global service cache
-_weather_service_cache: Optional[WeatherService] = None
-_calendar_service_cache: Optional[CalendarService] = None
+_weather_service_cache: WeatherService | None = None
+_calendar_service_cache: CalendarService | None = None
 
-def create_app(config_file: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> Flask:
+def create_app(config_file: str | None = None, dev_mode: bool = False, verbose: bool = False) -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__)
     CORS(app)
@@ -52,7 +47,7 @@ def create_app(config_file: Optional[str] = None, dev_mode: bool = False, verbos
         return _calendar_service_cache
     
     # Add service getters to app context
-    setattr(app, 'get_weather_service', get_weather_service)
-    setattr(app, 'get_calendar_service', get_calendar_service)
+    app.get_weather_service = get_weather_service
+    app.get_calendar_service = get_calendar_service
     
     return app 

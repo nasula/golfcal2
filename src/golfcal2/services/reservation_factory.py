@@ -2,16 +2,21 @@
 Reservation factory with strategy pattern implementation.
 """
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Protocol
-from datetime import datetime, timedelta
+from abc import ABC
+from abc import abstractmethod
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from golfcal2.models.reservation import Reservation, Player
 from golfcal2.models.golf_club import GolfClub
-from golfcal2.models.user import User, Membership
+from golfcal2.models.reservation import Player
+from golfcal2.models.reservation import Reservation
+from golfcal2.models.user import Membership
+from golfcal2.models.user import User
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.utils.timezone_utils import TimezoneManager
+
 
 class ReservationContext:
     """Context for reservation creation."""
@@ -21,7 +26,7 @@ class ReservationContext:
         club: GolfClub,
         user: User,
         membership: Membership,
-        tz_manager: Optional[TimezoneManager] = None
+        tz_manager: TimezoneManager | None = None
     ):
         self.club = club
         self.user = user
@@ -34,7 +39,7 @@ class ReservationStrategy(ABC, LoggerMixin):
     @abstractmethod
     def create_reservation(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> Reservation:
         """Create a reservation from raw data."""
@@ -43,15 +48,15 @@ class ReservationStrategy(ABC, LoggerMixin):
     @abstractmethod
     def extract_players(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
-    ) -> List[Player]:
+    ) -> list[Player]:
         """Extract players from reservation data."""
         pass
     
     def parse_times(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> tuple[datetime, datetime]:
         """Parse start and end times from data."""
@@ -79,7 +84,7 @@ class WiseGolfStrategy(ReservationStrategy):
     
     def create_reservation(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> Reservation:
         """Create a WiseGolf reservation."""
@@ -99,7 +104,7 @@ class WiseGolfStrategy(ReservationStrategy):
     
     def parse_times(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> tuple[datetime, datetime]:
         """Parse start and end times from WiseGolf data."""
@@ -110,9 +115,9 @@ class WiseGolfStrategy(ReservationStrategy):
     
     def extract_players(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
-    ) -> List[Player]:
+    ) -> list[Player]:
         """Extract players from WiseGolf data.
         
         The function follows these steps:
@@ -129,7 +134,7 @@ class WiseGolfStrategy(ReservationStrategy):
         Returns:
             List of Player objects for this reservation
         """
-        players: List[Player] = []
+        players: list[Player] = []
         
         # Try to fetch players for future events
         now = context.tz_manager.now()
@@ -146,7 +151,7 @@ class WiseGolfStrategy(ReservationStrategy):
                         # Get our reservation's details
                         our_start_time = data.get('dateTimeStart')
                         our_resource_id = None
-                        if 'resources' in data and data['resources']:
+                        if data.get('resources'):
                             our_resource_id = data['resources'][0].get('resourceId')
                         elif 'resourceId' in data:
                             our_resource_id = data.get('resourceId')
@@ -186,7 +191,7 @@ class WiseGolfStrategy(ReservationStrategy):
         if not players:
             players = [Player(
                 name=context.user.name,
-                club=context.membership.clubAbbreviation,
+                club=context.membership.club_abbreviation,
                 handicap=float(context.user.handicap or 0.0)
             )]
         
@@ -214,7 +219,7 @@ class WiseGolf0Strategy(WiseGolfStrategy):
     
     def parse_times(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> tuple[datetime, datetime]:
         """Parse start and end times from WiseGolf0 data."""
@@ -225,9 +230,9 @@ class WiseGolf0Strategy(WiseGolfStrategy):
     
     def extract_players(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
-    ) -> List[Player]:
+    ) -> list[Player]:
         """Extract players from WiseGolf0 data.
         
         The function follows these steps:
@@ -244,7 +249,7 @@ class WiseGolf0Strategy(WiseGolfStrategy):
         Returns:
             List of Player objects for this reservation
         """
-        players: List[Player] = []
+        players: list[Player] = []
         
         # Try to fetch players for future events
         now = context.tz_manager.now()
@@ -261,7 +266,7 @@ class WiseGolf0Strategy(WiseGolfStrategy):
                         # Get our reservation's details
                         our_start_time = data.get('dateTimeStart')
                         our_resource_id = None
-                        if 'resources' in data and data['resources']:
+                        if data.get('resources'):
                             our_resource_id = data['resources'][0].get('resourceId')
                         elif 'resourceId' in data:
                             our_resource_id = data.get('resourceId')
@@ -301,7 +306,7 @@ class WiseGolf0Strategy(WiseGolfStrategy):
         if not players:
             players = [Player(
                 name=context.user.name,
-                club=context.membership.clubAbbreviation,
+                club=context.membership.club_abbreviation,
                 handicap=float(context.user.handicap or 0.0)
             )]
         
@@ -312,7 +317,7 @@ class NexGolfStrategy(ReservationStrategy):
     
     def create_reservation(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> Reservation:
         """Create a NexGolf reservation."""
@@ -332,7 +337,7 @@ class NexGolfStrategy(ReservationStrategy):
     
     def parse_times(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> tuple[datetime, datetime]:
         """Parse start and end times from NexGolf data."""
@@ -344,11 +349,11 @@ class NexGolfStrategy(ReservationStrategy):
     
     def extract_players(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
-    ) -> List[Player]:
+    ) -> list[Player]:
         """Extract players from NexGolf data."""
-        players: List[Player] = []
+        players: list[Player] = []
         
         if "reservations" in data:
             try:
@@ -363,7 +368,7 @@ class NexGolfStrategy(ReservationStrategy):
         if not players:
             players = [Player(
                 name=context.user.name,
-                club=context.membership.clubAbbreviation,
+                club=context.membership.club_abbreviation,
                 handicap=float(context.user.handicap or 0.0)
             )]
         
@@ -374,7 +379,7 @@ class ExternalEventStrategy(ReservationStrategy):
     
     def create_reservation(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> Reservation:
         """Create an external event reservation."""
@@ -394,7 +399,7 @@ class ExternalEventStrategy(ReservationStrategy):
     
     def parse_times(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> tuple[datetime, datetime]:
         """Parse start and end times from external event data."""
@@ -417,9 +422,9 @@ class ExternalEventStrategy(ReservationStrategy):
     
     def extract_players(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
-    ) -> List[Player]:
+    ) -> list[Player]:
         """Extract players from external event data."""
         players = []
         if 'users' in data:
@@ -473,7 +478,7 @@ class ReservationFactory:
     def create_reservation(
         cls,
         reservation_type: str,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         context: ReservationContext
     ) -> Reservation:
         """Create a reservation using the appropriate strategy."""

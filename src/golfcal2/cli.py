@@ -288,13 +288,14 @@ class GetCommands:
 
 @create_command_group('process', 'Process management commands')
 class ProcessCommands:
-    """Process-related command implementations."""
-    
+    """Process management commands."""
+
     @staticmethod
     @CommandRegistry.register(
-        name='process',
+        name='calendar',
         help_text='Process golf calendar by fetching reservations and updating calendar files',
         category=CommandCategory.PROCESS,
+        parent_command='process',
         options=[
             {
                 'name': '--dry-run',
@@ -780,9 +781,6 @@ def create_parser() -> argparse.ArgumentParser:
     builder = CLIBuilder(
         description='Golf calendar application for managing golf reservations and related weather data'
     )
-    
-    # Add common options to root parser first
-    add_common_options(builder.parser)
     
     # Add all registered commands
     for command in CommandRegistry._commands.values():

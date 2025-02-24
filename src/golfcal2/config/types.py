@@ -1,11 +1,11 @@
 """Configuration type definitions."""
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, Optional, TypedDict, List, Union
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from typing import Any
+from typing import TypedDict
+
 
 class WeatherApiConfig(TypedDict):
     """Weather API configuration."""
@@ -21,15 +21,15 @@ class LoggingConfig(TypedDict):
     dev_level: str
     verbose_level: str
     default_level: str
-    file: Optional[str]
+    file: str | None
     max_size: int  # in MB
     backup_count: int
 
 class GlobalConfig(TypedDict):
     """Global configuration structure."""
     timezone: str
-    directories: Dict[str, str]
-    ics_files: Dict[str, str]
+    directories: dict[str, str]
+    ics_files: dict[str, str]
     api_keys: ApiKeysConfig
     logging: LoggingConfig
 
@@ -37,9 +37,9 @@ class AuthDetails(TypedDict):
     """Authentication details."""
     type: str
     auth_type: str
-    token: Optional[str]
-    cookie_name: Optional[str]
-    cookie_value: Optional[str]
+    token: str | None
+    cookie_name: str | None
+    cookie_value: str | None
 
 class Duration(TypedDict):
     """Duration configuration."""
@@ -54,10 +54,10 @@ class Membership(TypedDict):
 
 class UserConfig(TypedDict):
     """User configuration."""
-    timezone: Optional[str]
-    duration: Optional[Duration]
-    memberships: List[Membership]
-    ics_file_path: Optional[str]
+    timezone: str | None
+    duration: Duration | None
+    memberships: list[Membership]
+    ics_file_path: str | None
 
 class Coordinates(TypedDict):
     """Golf club coordinates."""
@@ -68,16 +68,16 @@ class ClubConfig(TypedDict):
     """Golf club configuration."""
     name: str
     type: str
-    url: Optional[str]
-    clubId: Optional[str]
-    ajaxUrl: Optional[str]
-    restUrl: Optional[str]
+    url: str | None
+    clubId: str | None
+    ajaxUrl: str | None
+    restUrl: str | None
     auth_type: str
     crm: str
-    timezone: Optional[str]
-    variant: Optional[str]
-    address: Optional[str]
-    coordinates: Optional[Coordinates]
+    timezone: str | None
+    variant: str | None
+    address: str | None
+    coordinates: Coordinates | None
 
 @dataclass
 class WeatherConfig:
@@ -143,16 +143,16 @@ class GlobalConfig:
 @dataclass
 class AppConfig:
     """Application configuration."""
-    users: Dict[str, UserConfig]
-    clubs: Dict[str, ClubConfig]
+    users: dict[str, UserConfig]
+    clubs: dict[str, ClubConfig]
     global_config: GlobalConfig
     api_keys: ApiKeysConfig
     timezone: str = "Europe/Helsinki"
     ics_dir: str = "ics"
-    ics_file_path: Optional[str] = None
+    ics_file_path: str | None = None
     config_dir: str = "config"
     log_level: str = "WARNING"
-    log_file: Optional[str] = None
+    log_file: str | None = None
 
     def __post_init__(self):
         """Initialize additional fields from global config."""
@@ -163,7 +163,7 @@ class AppConfig:
         """Get configuration value."""
         return getattr(self, key, default)
 
-    def get_ics_path(self, user_name: str) -> Optional[str]:
+    def get_ics_path(self, user_name: str) -> str | None:
         """Get ICS file path for a user.
         
         Args:
@@ -181,7 +181,7 @@ class AppConfig:
         workspace_dir = Path(self.config_dir).parent
         
         # Check both global and user configs for the path
-        user_path: Optional[str] = None
+        user_path: str | None = None
         
         # Check global config first
         if self.global_config and 'ics_files' in self.global_config:

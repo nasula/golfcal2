@@ -2,12 +2,14 @@
 Mock weather service strategy implementation for development mode.
 """
 
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
 import random
+from datetime import datetime
+from datetime import timedelta
 
 from golfcal2.services.weather_service import WeatherStrategy
-from golfcal2.services.weather_types import WeatherResponse, WeatherData
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherResponse
+
 
 class MockWeatherStrategy(WeatherStrategy):
     """Mock weather strategy for development and testing."""
@@ -16,10 +18,10 @@ class MockWeatherStrategy(WeatherStrategy):
     HOURLY_RANGE: int = 168  # 7 days
     MAX_FORECAST_RANGE: int = 168  # 7 days
     
-    def get_weather(self) -> Optional[WeatherResponse]:
+    def get_weather(self) -> WeatherResponse | None:
         """Get mock weather data."""
         try:
-            weather_data: List[WeatherData] = []
+            weather_data: list[WeatherData] = []
             current_time = self.context.start_time
             
             while current_time <= self.context.end_time:

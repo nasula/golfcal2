@@ -1,13 +1,17 @@
-from typing import List, Dict, Optional, Union, Sequence
-from datetime import datetime, timedelta, timezone
-from golfcal2.services.weather_types import WeatherData, WeatherResponse
+from collections.abc import Sequence
+from datetime import UTC
+from datetime import datetime
+
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherResponse
 from golfcal2.utils.weather_utils import get_weather_symbol
+
 
 class WeatherFormatter:
     """Centralized weather formatting service."""
     
     @classmethod
-    def format_forecast(cls, weather_data: Union[WeatherResponse, List[WeatherData], Sequence[WeatherData]], start_time: datetime = None, end_time: datetime = None) -> str:
+    def format_forecast(cls, weather_data: WeatherResponse | list[WeatherData] | Sequence[WeatherData], start_time: datetime = None, end_time: datetime = None) -> str:
         """Format weather forecast for display.
         
         Args:
@@ -33,7 +37,7 @@ class WeatherFormatter:
             return "No timezone information available"
             
         # Convert event times to UTC for comparison with forecast times
-        utc = timezone.utc
+        utc = UTC
         if start_time:
             start_time_utc = start_time.astimezone(utc)
         if end_time:
@@ -108,7 +112,7 @@ class WeatherFormatter:
         return "\n".join(formatted_lines)
     
     @classmethod
-    def format_for_calendar(cls, forecast: Optional[WeatherData]) -> Dict:
+    def format_for_calendar(cls, forecast: WeatherData | None) -> dict:
         """Format weather data for calendar events."""
         if not forecast:
             return {
@@ -138,7 +142,7 @@ class WeatherFormatter:
         }
     
     @classmethod
-    def get_weather_summary(cls, weather: Optional[Union[WeatherData, WeatherResponse]]) -> str:
+    def get_weather_summary(cls, weather: WeatherData | WeatherResponse | None) -> str:
         """Get a concise weather summary."""
         if not weather:
             return "Weather data unavailable"
@@ -184,4 +188,59 @@ class WeatherFormatter:
             return ", ".join(summary_parts) if summary_parts else "Weather data unavailable"
             
         except Exception as e:
-            return f"Error formatting weather: {str(e)}" 
+            return f"Error formatting weather: {e!s}"
+
+def format_weather_data(data: WeatherData, target_time: datetime) -> str:
+    """Format weather data into a human-readable string."""
+    if not data:
+        return "No weather data available"
+        
+    # Convert target time to UTC for comparison
+    target_utc = target_time.astimezone(UTC)
+    
+    # Find the closest time period
+    closest_time = None
+    min_diff = float('inf')
+    
+    for time_str in data.get('hourly', {}).get('time', []):
+        try:
+            # Parse time string to datetime
+            time = datetime.fromisoformat(time_str).replace(tzinfo=UTC)
+            diff = abs((time - target_utc).total_seconds())
+            
+            if diff < min_diff:
+                min_diff = diff
+                closest_time = time_str
+        except ValueError:
+            continue
+            
+    if not closest_time:
+        return "No matching time period found"
+        
+    # Get weather data for the closest time
+    hourly = data.get('hourly', {})
+    try:
+        index = hourly['time'].index(closest_time)
+    except (ValueError, KeyError):
+        return "Failed to find weather data"
+        
+    try:
+        temperature = hourly['temperature_2m'][index]
+        precipitation = hourly['precipitation'][index]
+        wind_speed = hourly['wind_speed_10m'][index]
+        wind_direction = hourly['wind_direction_10m'][index]
+        
+        return (
+            f"Temperature: {temperature}°C, "
+            f"Precipitation: {precipitation}mm, "
+            f"Wind: {wind_speed}m/s {_format_wind_direction(wind_direction)}"
+        )
+    except (IndexError, KeyError):
+        return "Incomplete weather data"
+
+def _format_wind_direction(degrees: float) -> str:
+    """Convert wind direction from degrees to cardinal direction."""
+    directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+                 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+    index = round(degrees / (360 / len(directions))) % len(directions)
+    return directions[index] 

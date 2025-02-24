@@ -2,18 +2,22 @@
 Unified weather service with improved caching and error handling.
 """
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Protocol, Type, cast, TypeVar, runtime_checkable
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 import os
+from abc import ABC
+from abc import abstractmethod
+from datetime import datetime
+from typing import Any
+from typing import Protocol
+from typing import cast
+from typing import runtime_checkable
+from zoneinfo import ZoneInfo
 
-from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.services.weather_types import WeatherResponse, WeatherData, WeatherError
+from golfcal2.config.error_aggregator import aggregate_error
 from golfcal2.services.weather_cache import WeatherLocationCache
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.config.error_aggregator import aggregate_error
-from golfcal2.error_codes import ErrorCode
+from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.utils.logging_utils import LoggerMixin
+
 
 class WeatherContext:
     """Context for weather data retrieval."""
@@ -26,7 +30,7 @@ class WeatherContext:
         end_time: datetime,
         local_tz: ZoneInfo,
         utc_tz: ZoneInfo,
-        config: Dict[str, Any]
+        config: dict[str, Any]
     ):
         self.lat = lat
         self.lon = lon
@@ -42,7 +46,7 @@ class WeatherStrategyProtocol(Protocol):
     service_type: str
     
     def __init__(self, context: WeatherContext) -> None: ...
-    def get_weather(self) -> Optional[WeatherResponse]: ...
+    def get_weather(self) -> WeatherResponse | None: ...
     def get_expiry_time(self) -> datetime: ...
     def get_block_size(self, hours_ahead: float) -> int: ...
 
@@ -58,7 +62,7 @@ class WeatherStrategy(ABC, LoggerMixin):
         self.set_log_context(service=self.__class__.__name__.lower())
     
     @abstractmethod
-    def get_weather(self) -> Optional[WeatherResponse]:
+    def get_weather(self) -> WeatherResponse | None:
         """Get weather data for the given context."""
         pass
     
@@ -85,7 +89,7 @@ class WeatherStrategy(ABC, LoggerMixin):
 class WeatherService:
     """Unified weather service."""
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """Initialize service."""
         self.config = config
         self.local_tz = ZoneInfo(config.get('timezone', 'UTC'))
@@ -99,19 +103,19 @@ class WeatherService:
         self.response_cache = WeatherResponseCache(os.path.join(cache_dir, 'weather_responses.db'))
         
         # Initialize strategies
-        self._strategies: Dict[str, Type[WeatherStrategyProtocol]] = {}
+        self._strategies: dict[str, type[WeatherStrategyProtocol]] = {}
         
         # Register default strategies
         from golfcal2.services.met_weather_strategy import MetWeatherStrategy
-        from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
         from golfcal2.services.mock_weather_strategy import MockWeatherStrategy
+        from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
         
-        self.register_strategy('met', cast(Type[WeatherStrategyProtocol], MetWeatherStrategy))
-        self.register_strategy('openmeteo', cast(Type[WeatherStrategyProtocol], OpenMeteoStrategy))
+        self.register_strategy('met', cast(type[WeatherStrategyProtocol], MetWeatherStrategy))
+        self.register_strategy('openmeteo', cast(type[WeatherStrategyProtocol], OpenMeteoStrategy))
         if config.get('dev_mode', False):
-            self.register_strategy('mock', cast(Type[WeatherStrategyProtocol], MockWeatherStrategy))
+            self.register_strategy('mock', cast(type[WeatherStrategyProtocol], MockWeatherStrategy))
     
-    def register_strategy(self, service_type: str, strategy_class: Type[WeatherStrategyProtocol]) -> None:
+    def register_strategy(self, service_type: str, strategy_class: type[WeatherStrategyProtocol]) -> None:
         """Register a new weather strategy."""
         self._strategies[service_type] = strategy_class
     
@@ -121,8 +125,8 @@ class WeatherService:
         lon: float,
         start_time: datetime,
         end_time: datetime,
-        service_type: Optional[str] = None
-    ) -> Optional[WeatherResponse]:
+        service_type: str | None = None
+    ) -> WeatherResponse | None:
         """Get weather data using appropriate strategy."""
         try:
             # Create context
@@ -203,6 +207,6 @@ class WeatherService:
         """Clear all cached weather responses."""
         self.response_cache.clear()
     
-    def list_cache(self) -> List[Dict[str, Any]]:
+    def list_cache(self) -> list[dict[str, Any]]:
         """List all cached weather responses."""
         return self.response_cache.list_all()

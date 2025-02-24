@@ -1,9 +1,13 @@
 """Environment variable handling for configuration."""
 
 import os
-from typing import Dict, Any, Optional, TypeVar, Type, cast
+from typing import Any
+from typing import TypeVar
 
-from golfcal2.config.types import GlobalConfig, LoggingConfig, WeatherApiConfig
+from golfcal2.config.types import GlobalConfig
+from golfcal2.config.types import LoggingConfig
+from golfcal2.config.types import WeatherApiConfig
+
 
 T = TypeVar('T')
 
@@ -22,12 +26,12 @@ class EnvConfig:
     }
 
     @staticmethod
-    def get_env_value(env_var: str, default: Optional[Any] = None) -> Optional[Any]:
+    def get_env_value(env_var: str, default: Any | None = None) -> Any | None:
         """Get value from environment variable with default."""
         return os.getenv(env_var, default)
 
     @staticmethod
-    def _set_nested_value(config: Dict[str, Any], path: tuple, value: Any) -> None:
+    def _set_nested_value(config: dict[str, Any], path: tuple, value: Any) -> None:
         """Set value in nested dictionary using path tuple."""
         current = config
         for part in path[:-1]:
@@ -37,7 +41,7 @@ class EnvConfig:
         current[path[-1]] = value
 
     @classmethod
-    def update_config_from_env(cls, config: Dict[str, Any]) -> None:
+    def update_config_from_env(cls, config: dict[str, Any]) -> None:
         """Update configuration dictionary with environment variables.
         
         Args:

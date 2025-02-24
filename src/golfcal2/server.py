@@ -1,23 +1,25 @@
 """HTTP server for health checks and monitoring."""
 
 import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Dict, Any, Optional, Tuple, Type
 import threading
-from urllib.parse import urlparse, parse_qs
-import logging
+from http.server import BaseHTTPRequestHandler
+from http.server import HTTPServer
+from typing import Any
+from urllib.parse import parse_qs
+from urllib.parse import urlparse
 
 from golfcal2.health import get_health_status
 from golfcal2.metrics import Metrics
 from golfcal2.metrics_prometheus import format_prometheus_metrics
 from golfcal2.utils.logging_utils import get_logger
 
+
 logger = get_logger(__name__)
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     """Handler for health check requests."""
     
-    def _send_response(self, status_code: int, data: Dict[str, Any], content_type: str = 'application/json') -> None:
+    def _send_response(self, status_code: int, data: dict[str, Any], content_type: str = 'application/json') -> None:
         """Send response with appropriate content type.
         
         Args:
@@ -94,8 +96,8 @@ class HealthCheckServer:
         """
         self.host = host
         self.port = port
-        self.server: Optional[HTTPServer] = None
-        self.thread: Optional[threading.Thread] = None
+        self.server: HTTPServer | None = None
+        self.thread: threading.Thread | None = None
         self.metrics = Metrics()  # Initialize metrics
         
     def start(self) -> None:

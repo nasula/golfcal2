@@ -2,15 +2,18 @@
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
-from typing import Dict, List, Any, Set, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError
+from concurrent.futures import as_completed
 from pathlib import Path
+from typing import Any
 
-from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+from golfcal2.config.settings import AppConfig
 from golfcal2.models.golf_club import WiseGolfClub
 from golfcal2.models.user import Membership
 from golfcal2.services.auth_service import AuthService
-from golfcal2.config.settings import AppConfig
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+
 
 class WiseGolfDiscoveryService(EnhancedLoggerMixin):
     """Service for discovering and fetching from all WiseGolf clubs."""
@@ -24,11 +27,11 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
         super().__init__()
         self.config = config
         self.endpoints_file = Path(os.path.dirname(os.path.dirname(__file__))) / 'config' / 'wisegolf_endpoints.json'
-        self.seen_reservation_ids: Set[str] = set()
+        self.seen_reservation_ids: set[str] = set()
         
         # Initialize club data caches
-        self.club_details_cache: Dict[str, Dict[str, Any]] = {}
-        self.coordinates_cache: Dict[str, Dict[str, Any]] = {}
+        self.club_details_cache: dict[str, dict[str, Any]] = {}
+        self.coordinates_cache: dict[str, dict[str, Any]] = {}
         
         # Load static club data
         self._load_static_club_data()
@@ -43,7 +46,7 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
                 'club_coordinates.json'
             )
             if os.path.exists(coordinates_path):
-                with open(coordinates_path, 'r') as f:
+                with open(coordinates_path) as f:
                     self.coordinates_cache = json.load(f)
                 self.debug(f"Loaded {len(self.coordinates_cache)} club coordinates")
             else:
@@ -56,7 +59,7 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
                 'wisegolf_club_details.json'
             )
             if os.path.exists(details_path):
-                with open(details_path, 'r') as f:
+                with open(details_path) as f:
                     data = json.load(f)
                     if 'rows' in data:
                         for club in data['rows']:
@@ -69,7 +72,7 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
         except Exception as e:
             self.error(f"Failed to load static club data: {e}", exc_info=True)
             
-    def enrich_club_config(self, club_id: str, basic_config: Dict[str, Any]) -> Dict[str, Any]:
+    def enrich_club_config(self, club_id: str, basic_config: dict[str, Any]) -> dict[str, Any]:
         """Enrich basic club configuration with detailed data.
         
         Args:
@@ -98,7 +101,7 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
                 })
             
             # Add coordinates if available
-            club_abbr = enriched_config.get('clubAbbreviation')
+            club_abbr = enriched_config.get('club_abbreviation')
             if club_abbr and club_abbr in self.coordinates_cache:
                 coords = self.coordinates_cache[club_abbr]
                 enriched_config['coordinates'] = {
@@ -111,16 +114,16 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
             
         return enriched_config
 
-    def load_endpoints(self) -> Dict[str, Any]:
+    def load_endpoints(self) -> dict[str, Any]:
         """Load WiseGolf API endpoints configuration."""
         try:
-            with open(self.endpoints_file, 'r') as f:
+            with open(self.endpoints_file) as f:
                 return json.load(f)
         except Exception as e:
             self.error(f"Failed to load WiseGolf endpoints: {e}")
             return {"hosts": []}
             
-    def get_unique_clubs(self) -> List[Dict[str, Any]]:
+    def get_unique_clubs(self) -> list[dict[str, Any]]:
         """Get list of unique WiseGolf clubs."""
         endpoints = self.load_endpoints()
         wisegolf_clubs_raw = [
@@ -152,7 +155,7 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
         self,
         membership: Membership,
         auth_service: AuthService
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch reservations from all WiseGolf clubs.
         
         Args:
@@ -176,7 +179,7 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
                 # Skip clubs that disable guest sign-on if not explicitly configured
                 if (
                     club_config.get('disableGuestSignOn', False) and 
-                    club_config.get('golfClubId') != membership.clubAbbreviation
+                    club_config.get('golfClubId') != membership.club_abbreviation
                 ):
                     self.debug(f"Skipping club {club_config['name']} due to disabled guest sign-on")
                     continue
@@ -210,7 +213,7 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
                     timezone="Europe/Helsinki",  # Default timezone
                     auth_service=auth_service,
                     club_details=enriched_details,
-                    clubAbbreviation=club_id or club_config['name']
+                    club_abbreviation=club_id or club_config['name']
                 )
                 club_instances.append(club)
             except Exception as e:
@@ -253,7 +256,7 @@ class WiseGolfDiscoveryService(EnhancedLoggerMixin):
         self,
         club: WiseGolfClub,
         membership: Membership
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> list[dict[str, Any]] | None:
         """Fetch reservations from a single club.
         
         Args:

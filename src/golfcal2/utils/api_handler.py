@@ -1,6 +1,8 @@
-from typing import Dict, Any, List, Union, Optional
-import requests
 from http import HTTPStatus
+from typing import Any
+
+import requests
+
 
 class APIResponseError(Exception):
     """Custom exception for API response errors."""
@@ -12,9 +14,9 @@ class APIResponseValidator:
     @staticmethod
     def validate(
         response: requests.Response,
-        required_fields: Optional[List[str]] = None,
-        expected_status: Union[int, List[int]] = HTTPStatus.OK
-    ) -> Dict[str, Any]:
+        required_fields: list[str] | None = None,
+        expected_status: int | list[int] = HTTPStatus.OK
+    ) -> dict[str, Any]:
         """
         Validate API response structure.
         
@@ -56,14 +58,14 @@ class APIResponseValidator:
             
             return data
         except ValueError as e:
-            raise APIResponseError(f"Invalid JSON response: {str(e)}")
+            raise APIResponseError(f"Invalid JSON response: {e!s}")
         
     @staticmethod
     def validate_list_response(
         response: requests.Response,
         item_key: str,
-        required_item_fields: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        required_item_fields: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """
         Validate API response that should contain a list of items.
         

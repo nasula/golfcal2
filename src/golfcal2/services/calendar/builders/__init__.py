@@ -2,16 +2,15 @@
 Calendar builders package.
 """
 
-from golfcal2.services.calendar.builders.event_builder import (
-    EventBuilder,
-    ReservationEventBuilder,
-    ExternalEventBuilder
-)
 from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
+from golfcal2.services.calendar.builders.event_builder import EventBuilder
+from golfcal2.services.calendar.builders.event_builder import ExternalEventBuilder
+from golfcal2.services.calendar.builders.event_builder import ReservationEventBuilder
+
 
 __all__ = [
+    'CalendarBuilder',
     'EventBuilder',
-    'ReservationEventBuilder',
     'ExternalEventBuilder',
-    'CalendarBuilder'
+    'ReservationEventBuilder'
 ] 

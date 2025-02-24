@@ -2,16 +2,15 @@
 
 import os
 import sqlite3
-from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
-from pathlib import Path
-import json
+from typing import Any
+
 from golfcal2.utils.logging_utils import LoggerMixin
+
 
 class WeatherDatabase(LoggerMixin):
     """Manages weather data caching in SQLite database."""
     
-    def __init__(self, db_name: str, schema: Dict[str, List[str]]):
+    def __init__(self, db_name: str, schema: dict[str, list[str]]):
         """Initialize database with schema.
         
         Args:
@@ -58,10 +57,10 @@ class WeatherDatabase(LoggerMixin):
     def get_weather_data(
         self,
         location: str,
-        times: List[str],
+        times: list[str],
         data_type: str,
-        fields: List[str]
-    ) -> Dict[str, Dict[str, Any]]:
+        fields: list[str]
+    ) -> dict[str, dict[str, Any]]:
         """Get weather data from cache for given location and times.
         
         Args:
@@ -103,7 +102,7 @@ class WeatherDatabase(LoggerMixin):
                     time_str = row[0]
                     data = {
                         field: value
-                        for field, value in zip(fields, row[1:])
+                        for field, value in zip(fields, row[1:], strict=False)
                     }
                     weather_data[time_str] = data
                 

@@ -2,18 +2,17 @@
 Logging utilities for golf calendar application.
 """
 
-import os
-import json
-import uuid
 import logging
 import traceback
-import functools
-from typing import Optional, Any, Dict, Callable, TypeVar, cast
-from typing_extensions import ParamSpec
-from pathlib import Path
-from functools import wraps
+from collections.abc import Callable
 from datetime import datetime
+from functools import wraps
 from inspect import signature
+from typing import Any
+from typing import TypeVar
+
+from typing_extensions import ParamSpec
+
 
 T = TypeVar('T')
 P = ParamSpec('P')
@@ -54,7 +53,7 @@ def log_execution(level: str = 'DEBUG', include_args: bool = False) -> Callable[
             except Exception as e:
                 duration = datetime.now() - start_time
                 logger.error(
-                    f"{func.__name__} failed after {duration.total_seconds():.3f}s: {str(e)}",
+                    f"{func.__name__} failed after {duration.total_seconds():.3f}s: {e!s}",
                     exc_info=True
                 )
                 raise
@@ -69,7 +68,7 @@ class EnhancedLoggerMixin:
         """Initialize logger."""
         # Create logger as instance variable
         self._logger = logging.getLogger(self.__class__.__module__)
-        self._log_context: Dict[str, Any] = {}
+        self._log_context: dict[str, Any] = {}
     
     @property
     def logger(self) -> logging.Logger:

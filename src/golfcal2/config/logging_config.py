@@ -1,11 +1,10 @@
 """Logging configuration types and loading utilities."""
 
+import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Set, Union
 
 import yaml
-import os
+
 
 @dataclass
 class FileConfig:
@@ -47,10 +46,10 @@ class ServiceFileConfig:
 class ServiceConfig:
     """Service-specific logging configuration."""
     level: str
-    sampling: Optional[SamplingConfig] = None
-    sensitive_fields: Optional[List[str]] = None
+    sampling: SamplingConfig | None = None
+    sensitive_fields: list[str] | None = None
     performance_logging: bool = False
-    file: Optional[ServiceFileConfig] = None
+    file: ServiceFileConfig | None = None
 
 @dataclass
 class PerformanceConfig:
@@ -71,7 +70,7 @@ class CorrelationConfig:
 class SensitiveDataConfig:
     """Sensitive data masking configuration."""
     enabled: bool
-    global_fields: List[str]
+    global_fields: list[str]
     mask_pattern: str
     partial_mask: bool
 
@@ -82,7 +81,7 @@ class ErrorAggregationConfig:
     report_interval: int
     error_threshold: int
     time_threshold: int
-    categorize_by: List[str]
+    categorize_by: list[str]
 
 @dataclass
 class JournaldConfig:
@@ -101,8 +100,8 @@ class LoggingConfig:
     file: FileConfig
     console: ConsoleConfig
     sampling: SamplingConfig
-    services: Dict[str, ServiceConfig]
-    libraries: Dict[str, str]
+    services: dict[str, ServiceConfig]
+    libraries: dict[str, str]
     performance: PerformanceConfig
     correlation: CorrelationConfig
     sensitive_data: SensitiveDataConfig
@@ -114,7 +113,7 @@ def load_logging_config(config_path=None):
     if config_path is None:
         config_path = os.path.join(os.path.dirname(__file__), 'logging_config.yaml')
 
-    with open(config_path, 'r') as f:
+    with open(config_path) as f:
         config_dict = yaml.safe_load(f)
 
     # Convert journald config to JournaldConfig object

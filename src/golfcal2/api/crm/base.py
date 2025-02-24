@@ -1,19 +1,21 @@
-from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, cast
-from datetime import datetime
 import logging
+from abc import ABC
+from abc import abstractmethod
+from datetime import datetime
+from typing import Any
+
 import requests
 
-from golfcal2.api.interfaces import CRMInterface
-from golfcal2.api.models.reservation import Reservation, Player, CourseInfo
-from golfcal2.models.mixins import (
-    APIError, APITimeoutError, APIResponseError, APIAuthError, RequestHandlerMixin
-)
+from golfcal2.api.models.reservation import Reservation
+from golfcal2.models.mixins import APIError
+from golfcal2.models.mixins import APIResponseError
+from golfcal2.models.mixins import RequestHandlerMixin
+
 
 class BaseCRM(ABC, RequestHandlerMixin):
     """Base class for CRM implementations."""
     
-    def __init__(self, base_url: str, auth_details: Dict[str, Any]) -> None:
+    def __init__(self, base_url: str, auth_details: dict[str, Any]) -> None:
         """Initialize CRM client.
         
         Args:
@@ -30,7 +32,7 @@ class BaseCRM(ABC, RequestHandlerMixin):
         raise NotImplementedError
         
     @abstractmethod
-    def get_reservations(self) -> List[Reservation]:
+    def get_reservations(self) -> list[Reservation]:
         """Get list of reservations.
         
         Returns:
@@ -39,7 +41,7 @@ class BaseCRM(ABC, RequestHandlerMixin):
         raise NotImplementedError
         
     @abstractmethod
-    def get_players(self, reservation: Reservation) -> List[Dict[str, Any]]:
+    def get_players(self, reservation: Reservation) -> list[dict[str, Any]]:
         """Get players for a reservation.
         
         Args:
@@ -55,7 +57,7 @@ class BaseCRM(ABC, RequestHandlerMixin):
         method: str,
         endpoint: str,
         **kwargs: Any
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Make HTTP request to CRM API.
         
         Args:
@@ -86,7 +88,7 @@ class BaseCRM(ABC, RequestHandlerMixin):
             self.logger.error("Request error: %s", str(e))
             return {}
             
-    def _get_json(self, endpoint: str, **kwargs: Any) -> Dict[str, Any]:
+    def _get_json(self, endpoint: str, **kwargs: Any) -> dict[str, Any]:
         """Get JSON response from API endpoint.
         
         Args:
@@ -105,7 +107,7 @@ class BaseCRM(ABC, RequestHandlerMixin):
         return response
     
     @abstractmethod
-    def _fetch_reservations(self) -> List[Dict[str, Any]]:
+    def _fetch_reservations(self) -> list[dict[str, Any]]:
         """Each CRM must implement its own reservation fetching logic.
         
         Returns:
@@ -114,7 +116,7 @@ class BaseCRM(ABC, RequestHandlerMixin):
         raise NotImplementedError
     
     @abstractmethod
-    def parse_reservation(self, raw_reservation: Dict[str, Any]) -> Reservation:
+    def parse_reservation(self, raw_reservation: dict[str, Any]) -> Reservation:
         """Convert raw reservation to standard Reservation model.
         
         Args:
@@ -141,4 +143,4 @@ class BaseCRM(ABC, RequestHandlerMixin):
         try:
             return datetime.strptime(value, fmt)
         except ValueError as e:
-            raise APIResponseError(f"Invalid datetime format: {str(e)}") 
+            raise APIResponseError(f"Invalid datetime format: {e!s}") 

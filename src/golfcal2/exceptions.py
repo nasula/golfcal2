@@ -1,14 +1,18 @@
 """Centralized error definitions for golf calendar application."""
 
-from dataclasses import dataclass
-from typing import Dict, Any, Optional, Type, Callable, TypeVar, ContextManager
-import requests
-from contextlib import contextmanager
-import traceback
 import logging
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any
+from typing import TypeVar
+
+import requests
 
 from golfcal2.config.error_aggregator import aggregate_error
 from golfcal2.error_codes import ErrorCode
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +23,7 @@ class GolfCalError(Exception):
     """Base exception for all golf calendar errors."""
     message: str
     code: ErrorCode
-    details: Optional[Dict[str, Any]] = None
+    details: dict[str, Any] | None = None
     
     def __str__(self) -> str:
         if self.details:
@@ -33,8 +37,8 @@ class APIError(GolfCalError):
         self,
         message: str,
         code: ErrorCode = ErrorCode.REQUEST_FAILED,
-        response: Optional[requests.Response] = None,
-        details: Optional[Dict[str, Any]] = None
+        response: requests.Response | None = None,
+        details: dict[str, Any] | None = None
     ):
         super().__init__(message, code, details)
         self.response = response
@@ -46,42 +50,42 @@ class LegacyAPIError(Exception):
 
 class APITimeoutError(APIError):
     """API timeout error."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, ErrorCode.TIMEOUT, details=details)
 
 class APIRateLimitError(APIError):
     """API rate limit error."""
-    def __init__(self, message: str, retry_after: Optional[int] = None):
+    def __init__(self, message: str, retry_after: int | None = None):
         super().__init__(message, ErrorCode.RATE_LIMITED, details={"retry_after": retry_after})
 
 class APIResponseError(APIError):
     """API response error."""
-    def __init__(self, message: str, response: Optional[requests.Response] = None):
+    def __init__(self, message: str, response: requests.Response | None = None):
         super().__init__(message, ErrorCode.INVALID_RESPONSE, response=response)
 
 class APIValidationError(APIError):
     """API validation error."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, ErrorCode.VALIDATION_FAILED, details=details)
 
 class AuthError(GolfCalError):
     """Authentication error."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, ErrorCode.AUTH_FAILED, details)
 
 class ConfigError(GolfCalError):
     """Configuration error."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, ErrorCode.CONFIG_INVALID, details)
 
 class ValidationError(GolfCalError):
     """Validation error."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, ErrorCode.VALIDATION_FAILED, details)
 
 class CalendarError(GolfCalError):
     """Calendar service error."""
-    def __init__(self, message: str, code: ErrorCode = ErrorCode.SERVICE_ERROR, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, code: ErrorCode = ErrorCode.SERVICE_ERROR, details: dict[str, Any] | None = None):
         super().__init__(message, code, details)
 
 class CalendarWriteError(CalendarError):
@@ -91,18 +95,18 @@ class CalendarWriteError(CalendarError):
 
 class CalendarEventError(CalendarError):
     """Calendar event error."""
-    def __init__(self, message: str, event_type: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, event_type: str, details: dict[str, Any] | None = None):
         details = details or {}
         details["event_type"] = event_type
         super().__init__(message, ErrorCode.VALIDATION_FAILED, details)
 
 @contextmanager
 def handle_errors(
-    error_type: Type[GolfCalError],
+    error_type: type[GolfCalError],
     service: str,
     operation: str,
-    fallback: Optional[Callable[[], T]] = None
-) -> ContextManager[Optional[T]]:
+    fallback: Callable[[], T] | None = None
+) -> AbstractContextManager[T | None]:
     """Handle errors in a context manager.
     
     Args:

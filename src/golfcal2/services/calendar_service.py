@@ -3,42 +3,36 @@ Calendar service for golf calendar application.
 """
 
 import os
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple, Set, cast, NoReturn, Type, TypeVar, Protocol, runtime_checkable
-from typing_extensions import Never
-from zoneinfo import ZoneInfo
-from pathlib import Path
-import requests
-from icalendar import Event, Calendar
-from types import TracebackType
 import traceback
+from pathlib import Path
+from typing import Any
+from typing import NoReturn
+from typing import Protocol
+from typing import TypeVar
+from typing import cast
+from typing import runtime_checkable
+from zoneinfo import ZoneInfo
 
-from golfcal2.models.golf_club import GolfClubFactory
-from golfcal2.models.reservation import Reservation
-from golfcal2.models.user import User, Membership
-from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+from icalendar import Calendar
+from icalendar import Event
+
+from golfcal2.config.error_aggregator import aggregate_error
 from golfcal2.config.types import AppConfig
-from golfcal2.services.auth_service import AuthService
+from golfcal2.error_codes import ErrorCode
+from golfcal2.exceptions import CalendarError
+from golfcal2.exceptions import CalendarEventError
+from golfcal2.exceptions import CalendarWriteError
+from golfcal2.exceptions import handle_errors
+from golfcal2.models.reservation import Reservation
+from golfcal2.models.user import User
+from golfcal2.services.calendar.builders import CalendarBuilder
+from golfcal2.services.calendar.builders import ExternalEventBuilder
+from golfcal2.services.calendar.builders import ReservationEventBuilder
+from golfcal2.services.external_event_service import ExternalEventService
 from golfcal2.services.mixins import CalendarHandlerMixin
 from golfcal2.services.weather_service import WeatherService
-from golfcal2.services.external_event_service import ExternalEventService
-from golfcal2.services.calendar.builders import (
-    CalendarBuilder,
-    ReservationEventBuilder,
-    ExternalEventBuilder
-)
-from golfcal2.exceptions import (
-    APIError,
-    APITimeoutError,
-    APIRateLimitError,
-    APIResponseError,
-    CalendarError,
-    CalendarWriteError,
-    CalendarEventError,
-    handle_errors
-)
-from golfcal2.error_codes import ErrorCode
-from golfcal2.config.error_aggregator import aggregate_error
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+
 
 T = TypeVar('T')
 
@@ -46,12 +40,12 @@ T = TypeVar('T')
 class ConfigProtocol(Protocol):
     """Protocol for configuration objects."""
     ics_dir: str
-    clubs: Dict[str, Any]
+    clubs: dict[str, Any]
     timezone: str
-    global_config: Dict[str, Any]
+    global_config: dict[str, Any]
 
-def raise_error(msg: str = "") -> Never:
-    """Helper function to raise an error and satisfy the Never type."""
+def raise_error(msg: str = "") -> NoReturn:
+    """Helper function to raise an error and satisfy the NoReturn type."""
     raise CalendarError(msg, ErrorCode.SERVICE_ERROR)
 
 class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
@@ -60,16 +54,16 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
     def __init__(
         self,
         config: AppConfig,
-        weather_service: Optional[WeatherService] = None,
+        weather_service: WeatherService | None = None,
         dev_mode: bool = False,
-        external_event_service: Optional[ExternalEventService] = None
+        external_event_service: ExternalEventService | None = None
     ):
         """Initialize service."""
         super().__init__()
         self.config: AppConfig = config
         self.dev_mode = dev_mode
         self.local_tz = ZoneInfo(config.timezone)
-        self.seen_uids: Set[str] = set()
+        self.seen_uids: set[str] = set()
         
         # Initialize services
         with handle_errors(
@@ -130,7 +124,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                     ics_dir.mkdir(parents=True, exist_ok=True)
                     self.info(f"Created ICS directory: {ics_dir}")
                 except Exception as e:
-                    self.error(f"Failed to create ICS directory {ics_dir}: {str(e)}")
+                    self.error(f"Failed to create ICS directory {ics_dir}: {e!s}")
                     return False
             
             # Check if ICS directory is writable
@@ -143,10 +137,10 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             return True
             
         except Exception as e:
-            self.error(f"Error checking configuration: {str(e)}")
+            self.error(f"Error checking configuration: {e!s}")
             return False
 
-    def process_user_reservations(self, user: User, reservations: List[Reservation]) -> Calendar:
+    def process_user_reservations(self, user: User, reservations: list[Reservation]) -> Calendar:
         """Process reservations for a user and return the calendar object."""
         try:
             # Create base calendar
@@ -187,7 +181,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                 
         except Exception as e:
             error = CalendarError(
-                f"Failed to process reservations: {str(e)}",
+                f"Failed to process reservations: {e!s}",
                 ErrorCode.SERVICE_ERROR,
                 {
                     "user": user.name,
@@ -214,8 +208,8 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             lambda: raise_error("Failed to process reservation")
         ):
             # Get club configuration
-            club_config = cast(Dict[str, Any], self.config.clubs).get(reservation.membership.club) or \
-                         cast(Dict[str, Any], self.config.clubs).get(reservation.club.name)
+            club_config = cast(dict[str, Any], self.config.clubs).get(reservation.membership.club) or \
+                         cast(dict[str, Any], self.config.clubs).get(reservation.club.name)
             if not club_config:
                 self.warning(f"No club config found for {reservation.membership.club} or {reservation.club.name}")
                 club_config = {}
@@ -258,7 +252,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         file_name = f"{user_name}.ics"
         return self.ics_dir / file_name
 
-    def _make_api_request(self, *args: Any, **kwargs: Any) -> Never:
+    def _make_api_request(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Make an API request with error handling."""
         with handle_errors(
             CalendarError,
@@ -268,7 +262,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         ):
             raise NotImplementedError("_make_api_request not implemented")
 
-    def _process_calendar(self, calendar: Any, *args: Any, **kwargs: Any) -> Never:
+    def _process_calendar(self, calendar: Any, *args: Any, **kwargs: Any) -> NoReturn:
         """Process calendar with error handling."""
         with handle_errors(
             CalendarError,
@@ -278,7 +272,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         ):
             raise NotImplementedError("_process_calendar not implemented")
 
-    def _handle_event(self, event: Any, *args: Any, **kwargs: Any) -> Never:
+    def _handle_event(self, event: Any, *args: Any, **kwargs: Any) -> NoReturn:
         """Handle event with error handling."""
         with handle_errors(
             CalendarError,
@@ -315,8 +309,8 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
             lambda: raise_error("Failed to add reservation")
         ):
             # Get club configuration
-            club_config = cast(Dict[str, Any], self.config.clubs).get(reservation.membership.club) or \
-                         cast(Dict[str, Any], self.config.clubs).get(reservation.club.name)
+            club_config = cast(dict[str, Any], self.config.clubs).get(reservation.membership.club) or \
+                         cast(dict[str, Any], self.config.clubs).get(reservation.club.name)
             if not club_config:
                 self.warning(f"No club config found for {reservation.membership.club} or {reservation.club.name}")
                 club_config = {}

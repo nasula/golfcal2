@@ -1,11 +1,13 @@
 """Weather database implementation."""
 
-import os
-import sqlite3
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
 import json
 import logging
+import os
+import sqlite3
+from datetime import UTC
+from datetime import datetime
+from typing import Any
+
 
 class WeatherResponseCache:
     """Cache for weather service responses."""
@@ -49,7 +51,7 @@ class WeatherResponseCache:
         longitude: float,
         start_time: datetime,
         end_time: datetime
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get cached response if available and not expired.
         
         Args:
@@ -89,7 +91,7 @@ class WeatherResponseCache:
                 expires = datetime.fromisoformat(expires_str)
                 
                 # Convert current time to UTC for comparison
-                now = datetime.now(expires.tzinfo if expires.tzinfo else timezone.utc)
+                now = datetime.now(expires.tzinfo if expires.tzinfo else UTC)
                 
                 # Check if expired
                 if expires < now:
@@ -115,7 +117,7 @@ class WeatherResponseCache:
         longitude: float,
         forecast_start: datetime,
         forecast_end: datetime,
-        response_data: Dict[str, Any],
+        response_data: dict[str, Any],
         expires: datetime
     ) -> None:
         """Store response in cache.
@@ -169,7 +171,7 @@ class WeatherResponseCache:
         except Exception as e:
             self.logger.error("Failed to clear cache: %s", str(e))
     
-    def list_entries(self) -> List[Dict[str, Any]]:
+    def list_entries(self) -> list[dict[str, Any]]:
         """List all cache entries.
         
         Returns:
@@ -221,7 +223,7 @@ class WeatherResponseCache:
             self.logger.error("Failed to clear weather cache: %s", str(e))
             raise 
     
-    def list_all(self) -> List[Dict[str, Any]]:
+    def list_all(self) -> list[dict[str, Any]]:
         """List all cached entries.
         
         Returns:

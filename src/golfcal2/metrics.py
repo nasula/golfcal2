@@ -1,12 +1,14 @@
 """Metrics collection and reporting for golfcal2."""
 
-import time
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-import threading
-from collections import defaultdict
 import statistics
+import threading
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
+from typing import Any
+
 
 @dataclass
 class TimerStats:
@@ -15,7 +17,7 @@ class TimerStats:
     total_time: float = 0.0
     min_time: float = float('inf')
     max_time: float = 0.0
-    times: List[float] = field(default_factory=list)
+    times: list[float] = field(default_factory=list)
 
     def add(self, duration: float) -> None:
         """Add a new duration measurement."""
@@ -29,7 +31,7 @@ class TimerStats:
         if len(self.times) > 1000:
             self.times = self.times[-1000:]
 
-    def get_stats(self) -> Dict[str, float]:
+    def get_stats(self) -> dict[str, float]:
         """Get statistical summary."""
         if not self.times:
             return {
@@ -66,9 +68,9 @@ class Metrics:
     
     def __init__(self):
         if not getattr(self, '_initialized', False):
-            self._timers: Dict[str, TimerStats] = defaultdict(TimerStats)
-            self._counters: Dict[str, int] = defaultdict(int)
-            self._gauges: Dict[str, float] = {}
+            self._timers: dict[str, TimerStats] = defaultdict(TimerStats)
+            self._counters: dict[str, int] = defaultdict(int)
+            self._gauges: dict[str, float] = {}
             self._start_time = datetime.now()
             self._lock = threading.Lock()
             self._initialized = True
@@ -103,7 +105,7 @@ class Metrics:
         with self._lock:
             self._timers[name].add(duration)
     
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get all metrics.
         
         Returns:
@@ -132,7 +134,7 @@ class Timer:
             name: Name of the operation being timed
         """
         self.name = name
-        self.start_time: Optional[float] = None
+        self.start_time: float | None = None
         self.metrics = Metrics()
     
     def __enter__(self) -> 'Timer':

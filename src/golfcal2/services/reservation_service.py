@@ -3,55 +3,62 @@ Reservation service for golf calendar application.
 """
 
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional, Tuple, Set, NoReturn, cast, Protocol, runtime_checkable
-from typing_extensions import Never
-from zoneinfo import ZoneInfo
-import requests
-from icalendar import Event, Calendar, vText, vDatetime  # type: ignore
-import yaml
 import traceback
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
+from typing import NoReturn
+from typing import Protocol
+from typing import runtime_checkable
+from zoneinfo import ZoneInfo
 
-from golfcal2.models.golf_club import GolfClubFactory, GolfClub, AppConfigProtocol as GolfClubConfigProtocol
-from golfcal2.models.reservation import Reservation
-from golfcal2.models.user import User, Membership
-from golfcal2.utils.logging_utils import EnhancedLoggerMixin
-from golfcal2.config.settings import AppConfig
-from golfcal2.services.auth_service import AuthService
-from golfcal2.models.mixins import ReservationHandlerMixin
-from golfcal2.services.mixins import CalendarHandlerMixin
-from golfcal2.exceptions import (
-    APIError,
-    APITimeoutError,
-    APIRateLimitError,
-    APIResponseError,
-    ErrorCode,
-    handle_errors
-)
+import requests
+import yaml
+from icalendar import Calendar  # type: ignore
+from icalendar import Event  # type: ignore
+from icalendar import vDatetime  # type: ignore
+
 from golfcal2.config.error_aggregator import aggregate_error
-from golfcal2.services.weather_service import WeatherService
-from golfcal2.services.weather_formatter import WeatherFormatter
-from golfcal2.services.reservation_factory import ReservationFactory, ReservationContext
+from golfcal2.config.settings import AppConfig
+from golfcal2.exceptions import APIError
+from golfcal2.exceptions import APIResponseError
+from golfcal2.exceptions import APITimeoutError
+from golfcal2.exceptions import ErrorCode
+from golfcal2.exceptions import handle_errors
+from golfcal2.models.golf_club import AppConfigProtocol as GolfClubConfigProtocol
+from golfcal2.models.golf_club import GolfClub
+from golfcal2.models.golf_club import GolfClubFactory
+from golfcal2.models.mixins import ReservationHandlerMixin
+from golfcal2.models.reservation import Reservation
+from golfcal2.models.user import Membership
+from golfcal2.models.user import User
+from golfcal2.services.auth_service import AuthService
 from golfcal2.services.met_weather_strategy import MetWeatherStrategy
-from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
-from golfcal2.utils.api_handler import APIResponseValidator
+from golfcal2.services.mixins import CalendarHandlerMixin
 from golfcal2.services.notification_service import NotificationService
-from golfcal2.utils.timezone_utils import TimezoneManager
+from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
+from golfcal2.services.reservation_factory import ReservationContext
+from golfcal2.services.reservation_factory import ReservationFactory
+from golfcal2.services.weather_formatter import WeatherFormatter
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.wise_golf_discovery_service import WiseGolfDiscoveryService
+from golfcal2.utils.logging_utils import EnhancedLoggerMixin
+from golfcal2.utils.timezone_utils import TimezoneManager
+
 
 # Lazy load weather service
-_weather_service: Optional[WeatherService] = None
+_weather_service: WeatherService | None = None
 
 @runtime_checkable
 class AppConfigProtocol(GolfClubConfigProtocol, Protocol):
     """Protocol for application configuration."""
-    users: Dict[str, Any]
-    clubs: Dict[str, Any]
-    global_config: Dict[str, Any]
-    api_keys: Dict[str, str]
+    users: dict[str, Any]
+    clubs: dict[str, Any]
+    global_config: dict[str, Any]
+    api_keys: dict[str, str]
 
-def raise_error(msg: str = "") -> Never:
-    """Helper function to raise an error and satisfy the Never type."""
+def raise_error(msg: str = "") -> NoReturn:
+    """Helper function to raise an error and satisfy the NoReturn type."""
     raise APIError(msg)
 
 class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarHandlerMixin):
@@ -83,9 +90,9 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             memberships=[
                 Membership(
                     club=membership['club'],
-                    clubAbbreviation=membership.get('clubAbbreviation', membership['club']),
                     duration=membership.get('duration', {'hours': 4}),
-                    auth_details=membership.get('auth_details', {})
+                    auth_details=membership.get('auth_details', {}),
+                    club_abbreviation=membership.get('clubAbbreviation', membership['club'])
                 )
                 for membership in self.user_config.get('memberships', [])
             ]
@@ -107,9 +114,9 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
     def process_user(
         self,
         user_name: str,
-        user_config: Dict[str, Any],
+        user_config: dict[str, Any],
         past_days: int = 1
-    ) -> List[Reservation]:
+    ) -> list[Reservation]:
         """Process user's reservations."""
         try:
             # Create user object
@@ -120,15 +127,15 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 memberships=[
                     Membership(
                         club=membership['club'],
-                        clubAbbreviation=membership.get('clubAbbreviation', membership['club']),
                         duration=membership.get('duration', {'hours': 4}),
-                        auth_details=membership.get('auth_details', {})
+                        auth_details=membership.get('auth_details', {}),
+                        club_abbreviation=membership.get('clubAbbreviation', membership['club'])
                     )
                     for membership in user_config.get('memberships', [])
                 ]
             )
             
-            reservations: List[Reservation] = []
+            reservations: list[Reservation] = []
             # Use start of current day as cutoff
             now = datetime.now(ZoneInfo(self.config.get('timezone', 'UTC')))
             cutoff_time = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=past_days)
@@ -210,7 +217,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         """Clear weather cache."""
         self.weather_service.clear_cache()
     
-    def list_weather_cache(self) -> List[Dict[str, Any]]:
+    def list_weather_cache(self) -> list[dict[str, Any]]:
         """List weather cache entries."""
         return self.weather_service.list_cache()
 
@@ -226,7 +233,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 return False
                 
             # Check if user exists in config
-            if not self.username in self.config.users:
+            if self.username not in self.config.users:
                 self.error(f"User {self.username} not found in configuration")
                 return False
                 
@@ -241,10 +248,10 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             return True
             
         except Exception as e:
-            self.error(f"Error checking configuration: {str(e)}")
+            self.error(f"Error checking configuration: {e!s}")
             return False
 
-    def _make_api_request(self, method: str, url: str, headers: Optional[Dict[str, str]] = None, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _make_api_request(self, method: str, url: str, headers: dict[str, str] | None = None, data: dict[str, Any] | None = None) -> dict[str, Any]:
         """Make an API request with error handling.
         
         Args:
@@ -282,7 +289,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 )
             except requests.exceptions.RequestException as e:
                 raise APIResponseError(
-                    f"Request failed: {str(e)}",
+                    f"Request failed: {e!s}",
                     response=getattr(e, 'response', None)
                 )
 
@@ -314,7 +321,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                     elif 'id' in reservation.raw_data:
                         resource_id = str(reservation.raw_data.get('id', '0'))
                 
-                club_abbr = getattr(reservation.membership, 'clubAbbreviation', 'GOLF')
+                club_abbr = getattr(reservation.membership, 'club_abbreviation', 'GOLF')
                 event_uid = f"{club_abbr}_{reservation.start_time.strftime('%Y%m%d%H%M')}_{resource_id}_{self.username}"
                 event.add('uid', event_uid)
             except Exception as e:
@@ -341,7 +348,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         self,
         days: int = 1,
         exclude_other_wisegolf: bool = False
-    ) -> List[Reservation]:
+    ) -> list[Reservation]:
         """List reservations for the user.
         
         Args:
@@ -351,7 +358,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         Returns:
             List of reservations sorted by start time
         """
-        all_reservations: List[Reservation] = []
+        all_reservations: list[Reservation] = []
         
         # Calculate cutoff date
         now = datetime.now(self.timezone)
@@ -411,7 +418,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         club: GolfClub,
         membership: Membership,
         days: int
-    ) -> List[Reservation]:
+    ) -> list[Reservation]:
         """Get reservations for a club."""
         try:
             # Get current time in club's timezone
@@ -482,7 +489,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             self.logger.error(f"Failed to get reservations for club {club.name}: {e}", exc_info=True)
             return []
 
-    def check_overlaps(self) -> List[Tuple[Reservation, Reservation]]:
+    def check_overlaps(self) -> list[tuple[Reservation, Reservation]]:
         """
         Check for overlapping reservations.
         
@@ -495,11 +502,11 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             "check overlaps",
             lambda: raise_error("Failed to check overlaps")
         ):
-            overlaps: List[Tuple[Reservation, Reservation]] = []
+            overlaps: list[tuple[Reservation, Reservation]] = []
             all_reservations = self.list_reservations()
             
             # Group reservations by user
-            user_reservations: Dict[str, List[Reservation]] = {}
+            user_reservations: dict[str, list[Reservation]] = {}
             for reservation in all_reservations:
                 user_name = reservation.user.name
                 if user_name not in user_reservations:
@@ -550,7 +557,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             return self.config.clubs[club_id].get('abbreviation', '')
         return ''
 
-    def list_courses(self, include_all: bool = False) -> List[str]:
+    def list_courses(self, include_all: bool = False) -> list[str]:
         """
         List available golf courses.
         
@@ -585,7 +592,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
         """Clean up expired weather cache entries."""
         return self.weather_service.cleanup_cache()
 
-    def get_test_events(self, days: int = 1) -> List[Reservation]:
+    def get_test_events(self, days: int = 1) -> list[Reservation]:
         """Get test events from test_events.yaml file.
         
         Args:
@@ -603,7 +610,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 self.warning(f"Test events file not found: {test_events_path}")
                 return []
             
-            with open(test_events_path, 'r') as f:
+            with open(test_events_path) as f:
                 test_events = yaml.safe_load(f)
             
             if not test_events:
@@ -681,7 +688,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             self.error(f"Failed to parse dynamic time '{time_str}': {e}", exc_info=True)
             raise ValueError(f"Invalid time format: {time_str}")
 
-    def get_club(self, club_name: str) -> Optional[GolfClub]:
+    def get_club(self, club_name: str) -> GolfClub | None:
         """Get club instance by name."""
         if club_name not in self.config.clubs:
             return None
@@ -690,7 +697,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
             self.config
         )
 
-    def list_user_courses(self) -> List[GolfClub]:
+    def list_user_courses(self) -> list[GolfClub]:
         """List courses available to the user."""
         courses = []
         for membership in self.user.memberships:
@@ -703,7 +710,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                     courses.append(club)
         return courses
     
-    def list_all_courses(self) -> List[GolfClub]:
+    def list_all_courses(self) -> list[GolfClub]:
         """List all configured courses."""
         courses = []
         for club_name, club_config in self.config.clubs.items():
@@ -712,7 +719,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 courses.append(club)
         return courses
 
-    def fetch_all_wisegolf_reservations(self, membership: Membership) -> List[Reservation]:
+    def fetch_all_wisegolf_reservations(self, membership: Membership) -> list[Reservation]:
         """Fetch reservations from all WiseGolf clubs.
         
         This method uses the WiseGolfDiscoveryService to fetch reservations from all
@@ -746,7 +753,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                         'name': club_name,
                         'auth_type': 'wisegolf',
                         'cookie_name': 'wisegolf',
-                        'clubAbbreviation': club_id
+                        'club_abbreviation': club_id
                     })
                     
                     # Create club instance

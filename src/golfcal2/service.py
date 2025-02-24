@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 
-import time
 import argparse
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-from pathlib import Path
-from typing import Dict, Set, Optional, Tuple, List
-from dataclasses import dataclass, field
-import logging
 import sys
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from datetime import timedelta
+from zoneinfo import ZoneInfo
 
-from golfcal2.cli import ProcessCommands
-from golfcal2.config.settings import ConfigurationManager
-from golfcal2.utils.logging_utils import get_logger
-from golfcal2.config.logging import setup_logging
-from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggregationConfig
-from golfcal2.services import WeatherService, CalendarService, ExternalEventService
-from golfcal2.services.calendar.builders.calendar_builder import CalendarBuilder
-from golfcal2.services.reservation_service import ReservationService
-from golfcal2.models.user import User
-from golfcal2.utils.cli_utils import CLIContext, CLIBuilder, add_common_options
-from golfcal2.server import HealthCheckServer
-from golfcal2.metrics import Metrics, Timer, track_time
+from golfcal2.config.error_aggregator import ErrorAggregationConfig
+from golfcal2.config.error_aggregator import init_error_aggregator
 from golfcal2.config.logging import load_logging_config
+from golfcal2.config.logging import setup_logging
+from golfcal2.config.settings import ConfigurationManager
+from golfcal2.metrics import Metrics
+from golfcal2.metrics import Timer
+from golfcal2.metrics import track_time
+from golfcal2.models.user import User
+from golfcal2.server import HealthCheckServer
+from golfcal2.services import CalendarService
+from golfcal2.services import ExternalEventService
+from golfcal2.services import WeatherService
+from golfcal2.services.reservation_service import ReservationService
+from golfcal2.utils.cli_utils import CLIBuilder
+from golfcal2.utils.cli_utils import CLIContext
+from golfcal2.utils.cli_utils import add_common_options
+from golfcal2.utils.logging_utils import get_logger
+
 
 @dataclass
 class EventState:
@@ -34,11 +38,11 @@ class EventState:
 class ServiceState:
     """Track the state of the calendar service."""
     def __init__(self):
-        self.processed_events: Dict[str, EventState] = {}  # uid -> EventState
-        self.calendar_mtimes: Dict[str, float] = {}  # path -> mtime
-        self.next_event: Optional[datetime] = None
-        self.next_event_uid: Optional[str] = None
-        self._timezone: Optional[ZoneInfo] = None
+        self.processed_events: dict[str, EventState] = {}  # uid -> EventState
+        self.calendar_mtimes: dict[str, float] = {}  # path -> mtime
+        self.next_event: datetime | None = None
+        self.next_event_uid: str | None = None
+        self._timezone: ZoneInfo | None = None
         
     @property
     def timezone(self) -> ZoneInfo:
@@ -104,7 +108,7 @@ def create_args() -> argparse.Namespace:
     return parser.parse_args()
 
 @track_time("get_next_event_time")
-def get_next_event_time(calendar_service: CalendarService, service_state: ServiceState) -> Tuple[Optional[datetime], Optional[str]]:
+def get_next_event_time(calendar_service: CalendarService, service_state: ServiceState) -> tuple[datetime | None, str | None]:
     """Get the next event time that needs processing."""
     next_event_time = None
     next_event_uid = None
@@ -117,11 +121,15 @@ def get_next_event_time(calendar_service: CalendarService, service_state: Servic
         # Process each user's reservations
         for user_name, user_config in calendar_service.config.users.items():
             try:
-                # Create user object
+                # Create user object and process reservations
                 user = User.from_config(user_name, dict(user_config))
                 
                 # Create reservation service for this user
-                reservation_service = ReservationService(user_name, calendar_service.config)
+                reservation_service = ReservationService(
+                    config=calendar_service.config,
+                    user=user,
+                    logger=logger
+                )
                 
                 # Get reservations for next 7 days
                 reservations = reservation_service.list_reservations(days=7)
@@ -140,17 +148,15 @@ def get_next_event_time(calendar_service: CalendarService, service_state: Servic
                             next_event_uid = event_uid
                             
             except Exception as e:
-                logger = get_logger(__name__)
                 logger.error(f"Error processing user {user_name}: {e}", exc_info=True)
                 continue
     
     except Exception as e:
-        logger = get_logger(__name__)
         logger.error(f"Error getting next event time: {e}", exc_info=True)
     
     return next_event_time, next_event_uid
 
-def get_next_processing_time(now: datetime, next_event: Optional[datetime] = None) -> datetime:
+def get_next_processing_time(now: datetime, next_event: datetime | None = None) -> datetime:
     """Calculate the next processing time.
     
     The service should process:
@@ -248,7 +254,6 @@ def main():
         # Create CLI parser for context
         cli_builder = CLIBuilder("GolfCal2 Service CLI")
         parser = cli_builder.build()
-        add_common_options(parser)
         
         try:
             while True:
@@ -280,7 +285,7 @@ def main():
                                 reservations = reservation_service.list_reservations()
                                 
                                 # Process calendar with both reservations and external events
-                                calendar = calendar_service.process_user_reservations(user, reservations)
+                                calendar_service.process_user_reservations(user, reservations)
                                 
                                 metrics.increment("calendar_processing_success")
                                 logger.info(f"Calendar processing completed successfully for user {user_name}")
@@ -335,7 +340,7 @@ def main():
                 except Exception as e:
                     logger.error(f"Error stopping health check server: {e}")
             
-    except Exception as e:
+    except Exception:
         logger = get_logger(__name__)
         logger.exception("Fatal error in service")
         metrics.increment("fatal_errors")

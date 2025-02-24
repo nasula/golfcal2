@@ -2,13 +2,20 @@
 OpenMeteo weather service strategy implementation.
 """
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
+
 import requests
 
+from golfcal2.exceptions import APIError
+from golfcal2.exceptions import ErrorCode
 from golfcal2.services.weather_service import WeatherStrategy
-from golfcal2.services.weather_types import WeatherResponse, WeatherData, WeatherCode
-from golfcal2.exceptions import APIError, ErrorCode
+from golfcal2.services.weather_types import WeatherCode
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherResponse
+
 
 class OpenMeteoStrategy(WeatherStrategy):
     """Weather strategy for OpenMeteo service."""
@@ -54,7 +61,7 @@ class OpenMeteoStrategy(WeatherStrategy):
         99: 100.0  # Thunderstorm with heavy hail
     }
     
-    def get_weather(self) -> Optional[WeatherResponse]:
+    def get_weather(self) -> WeatherResponse | None:
         """Get weather data from OpenMeteo."""
         try:
             # Check if request is beyond maximum forecast range
@@ -86,7 +93,7 @@ class OpenMeteoStrategy(WeatherStrategy):
         # OpenMeteo forecasts are updated every 3 hours
         return datetime.now(self.context.utc_tz) + timedelta(hours=3)
     
-    def _fetch_forecasts(self) -> Optional[Dict[str, Any]]:
+    def _fetch_forecasts(self) -> dict[str, Any] | None:
         """Fetch forecast data from OpenMeteo API."""
         try:
             # Build API URL
@@ -148,7 +155,7 @@ class OpenMeteoStrategy(WeatherStrategy):
             self.error(f"Unexpected error: {e}")
             return None
     
-    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+    def _parse_response(self, response_data: dict[str, Any]) -> WeatherResponse | None:
         """Parse OpenMeteo API response into WeatherResponse."""
         try:
             if 'hourly' not in response_data:
@@ -156,11 +163,11 @@ class OpenMeteoStrategy(WeatherStrategy):
             
             hourly = response_data['hourly']
             times = hourly['time']
-            weather_data: List[WeatherData] = []
+            weather_data: list[WeatherData] = []
             
             for i, time_str in enumerate(times):
                 # OpenMeteo returns UTC times, force UTC timezone
-                time = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
+                time = datetime.fromisoformat(time_str).replace(tzinfo=UTC)
                 
                 # Map OpenMeteo weather codes to WeatherCode enum
                 weather_code = hourly['weathercode'][i]
@@ -189,7 +196,7 @@ class OpenMeteoStrategy(WeatherStrategy):
                 ))
             
             # Get elaboration time in UTC
-            elaboration_time = datetime.now(timezone.utc)
+            elaboration_time = datetime.now(UTC)
             
             return WeatherResponse(
                 data=weather_data,

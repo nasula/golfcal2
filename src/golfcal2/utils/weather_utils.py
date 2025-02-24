@@ -1,8 +1,5 @@
 """Weather utility functions."""
 
-from typing import List, Optional
-from golfcal2.services.weather_types import WeatherData
-from datetime import timedelta
 
 def get_weather_symbol(code: str) -> str:
     """Get weather symbol for weather code."""

@@ -2,16 +2,22 @@
 TeeTime API client for golf calendar application.
 """
 
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING
+from typing import Any
+from typing import Optional
 from urllib.parse import urljoin
-import time
+
 import requests
 
-from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.models.mixins import APIAuthError
+from golfcal2.models.mixins import APIError
+from golfcal2.models.mixins import APIResponseError
+from golfcal2.models.mixins import APITimeoutError
 from golfcal2.models.mixins import RequestHandlerMixin
-from golfcal2.models.mixins import APIError, APITimeoutError, APIResponseError, APIAuthError
 from golfcal2.services.auth_service import AuthService
+from golfcal2.utils.logging_utils import LoggerMixin
+
 
 # Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:
@@ -24,7 +30,7 @@ class TeeTimeAPIError(Exception):
 class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
     """TeeTime API client implementation."""
     
-    def __init__(self, base_url: str, auth_service: AuthService, club_details: Dict[str, Any], membership: Union[Dict[str, Any], Any], club: Optional['GolfClub'] = None):
+    def __init__(self, base_url: str, auth_service: AuthService, club_details: dict[str, Any], membership: dict[str, Any] | Any, club: Optional['GolfClub'] = None):
         """Initialize TeeTime API client."""
         super().__init__()
         self.base_url = base_url.rstrip('/')  # Remove trailing slash
@@ -62,7 +68,7 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
         method: str,
         endpoint: str,
         **kwargs: Any
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Make an API request with proper error handling."""
         try:
             url = urljoin(self.base_url, endpoint)
@@ -88,7 +94,7 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
             self.logger.error(f"Unexpected error: {e}")
             raise
 
-    def get_reservations(self) -> List[Dict[str, Any]]:
+    def get_reservations(self) -> list[dict[str, Any]]:
         """Get reservations from TeeTime API."""
         try:
             # Get token from auth details
@@ -168,15 +174,15 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
             return [r for r in reservations if r.get('status') != 'CANCELLED']
             
         except APITimeoutError as e:
-            raise TeeTimeAPIError(f"Request timed out: {str(e)}")
+            raise TeeTimeAPIError(f"Request timed out: {e!s}")
         except APIResponseError as e:
-            raise TeeTimeAPIError(f"Request failed: {str(e)}")
+            raise TeeTimeAPIError(f"Request failed: {e!s}")
         except APIAuthError as e:
-            raise TeeTimeAPIError(f"Authentication failed: {str(e)}")
+            raise TeeTimeAPIError(f"Authentication failed: {e!s}")
         except Exception as e:
-            raise TeeTimeAPIError(f"Unexpected error: {str(e)}")
+            raise TeeTimeAPIError(f"Unexpected error: {e!s}")
 
-    def get_club_info(self, club_number: str) -> Optional[Dict[str, Any]]:
+    def get_club_info(self, club_number: str) -> dict[str, Any] | None:
         """Get club information from TeeTime API."""
         try:
             # Get token from auth details
@@ -194,10 +200,10 @@ class TeeTimeAPI(LoggerMixin, RequestHandlerMixin):
             return response
             
         except APITimeoutError as e:
-            raise TeeTimeAPIError(f"Request timed out: {str(e)}")
+            raise TeeTimeAPIError(f"Request timed out: {e!s}")
         except APIResponseError as e:
-            raise TeeTimeAPIError(f"Request failed: {str(e)}")
+            raise TeeTimeAPIError(f"Request failed: {e!s}")
         except APIAuthError as e:
-            raise TeeTimeAPIError(f"Authentication failed: {str(e)}")
+            raise TeeTimeAPIError(f"Authentication failed: {e!s}")
         except Exception as e:
-            raise TeeTimeAPIError(f"Unexpected error: {str(e)}") 
+            raise TeeTimeAPIError(f"Unexpected error: {e!s}") 

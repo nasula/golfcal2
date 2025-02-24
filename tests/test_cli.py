@@ -1,8 +1,11 @@
 """Unit tests for CLI argument parsing and validation."""
 
-import pytest
 import argparse
+
+import pytest
+
 from golfcal2.cli import create_parser
+
 
 class TestArgumentParser(argparse.ArgumentParser):
     """Custom ArgumentParser that raises ArgumentError instead of exiting."""

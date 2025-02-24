@@ -1,11 +1,21 @@
 """Tests for the base API implementation."""
 
+import json
+from unittest.mock import MagicMock
+from unittest.mock import Mock
+from unittest.mock import patch
+
 import pytest
 import requests
-import json
-from unittest.mock import Mock, patch, MagicMock
-from requests.exceptions import Timeout, ConnectionError, RequestException
-from golfcal2.exceptions import APIError, APITimeoutError, APIResponseError, APIValidationError
+from requests.exceptions import ConnectionError
+from requests.exceptions import RequestException
+from requests.exceptions import Timeout
+
+from golfcal2.exceptions import APIError
+from golfcal2.exceptions import APIResponseError
+from golfcal2.exceptions import APITimeoutError
+from golfcal2.exceptions import APIValidationError
+
 
 @pytest.fixture
 def auth_service():

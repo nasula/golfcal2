@@ -1,15 +1,17 @@
 """Mock weather service for testing."""
 
 import os
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, cast
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from golfcal2.services.base_service import WeatherService
-from golfcal2.services.weather_types import (
-    WeatherResponse, WeatherData, WeatherCode
-)
 from golfcal2.services.weather_database import WeatherResponseCache
+from golfcal2.services.weather_types import WeatherCode
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherResponse
+
 
 class MockWeatherService(WeatherService):
     """Mock weather service for testing."""
@@ -18,7 +20,7 @@ class MockWeatherService(WeatherService):
     HOURLY_RANGE: int = 48  # 2 days
     SIX_HOURLY_RANGE: int = 240  # 10 days
     
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Dict[str, Any]):
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: dict[str, Any]):
         """Initialize service."""
         super().__init__(local_tz, utc_tz, config)
         
@@ -28,7 +30,7 @@ class MockWeatherService(WeatherService):
         self.cache = WeatherResponseCache(os.path.join(data_dir, 'weather_cache.db'))
         
         # Initialize mock data
-        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache: dict[str, dict[str, Any]] = {}
         
     def get_weather(
         self,
@@ -36,8 +38,8 @@ class MockWeatherService(WeatherService):
         lon: float,
         start_time: datetime,
         end_time: datetime,
-        club: Optional[str] = None
-    ) -> Optional[WeatherResponse]:
+        club: str | None = None
+    ) -> WeatherResponse | None:
         """Get weather data for a location."""
         # Validate input
         if not (-90 <= lat <= 90):
@@ -76,7 +78,7 @@ class MockWeatherService(WeatherService):
         lon: float,
         start_time: datetime,
         end_time: datetime
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Generate mock forecast data."""
         try:
             current = start_time
@@ -115,14 +117,14 @@ class MockWeatherService(WeatherService):
             self.error("Failed to generate mock forecasts", exc_info=e)
             return None
             
-    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+    def _parse_response(self, response_data: dict[str, Any]) -> WeatherResponse | None:
         """Parse mock weather response."""
         try:
             start_time = datetime.fromisoformat(response_data['start_time'])
             end_time = datetime.fromisoformat(response_data['end_time'])
             interval = response_data.get('interval', 60)
             
-            weather_data: List[WeatherData] = []
+            weather_data: list[WeatherData] = []
             current_time = start_time
             
             while current_time <= end_time:

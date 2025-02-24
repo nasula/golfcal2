@@ -1,22 +1,20 @@
 """Logging configuration utilities."""
 
-import os
-import sys
 import json
 import logging
 import logging.config
 import logging.handlers
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
+from golfcal2.config.logging_config import LoggingConfig
+from golfcal2.config.logging_config import load_logging_config
+from golfcal2.config.logging_filters import SensitiveDataFilter
 from golfcal2.config.types import AppConfig
-from golfcal2.config.logging_filters import (
-    SensitiveDataFilter, CorrelationFilter
-)
-from golfcal2.config.logging_config import (
-    load_logging_config, LoggingConfig, ServiceConfig
-)
+
 
 class JsonFormatter(logging.Formatter):
     """JSON formatter for structured logging."""
@@ -73,7 +71,7 @@ class StructuredLogger(logging.Logger):
         self,
         level: int,
         msg: str,
-        extra_fields: Optional[Dict[str, Any]] = None,
+        extra_fields: dict[str, Any] | None = None,
         *args: Any,
         **kwargs: Any
     ) -> None:
@@ -90,23 +88,23 @@ class StructuredLogger(logging.Logger):
             kwargs.setdefault('extra', {})['extra_fields'] = extra_fields
         super().log(level, msg, *args, **kwargs)
 
-    def debug_with_fields(self, msg: str, extra_fields: Optional[Dict[str, Any]] = None, *args: Any, **kwargs: Any) -> None:
+    def debug_with_fields(self, msg: str, extra_fields: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
         """Log debug message with extra fields."""
         self._log_with_fields(logging.DEBUG, msg, extra_fields, *args, **kwargs)
 
-    def info_with_fields(self, msg: str, extra_fields: Optional[Dict[str, Any]] = None, *args: Any, **kwargs: Any) -> None:
+    def info_with_fields(self, msg: str, extra_fields: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
         """Log info message with extra fields."""
         self._log_with_fields(logging.INFO, msg, extra_fields, *args, **kwargs)
 
-    def warning_with_fields(self, msg: str, extra_fields: Optional[Dict[str, Any]] = None, *args: Any, **kwargs: Any) -> None:
+    def warning_with_fields(self, msg: str, extra_fields: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
         """Log warning message with extra fields."""
         self._log_with_fields(logging.WARNING, msg, extra_fields, *args, **kwargs)
 
-    def error_with_fields(self, msg: str, extra_fields: Optional[Dict[str, Any]] = None, *args: Any, **kwargs: Any) -> None:
+    def error_with_fields(self, msg: str, extra_fields: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
         """Log error message with extra fields."""
         self._log_with_fields(logging.ERROR, msg, extra_fields, *args, **kwargs)
 
-    def critical_with_fields(self, msg: str, extra_fields: Optional[Dict[str, Any]] = None, *args: Any, **kwargs: Any) -> None:
+    def critical_with_fields(self, msg: str, extra_fields: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> None:
         """Log critical message with extra fields."""
         self._log_with_fields(logging.CRITICAL, msg, extra_fields, *args, **kwargs)
 
@@ -171,7 +169,7 @@ def get_console_handler(formatter: logging.Formatter) -> logging.StreamHandler:
     return console_handler
 
 def get_file_handler(
-    log_file: Union[str, Path],
+    log_file: str | Path,
     formatter: logging.Formatter,
     max_bytes: int,
     backup_count: int
@@ -241,7 +239,7 @@ def get_service_logger(service_name: str, config: LoggingConfig, global_level: i
     
     return logger
 
-def init_error_aggregator(config: Optional[Dict[str, Any]] = None) -> None:
+def init_error_aggregator(config: dict[str, Any] | None = None) -> None:
     """Initialize error aggregator with given configuration.
     
     Args:
@@ -250,167 +248,38 @@ def init_error_aggregator(config: Optional[Dict[str, Any]] = None) -> None:
     # Currently a placeholder - can be implemented later if error aggregation is needed
     pass
 
-def setup_logging(
-    config: AppConfig,
-    dev_mode: bool = False,
-    verbose: bool = False,
-    log_file: Optional[str] = None,
-    logging_config: Optional[LoggingConfig] = None
-) -> None:
-    """Set up logging configuration.
-    
-    Args:
-        config: Application configuration
-        dev_mode: Whether to run in development mode
-        verbose: Whether to enable verbose logging
-        log_file: Optional log file path
-        logging_config: Optional logging configuration
-    """
-    if logging_config is None:
-        logging_config = load_logging_config()
-    
-    # Determine log level
-    if verbose:
-        level = logging_config.verbose_level
-    elif dev_mode:
-        level = logging_config.dev_level
-    else:
-        level = logging_config.default_level
-    
-    # Convert level string to logging level
-    log_level = getattr(logging, level.upper())
-    
-    # Create base configuration
-    log_config = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'console': {
-                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            },
-            'file': {
-                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            },
-            'journald': {
-                'format': '%(name)s: %(levelname)s %(message)s'
-            }
-        },
-        'handlers': {},
-        'root': {
-            'level': log_level,
-            'handlers': []
-        }
-    }
-    
-    # Add console handler if enabled
-    if logging_config.console.enabled:
-        log_config['handlers']['console'] = {
-            'class': 'logging.StreamHandler',
-            'formatter': 'console',
-            'level': log_level
-        }
-        log_config['root']['handlers'].append('console')
-    
-    # Add file handler if enabled and path provided
-    if logging_config.file.enabled and (log_file or logging_config.file.path):
-        path = log_file or logging_config.file.path
-        log_config['handlers']['file'] = {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': path,
-            'formatter': 'file',
-            'maxBytes': logging_config.file.max_size_mb * 1024 * 1024,
-            'backupCount': logging_config.file.backup_count,
-            'level': log_level
-        }
-        log_config['root']['handlers'].append('file')
-    
-    # Add journald handler if enabled
-    if logging_config.journald.enabled:
-        try:
-            from systemd import journal
-            log_config['handlers']['journald'] = {
-                'class': 'systemd.journal.JournalHandler',
-                'formatter': 'journald',
-                'level': getattr(logging, logging_config.journald.level.upper()),
-                'SYSLOG_IDENTIFIER': logging_config.journald.identifier
-            }
-            log_config['root']['handlers'].append('journald')
-        except ImportError:
-            print("Warning: systemd module not available, journald logging disabled")
-    
-    # Configure logging
-    logging.config.dictConfig(log_config)
-    
-    # Set library log levels
-    for lib, level in logging_config.libraries.items():
-        logging.getLogger(lib).setLevel(getattr(logging, level.upper()))
-    
-    # Initialize error aggregator first
-    init_error_aggregator(logging_config.error_aggregation)
-    
-    # Set root logger level based on verbose flag
+def setup_logging(config: AppConfig | None = None, dev_mode: bool = False, verbose: bool = False, log_file: str | None = None) -> None:
+    """Set up logging configuration."""
+    # Get root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
+    root_logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     
-    # Remove any existing handlers to avoid duplicates
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
+    # Clear any existing handlers
+    root_logger.handlers.clear()
     
-    # Create formatters
-    json_formatter = JsonFormatter(include_timestamp=True)
-    console_formatter = ColoredFormatter() if logging_config.console.color else logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    root_logger.addHandler(console_handler)
     
-    # Set up console handler
-    if logging_config.console.enabled:
-        console_handler = get_console_handler(console_formatter)
-        # Only show debug logs if verbose is enabled
-        console_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
-        root_logger.addHandler(console_handler)
+    # Try to set up journald logging, but don't fail if not available
+    try:
+        from golfcal2.config.logging_handlers import JournaldHandler
+        journald_handler = JournaldHandler()
+        journald_handler.setLevel(logging.INFO)
+        root_logger.addHandler(journald_handler)
+    except ImportError:
+        root_logger.warning("systemd module not available, journald logging disabled")
     
-    # Set up file handler if enabled
-    if logging_config.file.enabled:
-        # Override log file path if provided
-        log_path = log_file if log_file else logging_config.file.path
-        file_handler = get_file_handler(
-            log_path,
-            json_formatter,
-            logging_config.file.max_size_mb * 1024 * 1024,
-            logging_config.file.backup_count
-        )
-        # File handler always logs at DEBUG level for troubleshooting
+    # Add file handler if log file is specified
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        ))
         root_logger.addHandler(file_handler)
     
-    # Set up journald handler if enabled
-    journald_config = config.global_config.get('logging', {}).get('journald', {})
-    if journald_config.get('enabled', True):  # Enable by default
-        from golfcal2.config.logging_handlers import JournaldHandler
-        journald_handler = JournaldHandler(identifier=journald_config.get('identifier', 'golfcal2'))
-        journald_handler.setFormatter(logging.Formatter(journald_config.get('format', '%(name)s: %(levelname)s %(message)s')))
-        journald_handler.setLevel(getattr(logging, journald_config.get('level', 'INFO')))
-        root_logger.addHandler(journald_handler)
-    
-    # Configure library logging
-    for lib, level in logging_config.libraries.items():
-        lib_logger = logging.getLogger(lib)
-        lib_logger.setLevel(getattr(logging, level.upper()))
-        # Ensure library loggers propagate to root
-        lib_logger.propagate = True
-    
-    # Register custom logger class
-    logging.setLoggerClass(StructuredLogger)
-    
-    # Set up service loggers with proper propagation
-    for service_name, service_config in logging_config.services.items():
-        service_logger = get_service_logger(
-            service_name,
-            logging_config,
-            logging.DEBUG if verbose else logging.INFO
-        )
-        # Ensure service loggers propagate to root
-        service_logger.propagate = True
-        
-    # Log initial setup
-    root_logger.debug("Logging initialized in verbose mode") if verbose else root_logger.info("Logging initialized") 
+    # Set up error aggregator
+    init_error_aggregator() 

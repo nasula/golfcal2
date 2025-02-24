@@ -1,17 +1,19 @@
 """Mixins for service classes."""
 
 from datetime import datetime
-from typing import Optional, Any, Dict, Union, Set, cast, List
+from typing import Any
 from zoneinfo import ZoneInfo
-from icalendar import Event, Calendar, vText  # type: ignore[import]
 
 # Since icalendar doesn't have type stubs, we need to import it this way
-import icalendar  # type: ignore[import]
-from golfcal2.utils.logging_utils import LoggerMixin
+from icalendar import Calendar  # type: ignore[import]
+from icalendar import Event  # type: ignore[import]
+from icalendar import vText  # type: ignore[import]
+
 from golfcal2.config.settings import AppConfig
+from golfcal2.models.reservation import Reservation
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_types import WeatherData
-from golfcal2.models.reservation import Reservation
+
 
 class CalendarHandlerMixin:
     """Mixin for handling calendar operations."""
@@ -27,7 +29,7 @@ class CalendarHandlerMixin:
         self.timezone = ZoneInfo(config.global_config.get('timezone', 'UTC'))
         self.utc_tz = ZoneInfo('UTC')
         
-        self.seen_uids: Set[str] = set()
+        self.seen_uids: set[str] = set()
     
     @property
     def config(self) -> AppConfig:
@@ -66,8 +68,8 @@ class CalendarHandlerMixin:
     def _get_weather_for_reservation(
         self,
         reservation: Reservation,
-        weather_service: Optional[WeatherService] = None
-    ) -> Optional[List[WeatherData]]:
+        weather_service: WeatherService | None = None
+    ) -> list[WeatherData] | None:
         """Get weather data for a reservation."""
         if not self.config or not hasattr(self.config, 'clubs'):
             return None
@@ -109,8 +111,8 @@ class CalendarHandlerMixin:
         event: Event,
         club_id: str,
         start_time: datetime,
-        weather_service: Optional[WeatherService] = None,
-        existing_reservation: Optional[Reservation] = None
+        weather_service: WeatherService | None = None,
+        existing_reservation: Reservation | None = None
     ) -> None:
         """Add weather information to event."""
         if not self.config or not hasattr(self.config, 'clubs'):
@@ -136,8 +138,9 @@ class CalendarHandlerMixin:
             if reservation is None:
                 # Create a temporary Reservation object for weather handling
                 from golfcal2.models.golf_club import ExternalGolfClub
-                from golfcal2.models.user import User, Membership
                 from golfcal2.models.reservation import Reservation
+                from golfcal2.models.user import Membership
+                from golfcal2.models.user import User
                 
                 # Create minimal club object with coordinates
                 club = ExternalGolfClub(
@@ -151,9 +154,9 @@ class CalendarHandlerMixin:
                 # Create minimal user and membership objects
                 membership = Membership(
                     club=club.name,
-                    clubAbbreviation="EXT",
-                    duration={"hours": 0, "minutes": 0},
-                    auth_details={}
+                    club_abbreviation="EXT",  # External event marker
+                    duration={"hours": 0, "minutes": 0},  # Duration will be calculated from event times
+                    auth_details={}  # External events don't need auth details
                 )
                 user = User(
                     name="",
@@ -210,7 +213,7 @@ class CalendarHandlerMixin:
         calendar.add('x-wr-timezone', vText(str(timezone)))
         return calendar
 
-    def add_event_to_calendar(self, calendar: Calendar, event: Dict[str, Any]) -> None:
+    def add_event_to_calendar(self, calendar: Calendar, event: dict[str, Any]) -> None:
         """Add an event to the calendar."""
         calendar_event = Event()
         for key, value in event.items():

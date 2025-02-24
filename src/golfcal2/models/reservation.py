@@ -2,23 +2,29 @@
 Reservation model for golf calendar application.
 """
 
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any, Tuple, Union, cast
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
+from golfcal2.models.golf_club import ExternalGolfClub
+from golfcal2.models.golf_club import GolfClub
+from golfcal2.models.user import Membership
+from golfcal2.models.user import User
+from golfcal2.services.weather_formatter import WeatherFormatter
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherResponse
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.utils.timezone_utils import TimezoneManager
-from golfcal2.models.golf_club import GolfClub, ExternalGolfClub
-from golfcal2.models.user import User, Membership
-from golfcal2.services.weather_types import WeatherData, WeatherResponse, get_weather_symbol
-from golfcal2.services.weather_formatter import WeatherFormatter
+
 
 class PlayerDataExtractor:
     """Helper class for extracting player data from different formats."""
     
     @staticmethod
-    def extract_name(data: Dict[str, Any], format_type: str) -> Tuple[str, str]:
+    def extract_name(data: dict[str, Any], format_type: str) -> tuple[str, str]:
         """Extract first and last name from player data."""
         first_name = ""
         family_name = ""
@@ -39,7 +45,7 @@ class PlayerDataExtractor:
         return first_name.strip(), family_name.strip()
 
     @staticmethod
-    def extract_club(data: Dict[str, Any], format_type: str) -> str:
+    def extract_club(data: dict[str, Any], format_type: str) -> str:
         """Extract club abbreviation from player data."""
         if format_type == "wisegolf":
             return str(data.get("clubAbbreviation", data.get("club", "N/A")))
@@ -48,7 +54,7 @@ class PlayerDataExtractor:
         raise ValueError(f"Unsupported format: {format_type}")
 
     @staticmethod
-    def extract_handicap(data: Dict[str, Any], format_type: str) -> float:
+    def extract_handicap(data: dict[str, Any], format_type: str) -> float:
         """Extract handicap from player data."""
         try:
             if format_type == "wisegolf":
@@ -78,7 +84,7 @@ class Player:
             self.handicap = 0.0
 
     @classmethod
-    def from_wisegolf(cls, data: Dict[str, Any]) -> "Player":
+    def from_wisegolf(cls, data: dict[str, Any]) -> "Player":
         """Create Player instance from WiseGolf data."""
         try:
             # Try new extractor first
@@ -114,7 +120,7 @@ class Player:
             )
 
     @classmethod
-    def from_nexgolf(cls, data: Dict[str, Any]) -> "Player":
+    def from_nexgolf(cls, data: dict[str, Any]) -> "Player":
         """Create Player instance from NexGolf data."""
         try:
             # Get player data from the correct location in the structure
@@ -143,7 +149,7 @@ class Player:
                 handicap=handicap
             )
         except Exception as e:
-            logger.error(f"Error creating player from NexGolf data: {str(e)}, data: {data}")
+            logger.error(f"Error creating player from NexGolf data: {e!s}, data: {data}")
             return cls(name="Unknown Player", club="Unknown", handicap=0.0)
 
 @dataclass
@@ -154,10 +160,10 @@ class Reservation(LoggerMixin):
     membership: Membership
     start_time: datetime
     end_time: datetime
-    players: List[Player] = field(default_factory=list)
-    raw_data: Optional[Dict[str, Any]] = None
-    _tz_manager: Optional[TimezoneManager] = None
-    weather_summary: Optional[str] = None
+    players: list[Player] = field(default_factory=list)
+    raw_data: dict[str, Any] | None = None
+    _tz_manager: TimezoneManager | None = None
+    weather_summary: str | None = None
 
     def __post_init__(self) -> None:
         """Initialize after dataclass creation."""
@@ -172,14 +178,14 @@ class Reservation(LoggerMixin):
         """Get event title."""
         try:
             self.debug("Getting event title")
-            self.debug(f"Club info: name={self.club.name if self.club else 'None'}, abbr={getattr(self.club, 'clubAbbreviation', None)}")
+            self.debug(f"Club info: name={self.club.name if self.club else 'None'}, abbr={getattr(self.club, 'club_abbreviation', None)}")
             
             # Get club abbreviation with fallbacks
             club_abbr = None
-            if self.club and hasattr(self.club, 'clubAbbreviation'):
-                club_abbr = self.club.clubAbbreviation
-            if not club_abbr and hasattr(self.membership, 'clubAbbreviation'):
-                club_abbr = self.membership.clubAbbreviation
+            if self.club and hasattr(self.club, 'club_abbreviation'):
+                club_abbr = self.club.club_abbreviation
+            if not club_abbr and hasattr(self.membership, 'club_abbreviation'):
+                club_abbr = self.membership.club_abbreviation
             if not club_abbr:
                 club_abbr = "GOLF"  # Final fallback
                 
@@ -229,7 +235,7 @@ class Reservation(LoggerMixin):
                 resource_id = resources[0].get('resourceId', '0')
         return str(resource_id)
 
-    def _fetch_players(self, start_time: datetime) -> List[Player]:
+    def _fetch_players(self, start_time: datetime) -> list[Player]:
         """Fetch players for the reservation.
         
         Players are matched based on their start time and resource ID. This is because:
@@ -252,7 +258,7 @@ class Reservation(LoggerMixin):
         Returns:
             List of Player objects for this reservation
         """
-        players: List[Player] = []
+        players: list[Player] = []
         if self._tz_manager is None:
             self._tz_manager = TimezoneManager()
         now = self._tz_manager.now()
@@ -268,7 +274,7 @@ class Reservation(LoggerMixin):
                 if all(key in self.raw_data for key in ["firstName", "familyName"]):
                     player = Player(
                         name=f"{self.raw_data['firstName']} {self.raw_data['familyName']}".strip(),
-                        club=self.raw_data.get('clubAbbreviation', 'Unknown'),
+                        club=self.raw_data.get('club_abbreviation', 'Unknown'),
                         handicap=float(self.raw_data.get('handicapActive', 0.0))
                     )
                     players.append(player)
@@ -290,7 +296,7 @@ class Reservation(LoggerMixin):
                         # Get our reservation's details
                         our_start_time = self.raw_data.get('dateTimeStart')
                         our_resource_id = None
-                        if 'resources' in self.raw_data and self.raw_data['resources']:
+                        if self.raw_data.get('resources'):
                             our_resource_id = self.raw_data['resources'][0].get('resourceId')
                         elif 'resourceId' in self.raw_data:
                             our_resource_id = self.raw_data.get('resourceId')
@@ -330,7 +336,7 @@ class Reservation(LoggerMixin):
                 if all(key in self.raw_data for key in ["firstName", "familyName"]):
                     player = Player(
                         name=f"{self.raw_data['firstName']} {self.raw_data['familyName']}".strip(),
-                        club=self.raw_data.get('clubAbbreviation', 'Unknown'),
+                        club=self.raw_data.get('club_abbreviation', 'Unknown'),
                         handicap=float(self.raw_data.get('handicapActive', 0.0))
                     )
                     players.append(player)
@@ -354,7 +360,7 @@ class Reservation(LoggerMixin):
                         continue
             return round(total, 1)
         except Exception as e:
-            self.logger.error(f"Error calculating total handicap: {str(e)}")
+            self.logger.error(f"Error calculating total handicap: {e!s}")
             return 0.0
 
     @property
@@ -379,7 +385,7 @@ class Reservation(LoggerMixin):
         try:
             # Debug log raw data
             self.logger.debug(f"Summary: Raw data type: {type(self.raw_data)}")
-            self.logger.debug(f"Summary: Club info: name={getattr(self.club, 'name', None)}, abbr={getattr(self.club, 'abbreviation', None)}")
+            self.logger.debug(f"Summary: Club info: name={getattr(self.club, 'name', None)}, abbr={getattr(self.club, 'club_abbreviation', None)}")
             self.logger.debug(f"Summary: Start time: {self.start_time}")
             
             # Format time in 24-hour format
@@ -388,8 +394,8 @@ class Reservation(LoggerMixin):
             
             # Get club abbreviation with safer handling
             club_abbr = 'Unknown'
-            if self.club and hasattr(self.club, 'abbreviation'):
-                club_abbr = str(self.club.abbreviation) if self.club.abbreviation is not None else 'Unknown'
+            if self.club and hasattr(self.club, 'club_abbreviation'):
+                club_abbr = str(self.club.club_abbreviation) if self.club.club_abbreviation is not None else 'Unknown'
             self.logger.debug(f"Summary: Club abbreviation: {club_abbr}")
             
             # Build summary string based on data source
@@ -421,14 +427,14 @@ class Reservation(LoggerMixin):
                     summary += f" ({player_count} Players, THCP: {total_hcp:.1f})"
                 self.logger.debug(f"Summary: Final summary: {summary}")
             except Exception as e:
-                self.logger.error(f"Error adding player info to summary: {str(e)}")
+                self.logger.error(f"Error adding player info to summary: {e!s}")
             
             return summary
         except Exception as e:
-            self.logger.error(f"Error formatting event summary: {str(e)}, raw_data: {self.raw_data}")
+            self.logger.error(f"Error formatting event summary: {e!s}, raw_data: {self.raw_data}")
             return "Golf Reservation"
 
-    def _format_weather_data(self, weather_data: Union[WeatherResponse, List[WeatherData]]) -> str:
+    def _format_weather_data(self, weather_data: WeatherResponse | list[WeatherData]) -> str:
         """Format weather data into a human-readable string."""
         return WeatherFormatter.format_forecast(
             weather_data,
@@ -436,7 +442,7 @@ class Reservation(LoggerMixin):
             end_time=self.end_time if self.end_time else datetime.now() + timedelta(hours=1)
         )
 
-    def get_event_description(self, weather: Optional[Union[str, List[WeatherData]]] = None) -> str:
+    def get_event_description(self, weather: str | list[WeatherData] | None = None) -> str:
         """Get event description for calendar."""
         try:
             description = []
@@ -471,12 +477,12 @@ class Reservation(LoggerMixin):
                     try:
                         description.append(self._format_weather_data(weather))
                     except Exception as e:
-                        self.logger.error(f"Error formatting weather data: {str(e)}")
+                        self.logger.error(f"Error formatting weather data: {e!s}")
                         description.append("Weather data unavailable")
             
             return "\n".join(description)
         except Exception as e:
-            self.logger.error(f"Error formatting event description: {str(e)}")
+            self.logger.error(f"Error formatting event description: {e!s}")
             return "Error formatting event description"
 
     def get_event_location(self) -> str:
@@ -503,23 +509,23 @@ class Reservation(LoggerMixin):
                 f"Players: {players}"
             )
         except Exception as e:
-            self.logger.error(f"Error formatting reservation: {str(e)}")
+            self.logger.error(f"Error formatting reservation: {e!s}")
             return "Error formatting reservation details"
 
-    def format_with_weather(self, weather_data: List[WeatherData]) -> str:
+    def format_with_weather(self, weather_data: list[WeatherData]) -> str:
         """Format reservation with weather using safe string handling."""
         try:
             base_info = self.format_for_display()
             
             # Safely format weather
             weather_str = "\n".join([
-                f"{str(w.time)}: {str(w.temperature)}°C, {str(w.precipitation)}mm rain"
+                f"{w.time!s}: {w.temperature!s}°C, {w.precipitation!s}mm rain"
                 for w in weather_data
             ]) if weather_data else "No weather data available"
             
             return f"{base_info}\nWeather Forecast:\n{weather_str}"
         except Exception as e:
-            self.logger.error(f"Error formatting weather: {str(e)}")
+            self.logger.error(f"Error formatting weather: {e!s}")
             return f"{self.format_for_display()}\nError formatting weather data"
 
     def overlaps_with(self, other: "Reservation") -> bool:
@@ -532,11 +538,11 @@ class Reservation(LoggerMixin):
     @classmethod
     def from_wisegolf(
         cls,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         club: GolfClub,
         user: User,
         membership: Membership,
-        tz_manager: Optional[TimezoneManager] = None
+        tz_manager: TimezoneManager | None = None
     ) -> "Reservation":
         """Create Reservation instance from WiseGolf data."""
         if tz_manager is None:
@@ -559,7 +565,7 @@ class Reservation(LoggerMixin):
         end_time = club.get_end_time(start_time, membership.duration)
         
         # Try to fetch players using the new helper method
-        players: List[Player] = temp_instance._fetch_players(start_time)
+        players: list[Player] = temp_instance._fetch_players(start_time)
         
         # If no players found from helper method, try the old way
         if not players and "players" in data:
@@ -574,7 +580,7 @@ class Reservation(LoggerMixin):
         if not players:
             players = [Player(
                 name=user.name,
-                club=membership.clubAbbreviation,
+                club=membership.club_abbreviation,
                 handicap=float(user.handicap or 0.0)
             )]
         
@@ -592,11 +598,11 @@ class Reservation(LoggerMixin):
     @classmethod
     def from_nexgolf(
         cls,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         club: GolfClub,
         user: User,
         membership: Membership,
-        tz_manager: Optional[TimezoneManager] = None
+        tz_manager: TimezoneManager | None = None
     ) -> "Reservation":
         """Create Reservation instance from NexGolf data."""
         if tz_manager is None:
@@ -624,7 +630,7 @@ class Reservation(LoggerMixin):
         temp_instance.logger.debug(f"Parsed times: start={start_time}, end={end_time}")
         
         # Initialize players list
-        players: List[Player] = []
+        players: list[Player] = []
         
         # Process players from NexGolf format
         if "players" in data:
@@ -645,7 +651,7 @@ class Reservation(LoggerMixin):
             temp_instance.logger.debug(f"No players found, using user as default: {user.name}")
             players = [Player(
                 name=user.name,
-                club=membership.clubAbbreviation,
+                club=membership.club_abbreviation,
                 handicap=float(user.handicap or 0.0)
             )]
         
@@ -665,11 +671,11 @@ class Reservation(LoggerMixin):
     @classmethod
     def from_wisegolf0(
         cls,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         club: GolfClub,
         user: User,
         membership: Membership,
-        tz_manager: Optional[TimezoneManager] = None
+        tz_manager: TimezoneManager | None = None
     ) -> "Reservation":
         """Create Reservation instance from WiseGolf0 data."""
         if tz_manager is None:
@@ -692,7 +698,7 @@ class Reservation(LoggerMixin):
         end_time = club.get_end_time(start_time, membership.duration)
         
         # Try to fetch players using the new helper method
-        players: List[Player] = temp_instance._fetch_players(start_time)
+        players: list[Player] = temp_instance._fetch_players(start_time)
         
         # If no players found from helper method, try the old way
         if not players and "players" in data:
@@ -707,7 +713,7 @@ class Reservation(LoggerMixin):
         if not players:
             players = [Player(
                 name=user.name,
-                club=membership.clubAbbreviation,
+                club=membership.club_abbreviation,
                 handicap=float(user.handicap or 0.0)
             )]
         
@@ -723,7 +729,7 @@ class Reservation(LoggerMixin):
         )
 
     @classmethod
-    def from_external_event(cls, event_data: Dict[str, Any], user: User) -> "Reservation":
+    def from_external_event(cls, event_data: dict[str, Any], user: User) -> "Reservation":
         """Create reservation from external event data."""
         # Create external golf club
         club = ExternalGolfClub(
@@ -737,7 +743,7 @@ class Reservation(LoggerMixin):
         # Create a pseudo-membership for the external event
         membership = Membership(
             club=club.name,
-            clubAbbreviation="EXT",  # External event marker
+            club_abbreviation="EXT",  # External event marker
             duration={"hours": 0, "minutes": 0},  # Duration will be calculated from event times
             auth_details={}  # External events don't need auth details
         )
@@ -781,11 +787,11 @@ class Reservation(LoggerMixin):
     @classmethod
     def from_teetime(
         cls,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         club: GolfClub,
         user: User,
         membership: Membership,
-        tz_manager: Optional[TimezoneManager] = None
+        tz_manager: TimezoneManager | None = None
     ) -> "Reservation":
         """Create Reservation instance from TeeTime data.
         
@@ -826,7 +832,7 @@ class Reservation(LoggerMixin):
         end_time = club.get_end_time(start_time, membership.duration)
         
         # Extract players from response data
-        players: List[Player] = []
+        players: list[Player] = []
         
         # Get club info for player creation
         club_info = data.get('course', {}).get('club', {})
@@ -846,7 +852,7 @@ class Reservation(LoggerMixin):
             temp_instance.logger.debug(f"No players found, using user as default: {user.name}")
             players = [Player(
                 name=user.name,
-                club=membership.clubAbbreviation,
+                club=membership.club_abbreviation,
                 handicap=float(user.handicap or 0.0)
             )]
         
@@ -907,4 +913,15 @@ class Reservation(LoggerMixin):
             raise ValueError(f"Invalid time format: {time_str}")
         
         return result
+
+    @staticmethod
+    def get_club_from_data(data: dict[str, Any]) -> str:
+        """Get club name from data."""
+        return str(data.get("club_abbreviation", data.get("club", "N/A")))
+
+    @staticmethod
+    def get_club_from_player_data(data: dict[str, Any]) -> str:
+        """Get club name from player data."""
+        club = data.get("club_abbreviation", data.get("club", "Unknown"))
+        return str(club)
 

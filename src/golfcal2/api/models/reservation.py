@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
+
 
 @dataclass
 class Player:
@@ -18,8 +18,8 @@ class CourseInfo:
 @dataclass
 class Reservation:
     datetime_start: datetime
-    players: List[Player]
-    id: Optional[str] = None
-    booking_reference: Optional[str] = None
-    status: Optional[str] = None
-    course_info: Optional[CourseInfo] = None 
+    players: list[Player]
+    id: str | None = None
+    booking_reference: str | None = None
+    status: str | None = None
+    course_info: CourseInfo | None = None 

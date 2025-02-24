@@ -2,12 +2,17 @@
 Authentication service for golf calendar application.
 """
 
-from typing import Dict, Any, Optional, Protocol, Union, TYPE_CHECKING, cast
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+from typing import TYPE_CHECKING
+from typing import Any
+from typing import Protocol
 from urllib.parse import urljoin
+
+from golfcal2.config.types import AppConfig
+from golfcal2.config.types import ClubConfig
 from golfcal2.models.user import Membership
-from golfcal2.config.types import AppConfig, ClubConfig
 from golfcal2.utils.logging_utils import LoggerMixin
+
 
 # Use TYPE_CHECKING for imports only needed for type hints
 if TYPE_CHECKING:
@@ -17,12 +22,12 @@ class AuthStrategy(Protocol):
     """Protocol for authentication strategies."""
     
     @abstractmethod
-    def get_auth_header(self) -> Dict[str, str]:
+    def get_auth_header(self) -> dict[str, str]:
         """Get authentication header."""
         ...
 
     @abstractmethod
-    def get_auth_cookie(self) -> Dict[str, str]:
+    def get_auth_cookie(self) -> dict[str, str]:
         """Get authentication cookie."""
         ...
 
@@ -39,16 +44,16 @@ class AuthStrategy(Protocol):
 class BasicAuthStrategy(AuthStrategy):
     """Basic authentication strategy."""
 
-    def __init__(self, auth_details: Dict[str, Any]) -> None:
+    def __init__(self, auth_details: dict[str, Any]) -> None:
         """Initialize basic auth strategy."""
         self.auth_details = auth_details
 
-    def get_auth_header(self) -> Dict[str, str]:
+    def get_auth_header(self) -> dict[str, str]:
         """Get basic auth header."""
         token = self.auth_details.get('token', '')
         return {'Authorization': f'Bearer {token}'} if token else {}
 
-    def get_auth_cookie(self) -> Dict[str, str]:
+    def get_auth_cookie(self) -> dict[str, str]:
         """Get basic auth cookie."""
         return {}
 
@@ -63,15 +68,15 @@ class BasicAuthStrategy(AuthStrategy):
 class CookieAuthStrategy(AuthStrategy):
     """Cookie-based authentication strategy."""
 
-    def __init__(self, auth_details: Dict[str, Any]) -> None:
+    def __init__(self, auth_details: dict[str, Any]) -> None:
         """Initialize cookie auth strategy."""
         self.auth_details = auth_details
 
-    def get_auth_header(self) -> Dict[str, str]:
+    def get_auth_header(self) -> dict[str, str]:
         """Get cookie auth header."""
         return {}
 
-    def get_auth_cookie(self) -> Dict[str, str]:
+    def get_auth_cookie(self) -> dict[str, str]:
         """Get cookie auth cookie."""
         cookie_value = self.auth_details.get('cookie_value', '')
         return {'Cookie': cookie_value} if cookie_value else {}
@@ -87,11 +92,11 @@ class CookieAuthStrategy(AuthStrategy):
 class QueryAuthStrategy(AuthStrategy):
     """Query parameter-based authentication strategy."""
 
-    def __init__(self, auth_details: Dict[str, Any]) -> None:
+    def __init__(self, auth_details: dict[str, Any]) -> None:
         """Initialize query auth strategy."""
         self.auth_details = auth_details
 
-    def get_auth_header(self) -> Dict[str, str]:
+    def get_auth_header(self) -> dict[str, str]:
         """Get query auth header."""
         headers = {
             'Accept': 'application/json, text/plain, */*',
@@ -104,7 +109,7 @@ class QueryAuthStrategy(AuthStrategy):
         
         return headers
 
-    def get_auth_cookie(self) -> Dict[str, str]:
+    def get_auth_cookie(self) -> dict[str, str]:
         """Get query auth cookie."""
         return {}
 
@@ -123,11 +128,11 @@ class QueryAuthStrategy(AuthStrategy):
 class TokenAppAuthStrategy(AuthStrategy):
     """Token app authentication strategy for WiseGolf."""
 
-    def __init__(self, auth_details: Dict[str, Any]) -> None:
+    def __init__(self, auth_details: dict[str, Any]) -> None:
         """Initialize token app auth strategy."""
         self.auth_details = auth_details
 
-    def get_auth_header(self) -> Dict[str, str]:
+    def get_auth_header(self) -> dict[str, str]:
         """Get token app auth header."""
         headers = {
             'Accept': 'application/json, text/plain, */*',
@@ -140,7 +145,7 @@ class TokenAppAuthStrategy(AuthStrategy):
             
         return headers
 
-    def get_auth_cookie(self) -> Dict[str, str]:
+    def get_auth_cookie(self) -> dict[str, str]:
         """Get token app auth cookie."""
         return {}
 
@@ -158,11 +163,11 @@ class TokenAppAuthStrategy(AuthStrategy):
 class UnsupportedAuthStrategy(AuthStrategy):
     """Fallback strategy for unsupported authentication types."""
 
-    def get_auth_header(self) -> Dict[str, str]:
+    def get_auth_header(self) -> dict[str, str]:
         """Get unsupported auth header."""
         return {}
 
-    def get_auth_cookie(self) -> Dict[str, str]:
+    def get_auth_cookie(self) -> dict[str, str]:
         """Get unsupported auth cookie."""
         return {}
 
@@ -181,10 +186,10 @@ class AuthService(LoggerMixin):
         """Initialize service."""
         super().__init__()
         self.config = config
-        self.strategy: Optional[AuthStrategy] = None
-        self._current_auth_details: Optional[Dict[str, Any]] = None
+        self.strategy: AuthStrategy | None = None
+        self._current_auth_details: dict[str, Any] | None = None
     
-    def _ensure_strategy(self, auth_details: Dict[str, Any]) -> None:
+    def _ensure_strategy(self, auth_details: dict[str, Any]) -> None:
         """Ensure strategy is initialized with current auth details."""
         # Only initialize if auth details have changed or strategy is not set
         if (self.strategy is None or 
@@ -192,12 +197,12 @@ class AuthService(LoggerMixin):
             self.strategy = self._get_strategy(auth_details)
             self._current_auth_details = auth_details.copy()
     
-    def get_auth_headers(self, club: 'GolfClub', auth_details: Dict[str, Any]) -> Dict[str, str]:
+    def get_auth_headers(self, club: 'GolfClub', auth_details: dict[str, Any]) -> dict[str, str]:
         """Get authentication headers for a club."""
         try:
             # Get club configuration and ensure it's a dict
-            config_value: Union[ClubConfig, Dict[str, Any]] = self.config.clubs.get(club.name, {})
-            club_config: Dict[str, Any] = dict(config_value) if isinstance(config_value, dict) else {}
+            config_value: ClubConfig | dict[str, Any] = self.config.clubs.get(club.name, {})
+            club_config: dict[str, Any] = dict(config_value) if isinstance(config_value, dict) else {}
             
             # Get auth type from auth_details first, fall back to club config
             auth_type = auth_details.get('type') or club_config.get('auth_type', 'none')
@@ -222,7 +227,7 @@ class AuthService(LoggerMixin):
             self.logger.error(f"Failed to get auth headers for club {club.name}: {e}")
             return {}
     
-    def _get_basic_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
+    def _get_basic_auth_headers(self, auth_details: dict[str, Any]) -> dict[str, str]:
         """Get headers for basic authentication."""
         headers = {}
         if 'username' in auth_details and 'password' in auth_details:
@@ -234,14 +239,14 @@ class AuthService(LoggerMixin):
             headers['Authorization'] = f'Basic {base64_string}'
         return headers
     
-    def _get_token_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
+    def _get_token_auth_headers(self, auth_details: dict[str, Any]) -> dict[str, str]:
         """Get headers for token authentication."""
         headers = {}
         if 'token' in auth_details:
             headers['Authorization'] = f'Bearer {auth_details["token"]}'
         return headers
     
-    def _get_token_app_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
+    def _get_token_app_auth_headers(self, auth_details: dict[str, Any]) -> dict[str, str]:
         """Get headers for token app authentication."""
         headers = {
             'Accept': 'application/json, text/plain, */*',
@@ -254,7 +259,7 @@ class AuthService(LoggerMixin):
             
         return headers
     
-    def _get_cookie_auth_headers(self, auth_details: Dict[str, Any]) -> Dict[str, str]:
+    def _get_cookie_auth_headers(self, auth_details: dict[str, Any]) -> dict[str, str]:
         """Get headers for cookie authentication."""
         headers = {}
         if 'cookie_value' in auth_details:
@@ -284,17 +289,16 @@ class AuthService(LoggerMixin):
                 elif 'x_auth_token' in auth_details:
                     headers['X-Auth-Token'] = auth_details['x_auth_token']
                 self.logger.debug(f"Generated headers for NexGolf: {headers}")
+            # For other cookie-based auth, use the cookie value as is
+            elif cookie_name:
+                headers['Cookie'] = f'{cookie_name}={cookie_value}'
             else:
-                # For other cookie-based auth, use the cookie value as is
-                if cookie_name:
-                    headers['Cookie'] = f'{cookie_name}={cookie_value}'
-                else:
-                    headers['Cookie'] = cookie_value
+                headers['Cookie'] = cookie_value
                 
             self.logger.debug(f"Generated cookie header: {headers}")
         return headers
     
-    def _get_strategy(self, auth_details: Dict[str, Any]) -> AuthStrategy:
+    def _get_strategy(self, auth_details: dict[str, Any]) -> AuthStrategy:
         """Get appropriate auth strategy based on auth details."""
         auth_type = auth_details.get('type', '')
         if auth_type == 'cookie':
@@ -305,14 +309,14 @@ class AuthService(LoggerMixin):
             return TokenAppAuthStrategy(auth_details)
         return BasicAuthStrategy(auth_details)
     
-    def get_auth_header(self) -> Dict[str, str]:
+    def get_auth_header(self) -> dict[str, str]:
         """Get authentication header."""
         if not self.strategy:
             self.logger.error("No authentication strategy initialized")
             return {}
         return self.strategy.get_auth_header()
     
-    def get_auth_cookie(self) -> Dict[str, str]:
+    def get_auth_cookie(self) -> dict[str, str]:
         """Get authentication cookie."""
         if not self.strategy:
             self.logger.error("No authentication strategy initialized")
@@ -329,7 +333,7 @@ class AuthService(LoggerMixin):
     def build_full_url(
         self,
         auth_type: str,
-        club_details: Dict[str, Any],
+        club_details: dict[str, Any],
         membership: Membership
     ) -> str:
         """Build full URL with authentication."""
@@ -357,8 +361,8 @@ class AuthService(LoggerMixin):
         self,
         auth_type: str,
         cookie_name: str,
-        auth_details: Dict[str, str]
-    ) -> Dict[str, str]:
+        auth_details: dict[str, str]
+    ) -> dict[str, str]:
         """Create headers for API request."""
         # Ensure strategy is initialized with current auth details
         self._ensure_strategy(auth_details)

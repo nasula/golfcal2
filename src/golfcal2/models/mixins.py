@@ -2,20 +2,23 @@
 Mixins for golf club models.
 """
 
-from typing import Dict, Any, List, Optional, Tuple, Union, Protocol, cast, Type, TypeVar, Set, Iterator
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-from pathlib import Path
 import logging
+from collections.abc import Iterator
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
+from typing import TypeVar
+from typing import cast
+from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 # Ignore missing stubs for icalendar
 import icalendar  # type: ignore
-
-from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.models.user import Membership
 import requests
-import time
-from urllib.parse import urljoin
+
+from golfcal2.models.user import Membership
+from golfcal2.utils.logging_utils import LoggerMixin
+
 
 # Type aliases for icalendar types
 ICalEvent = TypeVar('ICalEvent', bound=icalendar.Event)
@@ -29,7 +32,7 @@ class ResponseData:
     calling dict- or list-specific methods.
     """
 
-    def __init__(self, data: Union[Dict[str, Any], List[Any]]) -> None:
+    def __init__(self, data: dict[str, Any] | list[Any]) -> None:
         if not isinstance(data, (dict, list)):
             raise TypeError(f"Data must be either dict or list, got {type(data)}")
         self._data = data
@@ -42,7 +45,7 @@ class ResponseData:
             return self._data.get(key, default)
         return default
 
-    def __getitem__(self, key: Union[str, int]) -> Any:
+    def __getitem__(self, key: str | int) -> Any:
         """
         Retrieve an item by string key if data is a dict, or integer index if data is a list.
         """
@@ -93,7 +96,7 @@ class ResponseData:
         """
         return isinstance(self._data, list)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         """
         Return the underlying data as a dictionary.
         Raises TypeError if the data is not a dictionary.
@@ -102,7 +105,7 @@ class ResponseData:
             raise TypeError("Data is not a dictionary")
         return self._data
 
-    def as_list(self) -> List[Any]:
+    def as_list(self) -> list[Any]:
         """
         Return the underlying data as a list.
         Raises TypeError if the data is not a list.
@@ -132,15 +135,15 @@ class PlayerFetchMixin(LoggerMixin):
     """Mixin for player fetching functionality."""
     
     auth_service: Any
-    club_details: Optional[Dict[str, Any]]
+    club_details: dict[str, Any] | None
     
     def extract_players_from_response(
         self,
-        response: Union[Dict[str, Any], List[Any]],
-        reservation: Dict[str, Any],
+        response: dict[str, Any] | list[Any],
+        reservation: dict[str, Any],
         skip_empty: bool = True,
         skip_reserved: bool = True
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Extract players from API response.
         
@@ -199,11 +202,11 @@ class PlayerFetchMixin(LoggerMixin):
     
     def _extract_players_wisegolf(
         self,
-        response: Dict[str, Any],
-        reservation: Dict[str, Any],
+        response: dict[str, Any],
+        reservation: dict[str, Any],
         skip_empty: bool,
         skip_reserved: bool
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Extract players from WiseGolf format response."""
         # Only include the player's own event
         player_data = {
@@ -220,11 +223,11 @@ class PlayerFetchMixin(LoggerMixin):
     
     def _extract_players_wisegolf0(
         self,
-        response: Dict[str, Any],
-        reservation: Dict[str, Any],
+        response: dict[str, Any],
+        reservation: dict[str, Any],
         skip_empty: bool = True,
         skip_reserved: bool = True
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Extract players from WiseGolf0 format response.
         
         Players are matched based on their start time and resource ID. This is because:
@@ -243,7 +246,7 @@ class PlayerFetchMixin(LoggerMixin):
         Returns:
             List of player data dictionaries
         """
-        self.logger.debug(f"_extract_players_wisegolf0 - Starting extraction")
+        self.logger.debug("_extract_players_wisegolf0 - Starting extraction")
         self.logger.debug(f"_extract_players_wisegolf0 - Reservation: {reservation}")
         
         # Get the list of players from the response
@@ -260,7 +263,7 @@ class PlayerFetchMixin(LoggerMixin):
         # Get our reservation's details
         our_start_time = reservation.get('dateTimeStart')
         our_resource_id = None
-        if 'resources' in reservation and reservation['resources']:
+        if reservation.get('resources'):
             our_resource_id = reservation['resources'][0].get('resourceId')
         elif 'resourceId' in reservation:
             our_resource_id = reservation.get('resourceId')
@@ -289,12 +292,12 @@ class PlayerFetchMixin(LoggerMixin):
                 
             # Skip empty players if requested
             if skip_empty and not (player.get('firstName') or player.get('familyName')):
-                self.logger.debug(f"_extract_players_wisegolf0 - Skipping empty player")
+                self.logger.debug("_extract_players_wisegolf0 - Skipping empty player")
                 continue
             
             # Skip "Varattu" players if requested
             if skip_reserved and player.get('name') == "Varattu":
-                self.logger.debug(f"_extract_players_wisegolf0 - Skipping reserved player")
+                self.logger.debug("_extract_players_wisegolf0 - Skipping reserved player")
                 continue
             
             # Extract player data
@@ -314,10 +317,10 @@ class PlayerFetchMixin(LoggerMixin):
     
     def _extract_players_from_list(
         self,
-        players: List[Dict[str, Any]],
+        players: list[dict[str, Any]],
         skip_empty: bool,
         skip_reserved: bool
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Extract players from a direct list of players."""
         result = []
         for player in players:
@@ -344,11 +347,11 @@ class PlayerFetchMixin(LoggerMixin):
     
     def fetch_players_from_rest(
         self,
-        reservation: Dict[str, Any],
+        reservation: dict[str, Any],
         membership: Membership,
-        api_class: Type[Any],
+        api_class: type[Any],
         rest_url: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch players from REST API.
 
@@ -369,12 +372,12 @@ class PlayerFetchMixin(LoggerMixin):
             api = api_class(rest_url, self.auth_service, self.club_details, membership.__dict__)
             
             # Pass the full reservation data to get_players
-            self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Calling get_players with reservation data")
+            self.logger.debug("PlayerFetchMixin.fetch_players_from_rest - Calling get_players with reservation data")
             response = api.get_players(reservation)
             self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Got response: {response}")
             
             # Extract players from response
-            self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Calling extract_players_from_response")
+            self.logger.debug("PlayerFetchMixin.fetch_players_from_rest - Calling extract_players_from_response")
             players = self.extract_players_from_response(response, reservation)
             self.logger.debug(f"PlayerFetchMixin.fetch_players_from_rest - Extracted players: {players}")
             
@@ -400,7 +403,7 @@ class PlayerFetchMixin(LoggerMixin):
 class ReservationHandlerMixin:
     """Mixin for handling reservations."""
     
-    _reservation_logger: Optional[logging.Logger] = None
+    _reservation_logger: logging.Logger | None = None
     
     @property
     def logger(self) -> logging.Logger:
@@ -485,13 +488,13 @@ class RequestHandlerMixin:
         method: str,
         endpoint: str,
         **kwargs: Any
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Make HTTP request with error handling."""
         url = urljoin(self.base_url, endpoint)
         try:
             response = self.session.request(method, url, **kwargs)
             response.raise_for_status()
-            return cast(Dict[str, Any], response.json())
+            return cast(dict[str, Any], response.json())
         except requests.exceptions.Timeout as e:
             raise APITimeoutError(f"Request timed out: {e}")
         except requests.exceptions.HTTPError as e:
@@ -506,14 +509,14 @@ class RequestHandlerMixin:
 class CalendarMixin(LoggerMixin):
     """Mixin for calendar-related functionality."""
     
-    def __init__(self, config: Optional[Any] = None) -> None:
+    def __init__(self, config: Any | None = None) -> None:
         """Initialize calendar mixin."""
         super().__init__()  # type: ignore[no-untyped-call]  # LoggerMixin.__init__ is untyped
         self._config = config
-        self.seen_uids: Set[str] = set()
+        self.seen_uids: set[str] = set()
         
     @property
-    def config(self) -> Optional[Any]:
+    def config(self) -> Any | None:
         """Get config, either from instance or parent."""
         if hasattr(self, '_config') and self._config is not None:
             return self._config

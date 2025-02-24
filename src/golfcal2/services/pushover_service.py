@@ -2,20 +2,20 @@
 
 import http.client
 import urllib
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
-from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.config.settings import AppConfig
+from golfcal2.utils.logging_utils import LoggerMixin
+
 
 @dataclass
 class PushoverConfig:
     """Pushover configuration."""
     user_key: str
     app_token: str
-    device: Optional[str] = None
+    device: str | None = None
     priority: int = 0
-    sound: Optional[str] = None
+    sound: str | None = None
 
 class PushoverService(LoggerMixin):
     """Service for sending notifications via Pushover."""
@@ -46,10 +46,10 @@ class PushoverService(LoggerMixin):
         self,
         title: str,
         message: str,
-        priority: Optional[int] = None,
-        sound: Optional[str] = None,
-        url: Optional[str] = None,
-        url_title: Optional[str] = None
+        priority: int | None = None,
+        sound: str | None = None,
+        url: str | None = None,
+        url_title: str | None = None
     ) -> bool:
         """Send a notification via Pushover.
         

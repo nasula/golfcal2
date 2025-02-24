@@ -2,22 +2,21 @@
 CSV import service for golf calendar application.
 """
 
-import csv
-from datetime import datetime, timedelta, time
-from typing import Dict, Any, List, Optional, Iterator, Tuple, cast
-from pathlib import Path
-from zoneinfo import ZoneInfo
-import pytz
-from icalendar import vRecur
-from collections import defaultdict
-import re
 import json
+import re
+from collections import defaultdict
+from datetime import datetime
+from datetime import time
+from typing import Any
+from zoneinfo import ZoneInfo
 
 from golfcal2.models.golf_club import ExternalGolfClub
-from golfcal2.models.user import User, Membership
-from golfcal2.models.reservation import Reservation, Player
+from golfcal2.models.reservation import Reservation
+from golfcal2.models.user import Membership
+from golfcal2.models.user import User
 from golfcal2.utils.logging_utils import get_logger
 from golfcal2.utils.timezone_utils import TimezoneManager
+
 
 logger = get_logger(__name__)
 
@@ -29,7 +28,7 @@ class CSVImportService:
         self.timezone = timezone
         self.tz_manager = TimezoneManager()
 
-    def _parse_datetime(self, date_str: str, time_str: str, timezone: Optional[str] = None) -> datetime:
+    def _parse_datetime(self, date_str: str, time_str: str, timezone: str | None = None) -> datetime:
         """
         Parse date and time strings into datetime object.
         
@@ -56,7 +55,7 @@ class CSVImportService:
             logger.error(f"Error parsing datetime: {e}")
             raise
 
-    def _create_recurrence_rule(self, start_date: datetime, end_date: datetime, description: str, location: str, start_time: time) -> Optional[Dict[str, Any]]:
+    def _create_recurrence_rule(self, start_date: datetime, end_date: datetime, description: str, location: str, start_time: time) -> dict[str, Any] | None:
         """Create a recurrence rule for weekly events if they match certain patterns."""
         # Extract course name and level from description
         course_match = re.search(r';\s*([^;]+);\s*([A-Z0-9]+)\s+([^;\n]+)', description)
@@ -82,7 +81,7 @@ class CSVImportService:
         
         return rrule
 
-    def _parse_csv_row(self, row: List[str]) -> Dict[str, str]:
+    def _parse_csv_row(self, row: list[str]) -> dict[str, str]:
         """
         Parse a CSV row into a dictionary with proper column mapping.
         
@@ -113,7 +112,7 @@ class CSVImportService:
                 
         return data
 
-    def _get_event_key(self, start_time: datetime, location: str, description: str) -> Tuple[int, str, str, str]:
+    def _get_event_key(self, start_time: datetime, location: str, description: str) -> tuple[int, str, str, str]:
         """
         Get a key for grouping recurring events.
         
@@ -162,11 +161,11 @@ class CSVImportService:
         self,
         file_path: str,
         user: User,
-        recurring_until: Optional[datetime] = None,
-        recurrence_end: Optional[datetime] = None,
-        timezone: Optional[str] = None,
+        recurring_until: datetime | None = None,
+        recurrence_end: datetime | None = None,
+        timezone: str | None = None,
         delimiter: str = ";"
-    ) -> List[Reservation]:
+    ) -> list[Reservation]:
         """
         Import reservations from a CSV file.
         """
@@ -179,7 +178,7 @@ class CSVImportService:
         logger.info(f"Using timezone: {event_timezone}")
 
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, encoding='utf-8') as f:
                 # Skip header line
                 next(f)
                 
@@ -232,9 +231,9 @@ class CSVImportService:
 
                             membership = Membership(
                                 club=club.name,
-                                clubAbbreviation="EXT",
-                                duration={"hours": 0, "minutes": 0},
-                                auth_details={}
+                                club_abbreviation="EXT",  # External event marker
+                                duration={"hours": 0, "minutes": 0},  # Duration will be calculated from event times
+                                auth_details={}  # External events don't need auth details
                             )
 
                             raw_data = {
@@ -279,9 +278,9 @@ class CSVImportService:
                         # Create a pseudo-membership for the external event
                         membership = Membership(
                             club=club.name,
-                            clubAbbreviation="EXT",
-                            duration={"hours": 0, "minutes": 0},
-                            auth_details={}
+                            club_abbreviation="EXT",  # External event marker
+                            duration={"hours": 0, "minutes": 0},  # Duration will be calculated from event times
+                            auth_details={}  # External events don't need auth details
                         )
 
                         # Calculate recurrence end date

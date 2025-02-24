@@ -1,23 +1,22 @@
 """Configuration settings for golf calendar application."""
 
-import os
 import json
-import yaml
-import logging
-from pathlib import Path
-from typing import Dict, Any, Optional
+import os
 from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.config.validation import validate_config, ConfigValidationError
-from golfcal2.config.types import (
-    AppConfig, GlobalConfig, UserConfig, ClubConfig,
-    WeatherApiConfig, ApiKeysConfig, LoggingConfig
-)
-from golfcal2.config.logging import setup_logging
+import yaml
+
 from golfcal2.config.env import EnvConfig
-from golfcal2.config.utils import deep_merge, resolve_path, validate_api_key, get_config_paths
+from golfcal2.config.types import AppConfig
+from golfcal2.config.types import ClubConfig
+from golfcal2.config.types import GlobalConfig
+from golfcal2.config.types import UserConfig
+from golfcal2.config.utils import deep_merge
+from golfcal2.config.utils import resolve_path
+from golfcal2.config.utils import validate_api_key
+
 
 class ConfigurationManager:
     """Centralized configuration management with caching."""
@@ -26,7 +25,7 @@ class ConfigurationManager:
     
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(ConfigurationManager, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
     
@@ -34,8 +33,8 @@ class ConfigurationManager:
         if self._initialized:
             return
             
-        self._config: Optional[AppConfig] = None
-        self._config_path: Optional[Path] = None
+        self._config: AppConfig | None = None
+        self._config_path: Path | None = None
         self._initialized = True
         self._timezone_cache = {}
     
@@ -51,7 +50,7 @@ class ConfigurationManager:
         """Get cached timezone instance."""
         return ZoneInfo(tz_name)
     
-    def load_config(self, config_dir: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig:
+    def load_config(self, config_dir: str | None = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig:
         """Load configuration with caching."""
         if self._config is not None:
             return self._config
@@ -83,7 +82,7 @@ class ConfigurationManager:
         self._config = None
         return self.load_config()
 
-def _get_config_path(config_dir: Optional[str] = None) -> Path:
+def _get_config_path(config_dir: str | None = None) -> Path:
     """Get configuration directory path."""
     return resolve_path(
         config_dir or os.getenv("GOLFCAL_CONFIG_DIR", os.path.dirname(os.path.abspath(__file__)))
@@ -97,7 +96,7 @@ def _load_global_config(config_path: Path) -> GlobalConfig:
     # Load from file if exists
     config_file = config_path / "config.yaml"
     if config_file.exists():
-        with open(config_file, "r", encoding="utf-8") as f:
+        with open(config_file, encoding="utf-8") as f:
             loaded_config = yaml.safe_load(f)
             # Deep merge loaded config with environment config
             global_config = deep_merge(global_config, loaded_config)
@@ -116,25 +115,25 @@ def _load_global_config(config_path: Path) -> GlobalConfig:
     
     return global_config
 
-def _load_users_config(config_path: Path) -> Dict[str, UserConfig]:
+def _load_users_config(config_path: Path) -> dict[str, UserConfig]:
     """Load users configuration from JSON file."""
     users_file = config_path / "users.json"
     if not users_file.exists():
         raise FileNotFoundError(f"Users configuration file not found: {users_file}")
     
-    with open(users_file, "r", encoding="utf-8") as f:
+    with open(users_file, encoding="utf-8") as f:
         return json.load(f)
 
-def _load_clubs_config(config_path: Path) -> Dict[str, ClubConfig]:
+def _load_clubs_config(config_path: Path) -> dict[str, ClubConfig]:
     """Load clubs configuration from JSON file."""
     clubs_file = config_path / "clubs.json"
     if not clubs_file.exists():
         raise FileNotFoundError(f"Clubs configuration file not found: {clubs_file}")
     
-    with open(clubs_file, "r", encoding="utf-8") as f:
+    with open(clubs_file, encoding="utf-8") as f:
         return json.load(f)
 
-def load_config(config_dir: Optional[str] = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig:
+def load_config(config_dir: str | None = None, dev_mode: bool = False, verbose: bool = False) -> AppConfig:
     """Load configuration using the ConfigurationManager."""
     config_manager = ConfigurationManager()
     return config_manager.load_config(config_dir, dev_mode, verbose) 

@@ -2,13 +2,14 @@
 
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 from golfcal2.config.types import AppConfig
 
+
 class ConfigValidationError(Exception):
     """Configuration validation error."""
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.details = details or {}
 
@@ -32,7 +33,7 @@ def validate_directories(config: AppConfig) -> None:
         if log_dir:
             Path(log_dir).mkdir(parents=True, exist_ok=True)
 
-def validate_user_config(user_name: str, user_config: Dict[str, Any], clubs: Dict[str, Any]) -> None:
+def validate_user_config(user_name: str, user_config: dict[str, Any], clubs: dict[str, Any]) -> None:
     """Validate user configuration."""
     if not isinstance(user_config, dict):
         raise ConfigValidationError(
@@ -73,7 +74,7 @@ def validate_user_config(user_name: str, user_config: Dict[str, Any], clubs: Dic
                 }
             )
 
-def validate_club_config(club_name: str, club_config: Dict[str, Any]) -> None:
+def validate_club_config(club_name: str, club_config: dict[str, Any]) -> None:
     """Validate club configuration."""
     if not isinstance(club_config, dict):
         raise ConfigValidationError(
@@ -140,6 +141,6 @@ def validate_config(config: AppConfig) -> None:
         raise
     except Exception as e:
         raise ConfigValidationError(
-            f"Unexpected error during configuration validation: {str(e)}",
+            f"Unexpected error during configuration validation: {e!s}",
             {"error_type": type(e).__name__}
         ) from e 

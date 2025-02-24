@@ -2,10 +2,11 @@
 
 import logging
 import traceback
-from typing import Any, Dict, Optional
+
+from systemd import journal
 
 from golfcal2.config.error_aggregator import aggregate_error
-from systemd import journal
+
 
 class JournaldHandler(logging.Handler):
     """Handler that writes log records to systemd journal."""
@@ -90,7 +91,7 @@ class AggregatingErrorHandler(logging.Handler):
             service = record.name.split('.')[2] if len(record.name.split('.')) > 2 else 'unknown'
             
             # Get stack trace if available
-            stack_trace: Optional[str] = None
+            stack_trace: str | None = None
             if record.exc_info:
                 stack_trace = ''.join(traceback.format_exception(*record.exc_info))
             

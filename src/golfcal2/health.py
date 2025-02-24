@@ -1,17 +1,18 @@
 """Health check functionality for golfcal2."""
 
-import os
-from pathlib import Path
-from typing import Dict, Any, List, Tuple
-from datetime import datetime
 import logging
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from golfcal2.config.settings import ConfigurationManager
 from golfcal2.utils.logging_utils import get_logger
 
+
 logger = get_logger(__name__)
 
-def check_directory_access(path: Path) -> Tuple[bool, str]:
+def check_directory_access(path: Path) -> tuple[bool, str]:
     """Check if directory exists and is accessible.
     
     Args:
@@ -35,9 +36,9 @@ def check_directory_access(path: Path) -> Tuple[bool, str]:
         return True, f"Directory accessible: {path}"
         
     except Exception as e:
-        return False, f"Error checking directory {path}: {str(e)}"
+        return False, f"Error checking directory {path}: {e!s}"
 
-def check_config_access() -> Tuple[bool, str]:
+def check_config_access() -> tuple[bool, str]:
     """Check if configuration is accessible.
     
     Returns:
@@ -48,9 +49,9 @@ def check_config_access() -> Tuple[bool, str]:
         config = config_manager.config
         return True, "Configuration accessible"
     except Exception as e:
-        return False, f"Configuration error: {str(e)}"
+        return False, f"Configuration error: {e!s}"
 
-def check_logging() -> Tuple[bool, str]:
+def check_logging() -> tuple[bool, str]:
     """Check if logging is working.
     
     Returns:
@@ -61,9 +62,9 @@ def check_logging() -> Tuple[bool, str]:
         test_logger.debug("Health check test log message")
         return True, "Logging system operational"
     except Exception as e:
-        return False, f"Logging error: {str(e)}"
+        return False, f"Logging error: {e!s}"
 
-def get_health_status() -> Dict[str, Any]:
+def get_health_status() -> dict[str, Any]:
     """Get complete health status of the application.
     
     Returns:
@@ -77,7 +78,7 @@ def get_health_status() -> Dict[str, Any]:
     }
     
     # List of checks to perform
-    checks: List[Tuple[str, Tuple[bool, str]]] = []
+    checks: list[tuple[str, tuple[bool, str]]] = []
     
     # Check configuration
     checks.append(("config", check_config_access()))
@@ -93,7 +94,7 @@ def get_health_status() -> Dict[str, Any]:
         checks.append(("log_directory", check_directory_access(log_dir)))
         
     except Exception as e:
-        checks.append(("config_dirs", (False, f"Error getting directories: {str(e)}")))
+        checks.append(("config_dirs", (False, f"Error getting directories: {e!s}")))
     
     # Check logging
     checks.append(("logging", check_logging()))

@@ -1,11 +1,14 @@
 """Mock weather service implementation for testing."""
 
 import math
-from datetime import datetime, timezone, timedelta
-from typing import List
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
 
 from golfcal2.services.base_service import WeatherService
-from golfcal2.services.weather_types import WeatherData, WeatherResponse
+from golfcal2.services.weather_types import WeatherData
+from golfcal2.services.weather_types import WeatherResponse
+
 
 class MockWeatherService(WeatherService):
     """Mock implementation of WeatherService for testing."""
@@ -16,15 +19,15 @@ class MockWeatherService(WeatherService):
         180: "S", 225: "SW", 270: "W", 315: "NW"
     }
     
-    def __init__(self, local_tz=timezone.utc, utc_tz=timezone.utc):
+    def __init__(self, local_tz=UTC, utc_tz=UTC):
         super().__init__(local_tz, utc_tz)
         self.cache = {}  # Simple dict cache for testing
         
     def _get_cache_key(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> str:
         """Get cache key for weather data."""
         # Convert times to UTC for consistent caching
-        start_utc = start_time.astimezone(timezone.utc)
-        end_utc = end_time.astimezone(timezone.utc)
+        start_utc = start_time.astimezone(UTC)
+        end_utc = end_time.astimezone(UTC)
         return f"{lat:.4f}_{lon:.4f}_{start_utc.isoformat()}_{end_utc.isoformat()}"
         
     def get_weather(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> WeatherResponse:
@@ -42,12 +45,12 @@ class MockWeatherService(WeatherService):
         cache_key = self._get_cache_key(lat, lon, start_time, end_time)
         if cache_key in self.cache:
             cached = self.cache[cache_key]
-            if cached.expires > datetime.now(timezone.utc):
+            if cached.expires > datetime.now(UTC):
                 return cached
         
         # Get new data
         data = self._fetch_forecasts(lat, lon, start_time, end_time)
-        response = WeatherResponse(data=data, expires=datetime.now(timezone.utc) + timedelta(hours=1))
+        response = WeatherResponse(data=data, expires=datetime.now(UTC) + timedelta(hours=1))
         
         # Cache the response
         self.cache[cache_key] = response
@@ -103,14 +106,14 @@ class MockWeatherService(WeatherService):
             
         return base_prob, precip_amount, thunder_prob
 
-    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> List[WeatherData]:
+    def _fetch_forecasts(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> list[WeatherData]:
         """Mock implementation of forecast fetching."""
         if lat > 90 or lat < -90:
             raise ValueError("Invalid latitude")
             
         # Convert input times to service timezone (UTC)
-        start_utc = start_time.astimezone(timezone.utc)
-        end_utc = end_time.astimezone(timezone.utc)
+        start_utc = start_time.astimezone(UTC)
+        end_utc = end_time.astimezone(UTC)
         
         # Calculate block size based on forecast range
         hours_ahead = (end_utc - start_utc).total_seconds() / 3600

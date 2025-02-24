@@ -3,13 +3,14 @@
 import logging
 import threading
 import time
-from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import DefaultDict, Dict, List, Optional, Set
 import traceback
+from collections import defaultdict
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
 
 from golfcal2.config.logging_config import ErrorAggregationConfig
+
 
 @dataclass
 class ErrorGroup:
@@ -18,10 +19,10 @@ class ErrorGroup:
     count: int = 0
     first_seen: datetime = field(default_factory=datetime.now)
     last_seen: datetime = field(default_factory=datetime.now)
-    services: Set[str] = field(default_factory=set)
-    stack_traces: Set[str] = field(default_factory=set)
+    services: set[str] = field(default_factory=set)
+    stack_traces: set[str] = field(default_factory=set)
     
-    def update(self, service: str, stack_trace: Optional[str] = None) -> None:
+    def update(self, service: str, stack_trace: str | None = None) -> None:
         """Update error group with new occurrence."""
         self.count += 1
         self.last_seen = datetime.now()
@@ -38,7 +39,7 @@ class ErrorAggregator:
         Args:
             config: Error aggregation configuration
         """
-        self._errors: DefaultDict[str, ErrorGroup] = defaultdict(ErrorGroup)
+        self._errors: defaultdict[str, ErrorGroup] = defaultdict(ErrorGroup)
         self._lock = threading.Lock()
         self._config = config
         self._last_report = datetime.now()
@@ -57,7 +58,7 @@ class ErrorAggregator:
         self,
         message: str,
         service: str,
-        stack_trace: Optional[str] = None
+        stack_trace: str | None = None
     ) -> None:
         """Add error occurrence to aggregator.
         
@@ -104,7 +105,7 @@ class ErrorAggregator:
                                 extra={"stack_trace": trace_str}
                             )
                     except Exception as e:
-                        self.logger.error(f"Failed to format traceback: {str(e)}")
+                        self.logger.error(f"Failed to format traceback: {e!s}")
     
     def _periodic_report(self) -> None:
         """Periodically report all accumulated errors."""
@@ -135,7 +136,7 @@ class ErrorAggregator:
             self._errors.clear()
 
 # Global error aggregator instance
-_error_aggregator: Optional[ErrorAggregator] = None
+_error_aggregator: ErrorAggregator | None = None
 
 def init_error_aggregator(config: ErrorAggregationConfig) -> None:
     """Initialize global error aggregator with configuration.
@@ -162,7 +163,7 @@ def get_error_aggregator() -> ErrorAggregator:
 def aggregate_error(
     message: str,
     service: str,
-    stack_trace: Optional[str] = None
+    stack_trace: str | None = None
 ) -> None:
     """Add error to global aggregator.
     

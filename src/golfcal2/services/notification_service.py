@@ -1,22 +1,23 @@
 """Notification service for golf calendar application."""
 
-from typing import List, Dict, Any, Optional, Set
+import json
 from dataclasses import dataclass
 from datetime import datetime
-import json
-import os
 from pathlib import Path
+from typing import Any
 
-from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.models.reservation import Reservation, Player
 from golfcal2.config.settings import AppConfig
+from golfcal2.models.reservation import Player
+from golfcal2.models.reservation import Reservation
 from golfcal2.services.pushover_service import PushoverService
+from golfcal2.utils.logging_utils import LoggerMixin
+
 
 @dataclass
 class PlayerChange:
     """Represents a change in players for a reservation."""
-    added: List[Player]
-    removed: List[Player]
+    added: list[Player]
+    removed: list[Player]
     reservation: Reservation
     timestamp: datetime
 
@@ -36,18 +37,18 @@ class NotificationService(LoggerMixin):
         """Ensure data directory exists."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
     
-    def _load_state(self) -> Dict[str, List[Dict[str, Any]]]:
+    def _load_state(self) -> dict[str, list[dict[str, Any]]]:
         """Load previous state from file."""
         if not self.state_file.exists():
             return {}
         try:
-            with open(self.state_file, 'r') as f:
+            with open(self.state_file) as f:
                 return json.load(f)
         except Exception as e:
             self.logger.error(f"Failed to load state: {e}")
             return {}
     
-    def _save_state(self, state: Dict[str, List[Dict[str, Any]]]) -> None:
+    def _save_state(self, state: dict[str, list[dict[str, Any]]]) -> None:
         """Save current state to file."""
         try:
             with open(self.state_file, 'w') as f:
@@ -55,7 +56,7 @@ class NotificationService(LoggerMixin):
         except Exception as e:
             self.logger.error(f"Failed to save state: {e}")
     
-    def _player_to_dict(self, player: Player) -> Dict[str, Any]:
+    def _player_to_dict(self, player: Player) -> dict[str, Any]:
         """Convert player to dictionary for storage."""
         return {
             'name': player.name,
@@ -63,7 +64,7 @@ class NotificationService(LoggerMixin):
             'handicap': player.handicap
         }
     
-    def _dict_to_player(self, data: Dict[str, Any]) -> Player:
+    def _dict_to_player(self, data: dict[str, Any]) -> Player:
         """Convert dictionary to player."""
         return Player(
             name=data['name'],
@@ -71,15 +72,15 @@ class NotificationService(LoggerMixin):
             handicap=data['handicap']
         )
     
-    def _get_player_set(self, players: List[Player]) -> Set[str]:
+    def _get_player_set(self, players: list[Player]) -> set[str]:
         """Convert list of players to set of player identifiers."""
         return {f"{p.name}|{p.club}" for p in players}
     
-    def check_for_changes(self, reservations: List[Reservation]) -> List[PlayerChange]:
+    def check_for_changes(self, reservations: list[Reservation]) -> list[PlayerChange]:
         """Check for changes in players for the given reservations."""
-        changes: List[PlayerChange] = []
+        changes: list[PlayerChange] = []
         state = self._load_state()
-        new_state: Dict[str, List[Dict[str, Any]]] = {}
+        new_state: dict[str, list[dict[str, Any]]] = {}
         
         # Process each reservation
         for reservation in reservations:

@@ -4,31 +4,37 @@
 Golf club models for golf calendar application.
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Union, cast, Type, TypeVar, Protocol, NoReturn, runtime_checkable
+from abc import ABC
+from abc import abstractmethod
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
+from datetime import timedelta
+from typing import Any
+from typing import Protocol
+from typing import TypeVar
 from zoneinfo import ZoneInfo
 
-from golfcal2.models.user import Membership
-from golfcal2.utils.logging_utils import LoggerMixin
-from golfcal2.utils.timezone_utils import TimezoneManager
-from golfcal2.services.auth_service import AuthService
-from golfcal2.models.mixins import PlayerFetchMixin
-from golfcal2.api.wise_golf import WiseGolfAPI, WiseGolf0API
 from golfcal2.api.nex_golf import NexGolfAPI
 from golfcal2.api.teetime import TeeTimeAPI
-from golfcal2.config import settings
+from golfcal2.api.wise_golf import WiseGolf0API
+from golfcal2.api.wise_golf import WiseGolfAPI
+from golfcal2.models.mixins import PlayerFetchMixin
+from golfcal2.models.user import Membership
+from golfcal2.services.auth_service import AuthService
+from golfcal2.utils.logging_utils import LoggerMixin
+from golfcal2.utils.timezone_utils import TimezoneManager
+
 
 # Type definitions
-ApiClass = TypeVar('ApiClass', bound=Union[WiseGolfAPI, WiseGolf0API])
+ApiClass = TypeVar('ApiClass', bound=WiseGolfAPI | WiseGolf0API)
 
 class AppConfigProtocol(Protocol):
     """Protocol for AppConfig."""
-    users: Dict[str, Any]
-    clubs: Dict[str, Any]
-    global_config: Dict[str, Any]
-    api_keys: Dict[str, str]
+    users: dict[str, Any]
+    clubs: dict[str, Any]
+    global_config: dict[str, Any]
+    api_keys: dict[str, str]
 
 @dataclass
 class GolfClub(ABC, LoggerMixin):
@@ -37,17 +43,17 @@ class GolfClub(ABC, LoggerMixin):
     url: str
     address: str = "Unknown"
     timezone: str = "UTC"
-    coordinates: Optional[Dict[str, float]] = None
-    variant: Optional[str] = None
-    product: Optional[str] = None
-    auth_service: Optional[AuthService] = None
-    club_details: Optional[Dict[str, Any]] = None
-    _tz_manager: Optional[TimezoneManager] = None
-    config: Optional[AppConfigProtocol] = None
-    clubAbbreviation: Optional[str] = None
-    _auth_headers: Dict[str, str] = field(default_factory=dict)
-    membership: Optional[Membership] = None
-    api_client: Optional[Union[WiseGolfAPI, WiseGolf0API]] = None
+    coordinates: dict[str, float] | None = None
+    variant: str | None = None
+    product: str | None = None
+    auth_service: AuthService | None = None
+    club_details: dict[str, Any] | None = None
+    _tz_manager: TimezoneManager | None = None
+    config: AppConfigProtocol | None = None
+    club_abbreviation: str | None = None
+    _auth_headers: dict[str, str] = field(default_factory=dict)
+    membership: Membership | None = None
+    api_client: WiseGolfAPI | WiseGolf0API | None = None
 
     def __post_init__(self) -> None:
         """Initialize after dataclass initialization."""
@@ -84,14 +90,14 @@ class GolfClub(ABC, LoggerMixin):
             raise ValueError("No auth service available")
         return self.auth_service
 
-    def _ensure_club_details(self) -> Dict[str, Any]:
+    def _ensure_club_details(self) -> dict[str, Any]:
         """Ensure club details are initialized."""
         if self.club_details is None:
             self.logger.error("No club details available")
             raise ValueError("No club details available")
         return self.club_details
 
-    def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_players(self, reservation: dict[str, Any], membership: Membership) -> list[dict[str, Any]]:
         """
         Fetch players for a specific reservation.
         Default implementation returns empty list for clubs that don't support player fetching.
@@ -118,7 +124,7 @@ class GolfClub(ABC, LoggerMixin):
         tz_manager = self._ensure_timezone_manager()
         return tz_manager.localize_datetime(dt)
 
-    def get_event_summary(self, reservation: Dict[str, Any]) -> str:
+    def get_event_summary(self, reservation: dict[str, Any]) -> str:
         """
         Get event summary for reservation.
         
@@ -142,7 +148,7 @@ class GolfClub(ABC, LoggerMixin):
         return self.address
 
     @abstractmethod
-    def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
+    def parse_start_time(self, reservation: dict[str, Any]) -> datetime:
         """
         Parse start time from reservation.
         
@@ -157,7 +163,7 @@ class GolfClub(ABC, LoggerMixin):
         """
         raise NotImplementedError
 
-    def get_end_time(self, start_time: datetime, duration: Dict[str, int]) -> datetime:
+    def get_end_time(self, start_time: datetime, duration: dict[str, int]) -> datetime:
         """
         Calculate end time based on start time and duration.
         
@@ -177,7 +183,7 @@ class GolfClub(ABC, LoggerMixin):
             end_time = tz_manager.localize_datetime(end_time)
         return end_time
 
-    def set_auth_headers(self, headers: Dict[str, str]) -> None:
+    def set_auth_headers(self, headers: dict[str, str]) -> None:
         """Set authentication headers.
         
         Args:
@@ -266,19 +272,19 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
         url: str,
         address: str = "Unknown",
         timezone: str = "UTC",
-        coordinates: Optional[Dict[str, float]] = None,
-        variant: Optional[str] = None,
-        product: Optional[str] = None,
-        auth_service: Optional[AuthService] = None,
-        club_details: Optional[Dict[str, Any]] = None,
-        config: Optional[AppConfigProtocol] = None,
-        clubAbbreviation: Optional[str] = None,
-        membership: Optional[Membership] = None
+        coordinates: dict[str, float] | None = None,
+        variant: str | None = None,
+        product: str | None = None,
+        auth_service: AuthService | None = None,
+        club_details: dict[str, Any] | None = None,
+        config: AppConfigProtocol | None = None,
+        club_abbreviation: str | None = None,
+        membership: Membership | None = None
     ) -> None:
         """Initialize WiseGolf club."""
-        # Extract clubAbbreviation from club_details if not provided
-        if clubAbbreviation is None and club_details and 'clubAbbreviation' in club_details:
-            clubAbbreviation = club_details['clubAbbreviation']
+        # Extract club_abbreviation from club_details if not provided
+        if club_abbreviation is None and club_details and 'club_abbreviation' in club_details:
+            club_abbreviation = club_details['club_abbreviation']
         
         super().__init__(
             name=name,
@@ -291,22 +297,22 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
             auth_service=auth_service,
             club_details=club_details,
             config=config,
-            clubAbbreviation=clubAbbreviation,
+            club_abbreviation=club_abbreviation,
             membership=membership
         )
 
     @abstractmethod
-    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_reservations(self, membership: Membership) -> list[dict[str, Any]]:
         """Fetch reservations from WiseGolf API."""
         raise NotImplementedError
 
     def fetch_players_from_rest(
         self,
-        reservation: Dict[str, Any],
+        reservation: dict[str, Any],
         membership: Membership,
-        api_class: Type[ApiClass],
+        api_class: type[ApiClass],
         rest_url: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch players from REST API."""
         auth_service = self._ensure_auth_service()
         club_details = self._ensure_club_details()
@@ -329,7 +335,7 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
         # Return the response directly without converting to list
         return response
 
-    def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
+    def parse_start_time(self, reservation: dict[str, Any]) -> datetime:
         """Parse start time from WiseGolf reservation."""
         start_time_str = reservation.get("dateTimeStart")
         if not start_time_str:
@@ -346,7 +352,7 @@ class BaseWiseGolfClub(GolfClub, PlayerFetchMixin):
 class WiseGolfClub(BaseWiseGolfClub):
     """WiseGolf club implementation."""
     
-    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_reservations(self, membership: Membership) -> list[dict[str, Any]]:
         """Fetch reservations from WiseGolf API."""
         if not self.api_client:
             self.logger.error("No API client available")
@@ -357,7 +363,7 @@ class WiseGolfClub(BaseWiseGolfClub):
         self.logger.debug(f"Got {len(reservations)} reservations")
         return reservations
     
-    def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_players(self, reservation: dict[str, Any], membership: Membership) -> list[dict[str, Any]]:
         """Fetch players for a reservation."""
         club_details = self._ensure_club_details()
             
@@ -381,7 +387,7 @@ class WiseGolfClub(BaseWiseGolfClub):
 class WiseGolf0Club(BaseWiseGolfClub):
     """WiseGolf0 golf club implementation."""
     
-    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_reservations(self, membership: Membership) -> list[dict[str, Any]]:
         """Fetch reservations from WiseGolf0 API."""
         if not self.api_client:
             self.logger.error("No API client available")
@@ -392,7 +398,7 @@ class WiseGolf0Club(BaseWiseGolfClub):
         self.logger.debug(f"Got {len(reservations)} reservations")
         return reservations
     
-    def fetch_players(self, reservation: Dict[str, Any], membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_players(self, reservation: dict[str, Any], membership: Membership) -> list[dict[str, Any]]:
         """Fetch players for a reservation."""
         self.logger.debug(f"WiseGolf0Club.fetch_players - Starting with reservation: {reservation}")
         
@@ -418,7 +424,7 @@ class WiseGolf0Club(BaseWiseGolfClub):
 class NexGolfClub(GolfClub):
     """NexGolf golf club implementation."""
     
-    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_reservations(self, membership: Membership) -> list[dict[str, Any]]:
         """Fetch reservations from NexGolf API."""
         if not self.api_client:
             self.logger.error("No API client available")
@@ -427,7 +433,7 @@ class NexGolfClub(GolfClub):
         self.logger.debug("Fetching reservations using API client")
         return self.api_client.get_reservations()
     
-    def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
+    def parse_start_time(self, reservation: dict[str, Any]) -> datetime:
         """Parse start time from NexGolf reservation."""
         # Try dateTimeStart first (new format)
         start_time_str = reservation.get("dateTimeStart")
@@ -461,7 +467,7 @@ class NexGolfClub(GolfClub):
 class TeeTimeClub(GolfClub):
     """TeeTime golf club implementation."""
     
-    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_reservations(self, membership: Membership) -> list[dict[str, Any]]:
         """Fetch reservations from TeeTime API."""
         if not self.api_client:
             self.logger.error("No API client available")
@@ -470,7 +476,7 @@ class TeeTimeClub(GolfClub):
         self.logger.debug("Fetching reservations using API client")
         return self.api_client.get_reservations()
     
-    def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
+    def parse_start_time(self, reservation: dict[str, Any]) -> datetime:
         """Parse start time from TeeTime reservation."""
         start_time_str = reservation["startTime"]
         if not start_time_str:
@@ -490,23 +496,23 @@ class ExternalGolfClub(GolfClub):
     url: str
     address: str = "Unknown"
     timezone: str = "UTC"
-    coordinates: Optional[Dict[str, float]] = None  # Make coordinates optional
-    variant: Optional[str] = None
-    product: Optional[str] = None
-    auth_service: Optional[AuthService] = None
-    club_details: Optional[Dict[str, Any]] = None
-    _tz_manager: Optional[TimezoneManager] = None
-    config: Optional[AppConfigProtocol] = None
+    coordinates: dict[str, float] | None = None  # Make coordinates optional
+    variant: str | None = None
+    product: str | None = None
+    auth_service: AuthService | None = None
+    club_details: dict[str, Any] | None = None
+    _tz_manager: TimezoneManager | None = None
+    config: AppConfigProtocol | None = None
 
     def get_event_location(self) -> str:
         """Get formatted location string."""
         return self.address
 
-    def get_event_summary(self, reservation: Optional[Dict[str, Any]] = None) -> str:
+    def get_event_summary(self, reservation: dict[str, Any] | None = None) -> str:
         """Get event summary."""
         return f"Golf: {self.name}"
 
-    def get_coordinates(self) -> Optional[Dict[str, float]]:
+    def get_coordinates(self) -> dict[str, float] | None:
         """Get club coordinates."""
         return self.coordinates
 
@@ -514,27 +520,27 @@ class ExternalGolfClub(GolfClub):
         """Get club timezone."""
         return self.timezone
 
-    def fetch_reservations(self, membership: Membership) -> List[Dict[str, Any]]:
+    def fetch_reservations(self, membership: Membership) -> list[dict[str, Any]]:
         """External clubs don't fetch reservations."""
         return []
 
-    def parse_start_time(self, reservation: Dict[str, Any]) -> datetime:
+    def parse_start_time(self, reservation: dict[str, Any]) -> datetime:
         """External clubs don't parse start times."""
         return datetime.now(ZoneInfo(self.timezone))
 
 class GolfClubFactory:
     """Factory for creating golf club instances."""
     
-    _clubs: Dict[str, GolfClub] = {}  # Cache for club instances
+    _clubs: dict[str, GolfClub] = {}  # Cache for club instances
     
     @classmethod
     def create_club(
         cls,
-        club_details: Dict[str, Any],
+        club_details: dict[str, Any],
         membership: Membership,
         auth_service: AuthService,
         config: AppConfigProtocol
-    ) -> Optional[GolfClub]:
+    ) -> GolfClub | None:
         """Create golf club instance based on type."""
         # Get the full club name, prioritizing the explicit name in club_details
         club_name = (
@@ -544,7 +550,7 @@ class GolfClubFactory:
         if not club_name:
             # Only use abbreviation as name if no full name is available
             club_name = (
-                club_details.get("clubAbbreviation") or  # Club abbreviation
+                club_details.get("club_abbreviation") or  # Club abbreviation
                 club_details.get("type", "").title()  # Fallback to capitalized type
             )
             
@@ -583,11 +589,11 @@ class GolfClubFactory:
             "auth_service": auth_service,
             "club_details": club_details,
             "config": config,
-            "clubAbbreviation": club_details.get("clubAbbreviation"),
+            "club_abbreviation": club_details.get("club_abbreviation"),
             "membership": membership
         }
 
-        club: Optional[GolfClub] = None
+        club: GolfClub | None = None
         if club_type == "wisegolf":
             club = WiseGolfClub(**common_args)
         elif club_type == "wisegolf0":

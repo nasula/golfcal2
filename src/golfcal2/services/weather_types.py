@@ -1,18 +1,27 @@
 """Weather service types and base classes."""
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from enum import Enum
-from typing import Dict, Any, List, Optional, Union, Iterator, cast, TypeVar, Callable, overload, Sized
-from collections.abc import Iterable
-from zoneinfo import ZoneInfo
-import requests
 import traceback
-from abc import ABC, abstractmethod
+from abc import ABC
+from abc import abstractmethod
+from collections.abc import Iterable
+from collections.abc import Iterator
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import UTC
+from datetime import datetime
+from datetime import timedelta
+from enum import Enum
+from typing import Any
+from typing import TypeVar
+from zoneinfo import ZoneInfo
 
-from golfcal2.error_codes import ErrorCode
-from golfcal2.exceptions import GolfCalError, handle_errors
+import requests
+
 from golfcal2.config.error_aggregator import aggregate_error
+from golfcal2.error_codes import ErrorCode
+from golfcal2.exceptions import GolfCalError
+from golfcal2.exceptions import handle_errors
+
 
 class SupportsIter(Iterable[Any]):
     """Protocol for types that support iteration."""
@@ -198,13 +207,13 @@ class Location:
     name: str
     latitude: float
     longitude: float
-    altitude: Optional[float] = None
-    region: Optional[str] = None
-    country: Optional[str] = None
-    timezone: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    altitude: float | None = None
+    region: str | None = None
+    country: str | None = None
+    timezone: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert location data to dictionary for JSON serialization."""
         return {
             "id": self.id,
@@ -268,7 +277,7 @@ class WeatherData:
         if self.precipitation < 0:
             raise ValueError("precipitation cannot be negative")
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             'temperature': self.temperature,
@@ -289,9 +298,9 @@ T = TypeVar('T', bound='WeatherData')
 @dataclass
 class WeatherResponse:
     """Weather response data class."""
-    data: List[WeatherData]
+    data: list[WeatherData]
     elaboration_time: datetime
-    expires: Optional[datetime] = None
+    expires: datetime | None = None
 
     def __post_init__(self) -> None:
         """Validate the response data."""
@@ -322,7 +331,7 @@ class WeatherResponse:
     def __getitem__(self, idx: int) -> WeatherData:
         return self.data[idx]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'data': [d.to_dict() for d in self.data],
@@ -331,7 +340,7 @@ class WeatherResponse:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'WeatherResponse':
+    def from_dict(cls, data: dict[str, Any]) -> 'WeatherResponse':
         """Create WeatherResponse from dictionary.
         
         Args:
@@ -347,9 +356,9 @@ class WeatherResponse:
             # Parse time from ISO format and ensure UTC
             time = datetime.fromisoformat(item['time'])
             if not time.tzinfo:
-                time = time.replace(tzinfo=timezone.utc)
-            elif time.tzinfo != timezone.utc:
-                time = time.astimezone(timezone.utc)
+                time = time.replace(tzinfo=UTC)
+            elif time.tzinfo != UTC:
+                time = time.astimezone(UTC)
             
             # Create WeatherData object
             weather_data.append(WeatherData(
@@ -369,18 +378,18 @@ class WeatherResponse:
         # Parse elaboration_time from ISO format and ensure UTC
         elaboration_time = datetime.fromisoformat(data['elaboration_time'])
         if not elaboration_time.tzinfo:
-            elaboration_time = elaboration_time.replace(tzinfo=timezone.utc)
-        elif elaboration_time.tzinfo != timezone.utc:
-            elaboration_time = elaboration_time.astimezone(timezone.utc)
+            elaboration_time = elaboration_time.replace(tzinfo=UTC)
+        elif elaboration_time.tzinfo != UTC:
+            elaboration_time = elaboration_time.astimezone(UTC)
         
         # Parse expires if present and ensure UTC
         expires = None
         if data.get('expires'):
             expires = datetime.fromisoformat(data['expires'])
             if not expires.tzinfo:
-                expires = expires.replace(tzinfo=timezone.utc)
-            elif expires.tzinfo != timezone.utc:
-                expires = expires.astimezone(timezone.utc)
+                expires = expires.replace(tzinfo=UTC)
+            elif expires.tzinfo != UTC:
+                expires = expires.astimezone(UTC)
         
         return cls(
             data=weather_data,
@@ -391,7 +400,7 @@ class WeatherResponse:
     def __str__(self) -> str:
         return f"WeatherResponse(data={self.data}, elaboration_time={self.elaboration_time})"
 
-def _handle_weather_error(error: Exception, service: str, operation: str) -> Dict[str, Any]:
+def _handle_weather_error(error: Exception, service: str, operation: str) -> dict[str, Any]:
     """Handle weather service error and return details."""
     details = {
         "service": service,
@@ -412,7 +421,7 @@ def _handle_weather_error(error: Exception, service: str, operation: str) -> Dic
 
 class WeatherError(GolfCalError):
     """Base class for weather service errors."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -422,7 +431,7 @@ class WeatherError(GolfCalError):
 
 class WeatherServiceError(WeatherError):
     """Error in weather service operation."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -432,7 +441,7 @@ class WeatherServiceError(WeatherError):
 
 class WeatherParseError(WeatherError):
     """Error parsing weather data."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -442,7 +451,7 @@ class WeatherParseError(WeatherError):
 
 class WeatherValidationError(WeatherError):
     """Error validating weather data."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -452,7 +461,7 @@ class WeatherValidationError(WeatherError):
 
 class WeatherServiceUnavailable(WeatherError):
     """Error raised when weather service is unavailable."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -462,7 +471,7 @@ class WeatherServiceUnavailable(WeatherError):
 
 class WeatherServiceTimeout(WeatherError):
     """Error raised when weather service times out."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -472,7 +481,7 @@ class WeatherServiceTimeout(WeatherError):
 
 class WeatherServiceRateLimited(WeatherError):
     """Error raised when weather service rate limit is exceeded."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -482,7 +491,7 @@ class WeatherServiceRateLimited(WeatherError):
 
 class WeatherServiceInvalidResponse(WeatherError):
     """Error raised when weather service returns invalid response."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -492,7 +501,7 @@ class WeatherServiceInvalidResponse(WeatherError):
 
 class WeatherRequestError(WeatherError):
     """Error raised when weather request fails."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -502,7 +511,7 @@ class WeatherRequestError(WeatherError):
 
 class WeatherTimeoutError(WeatherError):
     """Error raised when weather request times out."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -512,7 +521,7 @@ class WeatherTimeoutError(WeatherError):
 
 class WeatherAuthError(WeatherError):
     """Error raised when weather service authentication fails."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -522,7 +531,7 @@ class WeatherAuthError(WeatherError):
 
 class WeatherLocationError(WeatherError):
     """Error raised when location data is invalid or missing."""
-    def __init__(self, message: str, service: str = "", operation: str = "", details: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, message: str, service: str = "", operation: str = "", details: dict[str, Any] | None = None) -> None:
         details = details or {}
         details.update({
             "service": service,
@@ -534,7 +543,7 @@ class WeatherLocationError(WeatherError):
 class WeatherService(ABC):
     """Base class for weather services."""
     
-    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, local_tz: ZoneInfo, utc_tz: ZoneInfo, config: dict[str, Any] | None = None) -> None:
         """Initialize weather service.
         
         Args:
@@ -546,7 +555,7 @@ class WeatherService(ABC):
         self.utc_tz = utc_tz
         self.config = config or {}
 
-    def get_weather(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> Optional[WeatherResponse]:
+    def get_weather(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> WeatherResponse | None:
         """Get weather data for a location and time range.
         
         Args:
@@ -571,7 +580,7 @@ class WeatherService(ABC):
             return None
 
     @abstractmethod
-    def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> Optional[Dict[str, Any]]:
+    def _fetch_forecasts(self, latitude: float, longitude: float, start_time: datetime, end_time: datetime) -> dict[str, Any] | None:
         """Fetch forecasts from the weather service.
         
         Args:
@@ -589,7 +598,7 @@ class WeatherService(ABC):
         pass
 
     @abstractmethod
-    def _parse_response(self, response_data: Dict[str, Any]) -> Optional[WeatherResponse]:
+    def _parse_response(self, response_data: dict[str, Any]) -> WeatherResponse | None:
         """Parse the response from the weather service.
         
         Args:
@@ -611,7 +620,7 @@ class WeatherService(ABC):
         """
         return datetime.now(self.utc_tz) + timedelta(hours=1)
 
-    def _create_response(self, data: Union[WeatherData, List[WeatherData]], elaboration_time: datetime, expires: Optional[datetime] = None) -> WeatherResponse:
+    def _create_response(self, data: WeatherData | list[WeatherData], elaboration_time: datetime, expires: datetime | None = None) -> WeatherResponse:
         """Create a weather response object.
         
         Args:
@@ -634,7 +643,7 @@ class WeatherService(ABC):
         except ValueError as e:
             raise WeatherValidationError(str(e))
 
-    def _handle_errors(self, error_code: ErrorCode, message: str, traceback: Optional[str] = None) -> None:
+    def _handle_errors(self, error_code: ErrorCode, message: str, traceback: str | None = None) -> None:
         """Handle errors in weather service.
         
         Args:

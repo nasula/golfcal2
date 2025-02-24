@@ -2,16 +2,15 @@
 Calendar builder for golf calendar application.
 """
 
-from typing import Optional, Dict, Any, List
 from pathlib import Path
-from datetime import datetime
-
-import icalendar  # type: ignore
-from icalendar import Calendar, vText
 from zoneinfo import ZoneInfo
 
-from golfcal2.utils.logging_utils import LoggerMixin
+from icalendar import Calendar
+from icalendar import vText
+
 from golfcal2.models.user import User
+from golfcal2.utils.logging_utils import LoggerMixin
+
 
 class CalendarBuilder(LoggerMixin):
     """Builder for calendar objects."""
@@ -54,6 +53,6 @@ class CalendarBuilder(LoggerMixin):
             
             self.logger.info(f"Created calendar file: {file_path}")
             
-        except IOError as e:
+        except OSError as e:
             self.logger.error(f"Failed to write calendar file: {e}")
             raise 

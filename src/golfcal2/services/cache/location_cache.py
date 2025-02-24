@@ -1,11 +1,12 @@
 """Location caching implementation."""
 
-import sqlite3
 import json
+import sqlite3
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Any
 
 from golfcal2.utils.logging_utils import LoggerMixin
+
 
 class WeatherLocationCache(LoggerMixin):
     """Cache for weather location data."""
@@ -33,7 +34,7 @@ class WeatherLocationCache(LoggerMixin):
             """)
             conn.commit()
     
-    def get(self, address: str) -> Optional[Tuple[float, float]]:
+    def get(self, address: str) -> tuple[float, float] | None:
         """Get cached location coordinates.
         
         Args:
@@ -64,10 +65,10 @@ class WeatherLocationCache(LoggerMixin):
                 return None
                 
         except Exception as e:
-            self.error(f"Error getting cached location: {str(e)}")
+            self.error(f"Error getting cached location: {e!s}")
             return None
     
-    def set(self, address: str, lat: float, lon: float, expires: datetime, metadata: Optional[Dict[str, Any]] = None) -> None:
+    def set(self, address: str, lat: float, lon: float, expires: datetime, metadata: dict[str, Any] | None = None) -> None:
         """Cache location coordinates.
         
         Args:
@@ -92,7 +93,7 @@ class WeatherLocationCache(LoggerMixin):
                 conn.commit()
                 
         except Exception as e:
-            self.error(f"Error caching location: {str(e)}")
+            self.error(f"Error caching location: {e!s}")
     
     def clear(self) -> None:
         """Clear all cached locations."""
@@ -102,7 +103,7 @@ class WeatherLocationCache(LoggerMixin):
                 conn.commit()
                 
         except Exception as e:
-            self.error(f"Error clearing location cache: {str(e)}")
+            self.error(f"Error clearing location cache: {e!s}")
     
     def cleanup(self) -> None:
         """Remove expired entries."""
@@ -115,4 +116,4 @@ class WeatherLocationCache(LoggerMixin):
                 conn.commit()
                 
         except Exception as e:
-            self.error(f"Error cleaning up location cache: {str(e)}") 
+            self.error(f"Error cleaning up location cache: {e!s}") 

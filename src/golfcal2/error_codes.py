@@ -2,6 +2,7 @@
 
 from enum import Enum
 
+
 class ErrorCode(Enum):
     """Enumeration of all possible error codes."""
     # Authentication Errors

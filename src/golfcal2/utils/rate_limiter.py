@@ -2,7 +2,6 @@
 
 import time
 from collections import deque
-from typing import Deque
 
 
 class RateLimiter:
@@ -21,7 +20,7 @@ class RateLimiter:
         """
         self.max_calls = max_calls
         self.time_window = time_window
-        self.calls: Deque[float] = deque()
+        self.calls: deque[float] = deque()
     
     def add_call(self) -> None:
         """Record a new API call."""

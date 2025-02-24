@@ -1,11 +1,13 @@
 """Configuration utility functions."""
 
 import os
-from pathlib import Path
-from typing import Dict, Any, TypeVar, Type, Optional, Union
 from copy import deepcopy
+from pathlib import Path
+from typing import Any
+from typing import TypeVar
 
-T = TypeVar('T', bound=Dict[str, Any])
+
+T = TypeVar('T', bound=dict[str, Any])
 
 def deep_merge(base: T, override: T) -> T:
     """Deep merge two dictionaries.
@@ -32,8 +34,8 @@ def deep_merge(base: T, override: T) -> T:
     return result
 
 def resolve_path(
-    path: Union[str, Path],
-    base_dir: Optional[Union[str, Path]] = None,
+    path: str | Path,
+    base_dir: str | Path | None = None,
     create: bool = False
 ) -> Path:
     """Resolve path relative to base directory.
@@ -61,7 +63,7 @@ def resolve_path(
     
     return path
 
-def validate_api_key(key: Optional[str], service: str) -> None:
+def validate_api_key(key: str | None, service: str) -> None:
     """Validate API key format.
     
     Args:
@@ -87,7 +89,7 @@ def validate_api_key(key: Optional[str], service: str) -> None:
     else:
         raise ValueError(f"Unknown service: {service}")
 
-def get_config_paths(config_dir: Optional[Union[str, Path]] = None) -> Dict[str, Path]:
+def get_config_paths(config_dir: str | Path | None = None) -> dict[str, Path]:
     """Get configuration file paths.
     
     Args:

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Test runner for golfcal2."""
 
-import unittest
-import coverage
-import sys
 import os
+import sys
+import unittest
+
+import coverage
+
 
 def run_tests():
     """Run all tests with coverage reporting."""
