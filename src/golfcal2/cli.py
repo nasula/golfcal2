@@ -24,6 +24,7 @@ from golfcal2.config.error_aggregator import init_error_aggregator, ErrorAggrega
 from golfcal2.services.external_event_service import ExternalEventService
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.weather_database import WeatherResponseCache
+from golfcal2.services.csv_import_service import CSVImportService
 from golfcal2.utils.cli_utils import (
     CommandRegistry, CommandCategory, CLIOptionFactory, CLIBuilder,
     create_command_group, ArgumentValidator, add_common_options, CLIContext
@@ -284,12 +285,6 @@ class ProcessCommands:
     def process_calendar(ctx: CLIContext) -> int:
         """Process golf calendar."""
         try:
-            # Get username from args or config
-            username = ctx.args.user or ctx.config.get('default_user')
-            if not username:
-                ctx.logger.error("No username specified and no default user configured")
-                return 1
-            
             # Get list of users to process
             users = [ctx.args.user] if ctx.args.user else list(ctx.config.users.keys())
             if not users:
@@ -624,6 +619,133 @@ class CheckCommands:
             
         except Exception as e:
             ctx.logger.error(f"Failed to check configuration: {e}", exc_info=True)
+            return 1
+
+@create_command_group('import', 'Import commands')
+class ImportCommands:
+    """Import command implementations."""
+    
+    @CommandRegistry.register(
+        name='csv',
+        help_text='Import events from a CSV file',
+        category=CommandCategory.IMPORT,
+        options=[
+            {
+                'name': '--file',
+                'type': str,
+                'required': True,
+                'help': 'Path to the CSV file to import'
+            },
+            {
+                'name': '--recurring-until',
+                'type': str,
+                'help': 'Create weekly recurring events until this date (format: YYYY-MM-DD)'
+            },
+            {
+                'name': '--recurrence-end',
+                'type': str,
+                'help': 'End date for recurring events, takes precedence over --recurring-until (format: YYYY-MM-DD)'
+            },
+            {
+                'name': '--timezone',
+                'type': str,
+                'help': 'Timezone for the events (e.g. Europe/Helsinki, UTC)'
+            },
+            {
+                'name': '--delimiter',
+                'type': str,
+                'default': ';',
+                'help': 'CSV delimiter character (default: ;)'
+            },
+            {
+                'name': '--temp-user',
+                'type': str,
+                'help': 'Create a temporary user with this name (if not in users.json)'
+            }
+        ],
+        parent_command='import'
+    )
+    def import_csv(ctx: CLIContext) -> int:
+        """Import events from a CSV file."""
+        try:
+            # Get or create user
+            username = ctx.args.user or ctx.args.temp_user or ctx.config.get('default_user')
+            if not username:
+                ctx.logger.error("No username specified and no default user configured")
+                return 1
+
+            # Create temporary user if needed
+            if ctx.args.temp_user:
+                user = User(
+                    name=username,
+                    memberships=[],  # No memberships needed for external events
+                    email=None,
+                    phone=None,
+                    handicap=None
+                )
+            else:
+                # Get user from config
+                user_config = ctx.config.get_user_config(username)
+                if not user_config:
+                    ctx.logger.error(f"User {username} not found in configuration")
+                    return 1
+                user = User.from_config(username, user_config)
+
+            # Parse recurring_until date if provided
+            recurring_until = None
+            if ctx.args.recurring_until:
+                try:
+                    recurring_until = datetime.strptime(ctx.args.recurring_until, "%Y-%m-%d")
+                    recurring_until = recurring_until.replace(hour=23, minute=59, second=59)
+                    recurring_until = recurring_until.replace(tzinfo=ZoneInfo(ctx.args.timezone or ctx.config.timezone))
+                except ValueError:
+                    ctx.logger.error("Invalid recurring-until date format. Use YYYY-MM-DD")
+                    return 1
+
+            # Parse recurrence_end date if provided
+            recurrence_end = None
+            if ctx.args.recurrence_end:
+                try:
+                    recurrence_end = datetime.strptime(ctx.args.recurrence_end, "%Y-%m-%d")
+                    recurrence_end = recurrence_end.replace(hour=23, minute=59, second=59)
+                    recurrence_end = recurrence_end.replace(tzinfo=ZoneInfo(ctx.args.timezone or ctx.config.timezone))
+                except ValueError:
+                    ctx.logger.error("Invalid recurrence-end date format. Use YYYY-MM-DD")
+                    return 1
+
+            # Initialize services
+            csv_service = CSVImportService(timezone=ctx.args.timezone or ctx.config.timezone)
+            calendar_service = CalendarService(ctx.config)
+
+            # Import reservations from CSV
+            reservations = csv_service.import_from_csv(
+                file_path=ctx.args.file,
+                user=user,
+                recurring_until=recurring_until,
+                recurrence_end=recurrence_end,
+                timezone=ctx.args.timezone,
+                delimiter=ctx.args.delimiter
+            )
+
+            if not reservations:
+                ctx.logger.warning("No events found in CSV file")
+                return 0
+
+            # Create calendar with imported events
+            calendar = calendar_service.process_user_reservations(user, reservations)
+
+            # Print summary
+            print(f"\nImported {len(reservations)} events")
+            if recurring_until:
+                end_date = recurrence_end if recurrence_end else recurring_until
+                print(f"Created weekly recurring events until {end_date.date()}")
+            if ctx.args.timezone:
+                print(f"Events created in timezone: {ctx.args.timezone}")
+
+            return 0
+
+        except Exception as e:
+            ctx.logger.error(f"Failed to import CSV: {str(e)}")
             return 1
 
 def create_parser() -> argparse.ArgumentParser:

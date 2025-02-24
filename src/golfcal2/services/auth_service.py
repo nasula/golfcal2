@@ -2,11 +2,11 @@
 Authentication service for golf calendar application.
 """
 
-from typing import Dict, Any, Optional, Protocol, Union, TYPE_CHECKING
+from typing import Dict, Any, Optional, Protocol, Union, TYPE_CHECKING, cast
 from abc import ABC, abstractmethod
 from urllib.parse import urljoin
 from golfcal2.models.user import Membership
-from golfcal2.config.settings import AppConfig
+from golfcal2.config.types import AppConfig, ClubConfig
 from golfcal2.utils.logging_utils import LoggerMixin
 
 # Use TYPE_CHECKING for imports only needed for type hints
@@ -195,8 +195,9 @@ class AuthService(LoggerMixin):
     def get_auth_headers(self, club: 'GolfClub', auth_details: Dict[str, Any]) -> Dict[str, str]:
         """Get authentication headers for a club."""
         try:
-            # Get club configuration
-            club_config = self.config.clubs.get(club.name, {})
+            # Get club configuration and ensure it's a dict
+            config_value: Union[ClubConfig, Dict[str, Any]] = self.config.clubs.get(club.name, {})
+            club_config: Dict[str, Any] = dict(config_value) if isinstance(config_value, dict) else {}
             
             # Get auth type from auth_details first, fall back to club config
             auth_type = auth_details.get('type') or club_config.get('auth_type', 'none')
@@ -341,15 +342,16 @@ class AuthService(LoggerMixin):
         
         # For WiseGolf0, use shopURL
         if club_details.get('type') == 'wisegolf0':
-            base_url = club_details.get('shopURL', base_url)
+            base_url = str(club_details.get('shopURL', base_url))
         
         # Ensure strategy is initialized with membership auth details
         self._ensure_strategy(membership.auth_details)
         
         # Build the URL using the strategy
         if self.strategy:
-            return self.strategy.build_full_url(base_url, '')
-        return base_url
+            result = self.strategy.build_full_url(base_url, '')
+            return str(result)
+        return str(base_url)
     
     def create_headers(
         self,

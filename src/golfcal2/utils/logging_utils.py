@@ -9,20 +9,24 @@ import logging
 import traceback
 import functools
 from typing import Optional, Any, Dict, Callable, TypeVar, cast
+from typing_extensions import ParamSpec
 from pathlib import Path
 from functools import wraps
 from datetime import datetime
 from inspect import signature
 
 T = TypeVar('T')
+P = ParamSpec('P')
 
 def get_logger(name: str) -> logging.Logger:
     """Get a logger with the given name."""
     return logging.getLogger(name)
 
-def log_execution(level: str = 'DEBUG', include_args: bool = False) -> Callable:
+def log_execution(level: str = 'DEBUG', include_args: bool = False) -> Callable[
+    [Callable[P, T]], Callable[P, T]
+]:
     """Decorator to log function execution with timing."""
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+    def decorator(func: Callable[P, T]) -> Callable[P, T]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> T:
             logger = logging.getLogger(func.__module__)
@@ -61,7 +65,7 @@ def log_execution(level: str = 'DEBUG', include_args: bool = False) -> Callable:
 class EnhancedLoggerMixin:
     """Mixin class that provides enhanced logging capabilities."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize logger."""
         # Create logger as instance variable
         self._logger = logging.getLogger(self.__class__.__module__)

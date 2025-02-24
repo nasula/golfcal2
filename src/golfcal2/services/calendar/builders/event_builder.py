@@ -2,28 +2,30 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List, Union, cast, Sequence
+from typing import Dict, Any, Optional, List, Union, cast, Sequence, TypeVar
 from zoneinfo import ZoneInfo
 
-from icalendar import Event, vText, vDatetime  # type: ignore[import]
+from icalendar import Event, vText, vDatetime, vRecur
 
 from golfcal2.models.reservation import Reservation
 from golfcal2.models.golf_club import ExternalGolfClub
 from golfcal2.models.user import User, Membership
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.services.weather_service import WeatherService
-from golfcal2.config.settings import AppConfig
+from golfcal2.config.types import AppConfig
 from golfcal2.services.weather_types import (
     WeatherResponse, WeatherData, Location, WeatherCode
 )
 from golfcal2.services.weather_formatter import WeatherFormatter
 
+T = TypeVar('T')
+
 class EventBuilder(ABC, LoggerMixin):
     """Base class for event builders."""
     
-    def __init__(self, weather_service: WeatherService, config: AppConfig):
+    def __init__(self, weather_service: WeatherService, config: AppConfig) -> None:
         """Initialize builder."""
-        super().__init__()
+        LoggerMixin.__init__(self)  # Initialize LoggerMixin explicitly
         self.weather_service = weather_service
         self.config = config
         
@@ -36,7 +38,7 @@ class EventBuilder(ABC, LoggerMixin):
         self.set_log_context(service="event_builder")
     
     @abstractmethod
-    def build(self, *args, **kwargs) -> Optional[Event]:
+    def build(self, *args: Any, **kwargs: Any) -> Optional[Event]:
         """Build an event."""
         pass
     
@@ -73,7 +75,7 @@ class EventBuilder(ABC, LoggerMixin):
 class ReservationEventBuilder(EventBuilder):
     """Event builder for golf reservations."""
     
-    def __init__(self, weather_service: WeatherService, config: AppConfig):
+    def __init__(self, weather_service: WeatherService, config: AppConfig) -> None:
         """Initialize builder."""
         super().__init__(weather_service, config)
     
@@ -82,7 +84,13 @@ class ReservationEventBuilder(EventBuilder):
         try:
             # Create base event
             event = Event()
-            event.add('summary', reservation.get_event_summary())
+            
+            # Add summary from raw_data if available, otherwise use default
+            if reservation.raw_data and 'summary' in reservation.raw_data:
+                event.add('summary', reservation.raw_data['summary'])
+            else:
+                event.add('summary', reservation.get_event_summary())
+            
             event.add('dtstart', vDatetime(reservation.start_time))
             event.add('dtend', vDatetime(reservation.end_time))
             event.add('dtstamp', vDatetime(datetime.now(timezone.utc)))
@@ -92,6 +100,16 @@ class ReservationEventBuilder(EventBuilder):
             location = club_config.get('location', reservation.get_event_location())
             if location:
                 event.add('location', vText(location))
+            
+            # Add recurrence rule if present in raw_data
+            if reservation.raw_data and 'rrule' in reservation.raw_data:
+                rrule = reservation.raw_data['rrule']
+                # Convert UNTIL datetime to UTC as per iCalendar spec
+                if 'UNTIL' in rrule:
+                    until_dt = rrule['UNTIL']
+                    if until_dt.tzinfo is not None:
+                        rrule['UNTIL'] = until_dt.astimezone(timezone.utc)
+                event.add('rrule', vRecur(rrule))
             
             # Get weather data if coordinates available
             weather_data = None
@@ -241,14 +259,14 @@ class ExternalEventBuilder(EventBuilder):
         if 'coordinates' in event_data:
             location_id = f"{event_data['coordinates']['lat']}_{event_data['coordinates']['lon']}"
         else:
-            location_id = event_data['location'][:8].replace(' ', '_')
+            location_id = str(event_data['location'][:8].replace(' ', '_'))
         
-        # Use consistent format with other events
-        return f"{event_data['name'].replace(' ', '_')}_{date_str}_{time_str}_{location_id.split('.')[0]}_{person_name}"
+        # Add EXT_ prefix to identify external events
+        return f"EXT_{event_data['name'].replace(' ', '_')}_{date_str}_{time_str}_{location_id.split('.')[0]}_{person_name}"
     
     def _get_location(self, event_data: Dict[str, Any]) -> str:
         """Format location string from event data."""
-        location = event_data['location']
+        location = str(event_data['location'])
         if 'address' in event_data:
             location = f"{location}, {event_data['address']}"
         return location 

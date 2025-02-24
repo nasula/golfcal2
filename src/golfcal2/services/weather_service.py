@@ -3,7 +3,7 @@ Unified weather service with improved caching and error handling.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Protocol
+from typing import Dict, Any, List, Optional, Protocol, Type, cast, TypeVar, runtime_checkable
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import os
@@ -13,7 +13,7 @@ from golfcal2.services.weather_types import WeatherResponse, WeatherData, Weathe
 from golfcal2.services.weather_cache import WeatherLocationCache
 from golfcal2.services.weather_database import WeatherResponseCache
 from golfcal2.config.error_aggregator import aggregate_error
-from golfcal2.exceptions import APIError, ErrorCode
+from golfcal2.error_codes import ErrorCode
 
 class WeatherContext:
     """Context for weather data retrieval."""
@@ -36,6 +36,16 @@ class WeatherContext:
         self.utc_tz = utc_tz
         self.config = config
 
+@runtime_checkable
+class WeatherStrategyProtocol(Protocol):
+    """Protocol for weather strategies."""
+    service_type: str
+    
+    def __init__(self, context: WeatherContext) -> None: ...
+    def get_weather(self) -> Optional[WeatherResponse]: ...
+    def get_expiry_time(self) -> datetime: ...
+    def get_block_size(self, hours_ahead: float) -> int: ...
+
 class WeatherStrategy(ABC, LoggerMixin):
     """Base strategy for weather services."""
     
@@ -43,7 +53,7 @@ class WeatherStrategy(ABC, LoggerMixin):
     
     def __init__(self, context: WeatherContext):
         """Initialize strategy."""
-        super().__init__()
+        LoggerMixin.__init__(self)  # Initialize LoggerMixin explicitly
         self.context = context
         self.set_log_context(service=self.__class__.__name__.lower())
     
@@ -85,23 +95,23 @@ class WeatherService:
         cache_dir = config.get('directories', {}).get('cache', os.path.expanduser('~/.cache/golfcal2'))
         os.makedirs(cache_dir, exist_ok=True)
         
-        self.location_cache = WeatherLocationCache(config)
+        self.location_cache = WeatherLocationCache(config)  # type: ignore[no-untyped-call]
         self.response_cache = WeatherResponseCache(os.path.join(cache_dir, 'weather_responses.db'))
         
         # Initialize strategies
-        self._strategies: Dict[str, WeatherStrategy] = {}
+        self._strategies: Dict[str, Type[WeatherStrategyProtocol]] = {}
         
         # Register default strategies
         from golfcal2.services.met_weather_strategy import MetWeatherStrategy
         from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
         from golfcal2.services.mock_weather_strategy import MockWeatherStrategy
         
-        self.register_strategy('met', MetWeatherStrategy)
-        self.register_strategy('openmeteo', OpenMeteoStrategy)
+        self.register_strategy('met', cast(Type[WeatherStrategyProtocol], MetWeatherStrategy))
+        self.register_strategy('openmeteo', cast(Type[WeatherStrategyProtocol], OpenMeteoStrategy))
         if config.get('dev_mode', False):
-            self.register_strategy('mock', MockWeatherStrategy)
+            self.register_strategy('mock', cast(Type[WeatherStrategyProtocol], MockWeatherStrategy))
     
-    def register_strategy(self, service_type: str, strategy_class: type[WeatherStrategy]) -> None:
+    def register_strategy(self, service_type: str, strategy_class: Type[WeatherStrategyProtocol]) -> None:
         """Register a new weather strategy."""
         self._strategies[service_type] = strategy_class
     

@@ -4,11 +4,16 @@ Utility functions and decorators for CLI argument handling.
 
 import argparse
 from functools import wraps
-from typing import Callable, Optional, List, Union, Any, Dict, Type
+from typing import Callable, Optional, List, Union, Any, Dict, Type, TypeVar, cast
+from typing_extensions import ParamSpec
 from dataclasses import dataclass
 from enum import Enum, auto
 import logging
-from golfcal2.config.settings import AppConfig
+from golfcal2.config.types import AppConfig
+
+T = TypeVar('T')
+P = ParamSpec('P')
+F = TypeVar('F', bound=Callable[..., Any])
 
 @dataclass
 class CLIContext:
@@ -25,6 +30,7 @@ class CommandCategory(Enum):
     GET = auto()
     CHECK = auto()
     MANAGE = auto()
+    IMPORT = auto()
 
 @dataclass
 class CommandMetadata:
@@ -96,9 +102,9 @@ class CommandRegistry:
                 help_text: str,
                 category: CommandCategory,
                 options: Optional[List[Dict[str, Any]]] = None,
-                parent_command: Optional[str] = None) -> Callable:
+                parent_command: Optional[str] = None) -> Callable[[Callable[[CLIContext], int]], Callable[[CLIContext], int]]:
         """Decorator to register a command handler."""
-        def decorator(handler: Callable) -> Callable:
+        def decorator(handler: Callable[[CLIContext], int]) -> Callable[[CLIContext], int]:
             metadata = CommandMetadata(
                 name=name,
                 help_text=help_text,
@@ -146,7 +152,8 @@ class ArgumentValidator:
             return True
             
         try:
-            return option['validator'](value)
+            result = option['validator'](value)
+            return bool(result)
         except Exception:
             return False
     
@@ -183,15 +190,15 @@ def add_common_options(parser: argparse.ArgumentParser) -> None:
         help='Path to write log output (default: logs to stdout)'
     )
 
-def with_common_options(func: Callable) -> Callable:
+def with_common_options(func: F) -> F:
     """Decorator to add common options to a command function."""
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         parser = args[0] if args else kwargs.get('parser')
         if parser and isinstance(parser, argparse.ArgumentParser):
             add_common_options(parser)
         return func(*args, **kwargs)
-    return wrapper
+    return cast(F, wrapper)
 
 class CLIBuilder:
     """Builder for constructing CLI parsers with consistent formatting."""
@@ -205,7 +212,7 @@ class CLIBuilder:
             formatter_class=argparse.RawDescriptionHelpFormatter
         )
         self.subparsers = self.parser.add_subparsers(dest='command', title='commands')
-        self.command_groups = {}
+        self.command_groups: Dict[str, argparse._SubParsersAction[Any]] = {}
 
     def add_command(self, command: CommandMetadata) -> None:
         """Add a command to the CLI with proper parent/child relationships."""
@@ -250,9 +257,9 @@ class CLIBuilder:
         """Build and return the complete parser."""
         return self.parser
 
-def create_command_group(name: str, help_text: str) -> Callable:
+def create_command_group(name: str, help_text: str) -> Callable[[Type[Any]], Type[Any]]:
     """Decorator to create a command group."""
-    def decorator(cls: Type) -> Type:
+    def decorator(cls: Type[Any]) -> Type[Any]:
         setattr(cls, '_command_group', name)
         setattr(cls, '_command_help', help_text)
         return cls

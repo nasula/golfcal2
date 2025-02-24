@@ -33,7 +33,7 @@ class WeatherDatabase(LoggerMixin):
         
         self._init_db()
     
-    def _init_db(self):
+    def _init_db(self) -> None:
         """Initialize database with provided schema."""
         try:
             os.makedirs(self.db_dir, exist_ok=True)
@@ -52,7 +52,7 @@ class WeatherDatabase(LoggerMixin):
                 conn.commit()
                 self.debug("Database initialization complete")
         except Exception as e:
-            self.logger.error(f"Failed to initialize database: {e}")
+            self.logger.error(f"Failed to initialize database: {e}", exc_info=True)
             raise
     
     def get_weather_data(

@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Optional
 import requests
 from http import HTTPStatus
 
@@ -12,7 +12,7 @@ class APIResponseValidator:
     @staticmethod
     def validate(
         response: requests.Response,
-        required_fields: List[str] = None,
+        required_fields: Optional[List[str]] = None,
         expected_status: Union[int, List[int]] = HTTPStatus.OK
     ) -> Dict[str, Any]:
         """
@@ -42,27 +42,27 @@ class APIResponseValidator:
         # Parse JSON response
         try:
             data = response.json()
+            if not isinstance(data, dict):
+                raise APIResponseError(f"Expected dict response, got {type(data)}")
+            
+            # Validate required fields if specified
+            if required_fields:
+                missing_fields = [
+                    field for field in required_fields
+                    if field not in data
+                ]
+                if missing_fields:
+                    raise APIResponseError(f"Missing required fields: {', '.join(missing_fields)}")
+            
+            return data
         except ValueError as e:
             raise APIResponseError(f"Invalid JSON response: {str(e)}")
         
-        # Validate required fields if specified
-        if required_fields:
-            missing_fields = [
-                field for field in required_fields
-                if field not in data
-            ]
-            if missing_fields:
-                raise APIResponseError(
-                    f"Missing required fields: {', '.join(missing_fields)}"
-                )
-        
-        return data
-    
     @staticmethod
     def validate_list_response(
         response: requests.Response,
         item_key: str,
-        required_item_fields: List[str] = None
+        required_item_fields: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         Validate API response that should contain a list of items.
@@ -88,6 +88,10 @@ class APIResponseValidator:
         
         if required_item_fields:
             for idx, item in enumerate(items):
+                if not isinstance(item, dict):
+                    raise APIResponseError(
+                        f"Item at index {idx} is not a dictionary: {type(item)}"
+                    )
                 missing_fields = [
                     field for field in required_item_fields
                     if field not in item

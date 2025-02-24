@@ -13,7 +13,7 @@ from icalendar import Event
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.calendar.builders import ExternalEventBuilder
-from golfcal2.config.settings import AppConfig
+from golfcal2.config.types import AppConfig
 
 class ExternalEventService(EnhancedLoggerMixin):
     """Service for handling external golf events."""
@@ -81,35 +81,35 @@ class ExternalEventService(EnhancedLoggerMixin):
             self.logger.error(f"Error parsing external events file: {e}")
             return []
 
-    def process_events(self, person_name: str, dev_mode: bool = False) -> List[Event]:
-        """Process external events for a person."""
-        # Reset processed events
-        self._processed_events = []
-        
-        # Use start of current day as cutoff
-        now = datetime.now(self.default_timezone)
-        cutoff_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        self.logger.debug(f"Using cutoff time: {cutoff_time}")
-        
-        for event_data in self.load_events(dev_mode):
-            # Handle repeating events
-            if 'repeat' in event_data:
-                events = self._process_recurring_event(event_data, person_name, cutoff_time)
-                self._processed_events.extend(events)
-            else:
-                # Single event
-                event = self._create_event(event_data, person_name, cutoff_time)
-                if event:
-                    self._processed_events.append(event)
-        
-        self._last_process_time = now
-        return self._processed_events
+    def process_events(self, user_name: str, dev_mode: bool = False) -> List[Event]:
+        """Process external events for a user."""
+        try:
+            events = []
+            for event_data in self.load_events(dev_mode):
+                # Skip events that don't include this user
+                if 'users' in event_data and user_name not in event_data['users']:
+                    continue
+
+                # Process recurring events
+                if 'repeat' in event_data:
+                    recurring_events = self._process_recurring_event(event_data, user_name)
+                    events.extend(recurring_events)
+                else:
+                    # Process single event
+                    event = self._create_event(event_data, user_name)
+                    if event:
+                        events.append(event)
+            
+            return events
+            
+        except Exception as e:
+            self.logger.error(f"Failed to process external events: {str(e)}")
+            return []
 
     def _process_recurring_event(
         self,
         event_data: Dict[str, Any],
-        person_name: str,
-        cutoff_time: datetime
+        person_name: str
     ) -> List[Event]:
         """Process a recurring event and return all instances."""
         events = []
@@ -122,20 +122,6 @@ class ExternalEventService(EnhancedLoggerMixin):
         current_date = start_date
         
         while current_date <= end_date:
-            # Skip if event is in the past
-            if current_date + timedelta(hours=3) < cutoff_time:  # Add 3 hours buffer to account for events that might be ongoing
-                self.logger.debug(f"Skipping past recurring event: {current_date}")
-                # Move to next occurrence
-                if event_data['repeat']['frequency'] == 'weekly':
-                    current_date += timedelta(days=7)
-                elif event_data['repeat']['frequency'] == 'monthly':
-                    # Move to same day next month
-                    if current_date.month == 12:
-                        current_date = current_date.replace(year=current_date.year + 1, month=1)
-                    else:
-                        current_date = current_date.replace(month=current_date.month + 1)
-                continue
-            
             # Create event data for this instance
             instance_data = event_data.copy()
             # Keep timezone info by using isoformat
@@ -148,7 +134,7 @@ class ExternalEventService(EnhancedLoggerMixin):
             instance_data['end'] = end_time.isoformat()
             
             # Create and add the event
-            event = self._create_event(instance_data, person_name, cutoff_time)
+            event = self._create_event(instance_data, person_name)
             if event:
                 events.append(event)
             
@@ -167,56 +153,36 @@ class ExternalEventService(EnhancedLoggerMixin):
     def _create_event(
         self,
         event_data: Dict[str, Any],
-        person_name: str,
-        cutoff_time: datetime
+        person_name: str
     ) -> Optional[Event]:
         """Create an event from external event data."""
         try:
-            # Get event timezone
-            event_timezone = ZoneInfo(event_data.get('timezone', 'Europe/Helsinki'))
-            
             # Parse start and end times
-            if 'start_time' in event_data and 'end_time' in event_data:
-                # Handle dynamic dates
-                start = self._parse_dynamic_time(event_data['start_time'], event_timezone)
-                end = self._parse_dynamic_time(event_data['end_time'], event_timezone)
-            else:
-                # Handle fixed dates - use fromisoformat for better timezone handling
-                try:
-                    # First try parsing with fromisoformat in case we have timezone info
-                    start = datetime.fromisoformat(event_data['start'])
-                    end = datetime.fromisoformat(event_data['end'])
-                    
-                    # Only set timezone if it's not already set
-                    if start.tzinfo is None:
-                        start = start.replace(tzinfo=event_timezone)
-                    if end.tzinfo is None:
-                        end = end.replace(tzinfo=event_timezone)
-                except ValueError as e:
-                    self.logger.error(f"Failed to parse event dates: {e}")
-                    return None
-            
-            # Skip if event is in the past
-            if start + timedelta(hours=3) < cutoff_time:  # Add 3 hours buffer to account for events that might be ongoing
-                self.logger.debug(f"Skipping past external event: {start}")
+            start = self._parse_datetime(event_data['start'])
+            end = self._parse_datetime(event_data['end'])
+
+            # Skip past events
+            now = datetime.now(start.tzinfo)
+            if end < now:
+                self.logger.debug(f"Skipping past event: {event_data.get('name', 'Unknown')} (ended at {end})")
                 return None
-            
+
             # Create event using builder
             event = self.event_builder.build(event_data, person_name, start, end)
-            
-            # Skip if we've already seen this event
-            if event and event.get('uid') in self.seen_uids:
-                self.logger.debug(f"Skipping duplicate external event with UID: {event.get('uid')}")
-                return None
-            
             if event:
-                self.seen_uids.add(event.get('uid'))
-            
+                self.logger.debug(f"Created external event: {event.get('summary')}")
             return event
             
         except Exception as e:
-           self.logger.error(f"Failed to create external event: {e}", exc_info=True) 
-           return None
+            self.logger.error(f"Failed to create external event: {str(e)}")
+            return None
+
+    def _parse_datetime(self, datetime_str: str) -> datetime:
+        """Parse datetime string to datetime object."""
+        dt = datetime.fromisoformat(datetime_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=self.default_timezone)
+        return dt
 
     def _parse_dynamic_time(self, time_str: str, timezone: ZoneInfo) -> datetime:
         """Parse a dynamic time string like 'tomorrow 10:00' or '3 days 09:30'."""

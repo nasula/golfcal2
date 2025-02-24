@@ -9,7 +9,7 @@ from typing_extensions import Never
 from zoneinfo import ZoneInfo
 from pathlib import Path
 import requests
-from icalendar import Event, Calendar  # type: ignore
+from icalendar import Event, Calendar
 from types import TracebackType
 import traceback
 
@@ -17,7 +17,7 @@ from golfcal2.models.golf_club import GolfClubFactory
 from golfcal2.models.reservation import Reservation
 from golfcal2.models.user import User, Membership
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
-from golfcal2.config.settings import AppConfig
+from golfcal2.config.types import AppConfig
 from golfcal2.services.auth_service import AuthService
 from golfcal2.services.mixins import CalendarHandlerMixin
 from golfcal2.services.weather_service import WeatherService
@@ -35,9 +35,9 @@ from golfcal2.exceptions import (
     CalendarError,
     CalendarWriteError,
     CalendarEventError,
-    ErrorCode,
     handle_errors
 )
+from golfcal2.error_codes import ErrorCode
 from golfcal2.config.error_aggregator import aggregate_error
 
 T = TypeVar('T')
@@ -59,14 +59,14 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
     
     def __init__(
         self,
-        config: ConfigProtocol,
+        config: AppConfig,
         weather_service: Optional[WeatherService] = None,
         dev_mode: bool = False,
         external_event_service: Optional[ExternalEventService] = None
     ):
         """Initialize service."""
         super().__init__()
-        self.config = config
+        self.config: AppConfig = config
         self.dev_mode = dev_mode
         self.local_tz = ZoneInfo(config.timezone)
         self.seen_uids: Set[str] = set()
@@ -172,10 +172,15 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                     file_path = self._get_calendar_path(user.name)
                     self._write_calendar(calendar, file_path, user.name)
                 
+                # Count events by type
+                reservation_count = len(reservations)
+                external_count = sum(1 for event in calendar.walk('vevent') 
+                                   if event.get('uid') and 'EXT_' in str(event.get('uid')))
+                
                 self.logger.info(
                     f"Calendar created for user {user.name} with "
-                    f"{len(reservations)} reservations and "
-                    f"{len(self.external_event_service.get_events())} external events"
+                    f"{reservation_count} reservations and "
+                    f"{external_count} external events"
                 )
                 
                 return calendar
@@ -190,8 +195,10 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
                     "operation": "process_user_reservations"
                 }
             )
-            # Pass the actual traceback object
-            aggregate_error(str(error), "calendar", e.__traceback__)
+            # Convert traceback to string
+            tb_str = "".join(traceback.format_tb(e.__traceback__)) if e.__traceback__ else None
+            aggregate_error(str(error), "calendar", tb_str)
+            raise error
 
     def _process_reservation(self, reservation: Reservation, calendar: Calendar, user_name: str) -> None:
         """Process a single reservation."""
