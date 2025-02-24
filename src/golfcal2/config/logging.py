@@ -257,10 +257,10 @@ def setup_logging(config: AppConfig | None = None, dev_mode: bool = False, verbo
     # Clear any existing handlers
     root_logger.handlers.clear()
     
-    # Create console handler
+    # Create console handler with colored output
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
-    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    console_handler.setFormatter(ColoredFormatter())
     root_logger.addHandler(console_handler)
     
     # Try to set up journald logging, but don't fail if not available
