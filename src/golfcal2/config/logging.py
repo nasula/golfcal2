@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from golfcal2.config.logging_config import LoggingConfig
-from golfcal2.config.logging_config import load_logging_config
 from golfcal2.config.logging_filters import SensitiveDataFilter
 from golfcal2.config.types import AppConfig
 

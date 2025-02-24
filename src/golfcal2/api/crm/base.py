@@ -1,15 +1,12 @@
 import logging
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
 import requests
 
 from golfcal2.api.models.reservation import Reservation
-from golfcal2.models.mixins import APIError
-from golfcal2.models.mixins import APIResponseError
-from golfcal2.models.mixins import RequestHandlerMixin
+from golfcal2.models.mixins import APIError, APIResponseError, RequestHandlerMixin
 
 
 class BaseCRM(ABC, RequestHandlerMixin):

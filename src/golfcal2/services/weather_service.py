@@ -3,13 +3,9 @@ Unified weather service with improved caching and error handling.
 """
 
 import os
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
-from typing import Protocol
-from typing import cast
-from typing import runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 from zoneinfo import ZoneInfo
 
 from golfcal2.config.error_aggregator import aggregate_error

@@ -2,17 +2,14 @@
 
 import logging
 from collections.abc import Callable
-from contextlib import AbstractContextManager
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
-from typing import Any
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import requests
 
 from golfcal2.config.error_aggregator import aggregate_error
 from golfcal2.error_codes import ErrorCode
-
 
 logger = logging.getLogger(__name__)
 

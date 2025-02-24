@@ -2,20 +2,15 @@
 Reservation model for golf calendar application.
 """
 
-from dataclasses import dataclass
-from dataclasses import field
-from datetime import datetime
-from datetime import timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from golfcal2.models.golf_club import ExternalGolfClub
-from golfcal2.models.golf_club import GolfClub
-from golfcal2.models.user import Membership
-from golfcal2.models.user import User
+from golfcal2.models.golf_club import ExternalGolfClub, GolfClub
+from golfcal2.models.user import Membership, User
 from golfcal2.services.weather_formatter import WeatherFormatter
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherData, WeatherResponse
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.utils.timezone_utils import TimezoneManager
 

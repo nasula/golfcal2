@@ -4,47 +4,43 @@ Reservation service for golf calendar application.
 
 import os
 import traceback
-from datetime import datetime
-from datetime import timedelta
-from typing import Any
-from typing import NoReturn
-from typing import Protocol
-from typing import runtime_checkable
+from datetime import datetime, timedelta
+from typing import Any, NoReturn, Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
 import requests
 import yaml
-from icalendar import Calendar  # type: ignore
-from icalendar import Event  # type: ignore
-from icalendar import vDatetime  # type: ignore
+from icalendar import (
+    Calendar,  # type: ignore
+    Event,  # type: ignore
+    vDatetime,  # type: ignore
+)
 
 from golfcal2.config.error_aggregator import aggregate_error
 from golfcal2.config.settings import AppConfig
-from golfcal2.exceptions import APIError
-from golfcal2.exceptions import APIResponseError
-from golfcal2.exceptions import APITimeoutError
-from golfcal2.exceptions import ErrorCode
-from golfcal2.exceptions import handle_errors
+from golfcal2.exceptions import (
+    APIError,
+    APIResponseError,
+    APITimeoutError,
+    ErrorCode,
+    handle_errors,
+)
 from golfcal2.models.golf_club import AppConfigProtocol as GolfClubConfigProtocol
-from golfcal2.models.golf_club import GolfClub
-from golfcal2.models.golf_club import GolfClubFactory
+from golfcal2.models.golf_club import GolfClub, GolfClubFactory
 from golfcal2.models.mixins import ReservationHandlerMixin
 from golfcal2.models.reservation import Reservation
-from golfcal2.models.user import Membership
-from golfcal2.models.user import User
+from golfcal2.models.user import Membership, User
 from golfcal2.services.auth_service import AuthService
 from golfcal2.services.met_weather_strategy import MetWeatherStrategy
 from golfcal2.services.mixins import CalendarHandlerMixin
 from golfcal2.services.notification_service import NotificationService
 from golfcal2.services.open_meteo_strategy import OpenMeteoStrategy
-from golfcal2.services.reservation_factory import ReservationContext
-from golfcal2.services.reservation_factory import ReservationFactory
+from golfcal2.services.reservation_factory import ReservationContext, ReservationFactory
 from golfcal2.services.weather_formatter import WeatherFormatter
 from golfcal2.services.weather_service import WeatherService
 from golfcal2.services.wise_golf_discovery_service import WiseGolfDiscoveryService
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 from golfcal2.utils.timezone_utils import TimezoneManager
-
 
 # Lazy load weather service
 _weather_service: WeatherService | None = None
@@ -514,7 +510,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
                 user_reservations[user_name].append(reservation)
             
             # Check for overlaps within each user's reservations
-            for user_name, reservations in user_reservations.items():
+            for _user_name, reservations in user_reservations.items():
                 for i, res1 in enumerate(reservations):
                     for res2 in reservations[i+1:]:
                         if self._reservations_overlap(res1, res2):
@@ -713,7 +709,7 @@ class ReservationService(EnhancedLoggerMixin, ReservationHandlerMixin, CalendarH
     def list_all_courses(self) -> list[GolfClub]:
         """List all configured courses."""
         courses = []
-        for club_name, club_config in self.config.clubs.items():
+        for _club_name, club_config in self.config.clubs.items():
             club = self.club_factory.create_club(club_config, self.config)
             if club:
                 courses.append(club)

@@ -10,7 +10,6 @@ from .services.calendar_service import CalendarService
 from .services.weather_service import WeatherService
 from .utils.logging_utils import setup_logging
 
-
 # Global service cache
 _weather_service_cache: WeatherService | None = None
 _calendar_service_cache: CalendarService | None = None

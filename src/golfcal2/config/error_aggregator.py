@@ -5,8 +5,7 @@ import threading
 import time
 import traceback
 from collections import defaultdict
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from golfcal2.config.logging_config import ErrorAggregationConfig

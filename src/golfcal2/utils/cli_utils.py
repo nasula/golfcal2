@@ -6,17 +6,13 @@ import argparse
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
-from enum import auto
+from enum import Enum, auto
 from functools import wraps
-from typing import Any
-from typing import TypeVar
-from typing import cast
+from typing import Any, TypeVar, cast
 
 from typing_extensions import ParamSpec
 
 from golfcal2.config.types import AppConfig
-
 
 T = TypeVar('T')
 P = ParamSpec('P')

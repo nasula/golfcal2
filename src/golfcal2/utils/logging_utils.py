@@ -8,11 +8,9 @@ from collections.abc import Callable
 from datetime import datetime
 from functools import wraps
 from inspect import signature
-from typing import Any
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from typing_extensions import ParamSpec
-
 
 T = TypeVar('T')
 P = ParamSpec('P')

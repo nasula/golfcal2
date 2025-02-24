@@ -3,18 +3,14 @@ WiseGolf API client for golf calendar application.
 """
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING
-from typing import Any
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import urljoin
 
 import requests
 
 from golfcal2.api.base_api import BaseAPI
-from golfcal2.models.mixins import APIError
-from golfcal2.models.mixins import APIResponseError
+from golfcal2.models.mixins import APIError, APIResponseError
 from golfcal2.services.auth_service import AuthService
-
 
 if TYPE_CHECKING:
     from golfcal2.models.golf_club import GolfClub

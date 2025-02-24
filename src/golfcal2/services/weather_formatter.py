@@ -1,9 +1,7 @@
 from collections.abc import Sequence
-from datetime import UTC
-from datetime import datetime
+from datetime import UTC, datetime
 
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherData, WeatherResponse
 from golfcal2.utils.weather_utils import get_weather_symbol
 
 
@@ -71,7 +69,7 @@ class WeatherFormatter:
         
         # Format forecasts in event timezone
         formatted_lines = []
-        for i, forecast in enumerate(filtered_data):
+        for _i, forecast in enumerate(filtered_data):
             # Convert forecast time to event timezone for display
             local_time = forecast.time.astimezone(event_tz)
             

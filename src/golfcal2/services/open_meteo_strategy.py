@@ -2,19 +2,14 @@
 OpenMeteo weather service strategy implementation.
 """
 
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
 
-from golfcal2.exceptions import APIError
-from golfcal2.exceptions import ErrorCode
+from golfcal2.exceptions import APIError, ErrorCode
 from golfcal2.services.weather_service import WeatherStrategy
-from golfcal2.services.weather_types import WeatherCode
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherCode, WeatherData, WeatherResponse
 
 
 class OpenMeteoStrategy(WeatherStrategy):

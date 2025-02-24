@@ -1,26 +1,19 @@
 """Weather service types and base classes."""
 
 import traceback
-from abc import ABC
-from abc import abstractmethod
-from collections.abc import Iterable
-from collections.abc import Iterator
-from dataclasses import dataclass
-from dataclasses import field
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from abc import ABC, abstractmethod
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any
-from typing import TypeVar
+from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
 
 import requests
 
 from golfcal2.config.error_aggregator import aggregate_error
 from golfcal2.error_codes import ErrorCode
-from golfcal2.exceptions import GolfCalError
-from golfcal2.exceptions import handle_errors
+from golfcal2.exceptions import GolfCalError, handle_errors
 
 
 class SupportsIter(Iterable[Any]):

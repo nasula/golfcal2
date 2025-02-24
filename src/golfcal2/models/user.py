@@ -6,9 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
-from typing import Union
-from typing import cast
+from typing import Any, Union, cast
 
 from golfcal2.models.membership import Membership
 

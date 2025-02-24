@@ -2,17 +2,14 @@
 
 import json
 import threading
-from http.server import BaseHTTPRequestHandler
-from http.server import HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
-from urllib.parse import parse_qs
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from golfcal2.health import get_health_status
 from golfcal2.metrics import Metrics
 from golfcal2.metrics_prometheus import format_prometheus_metrics
 from golfcal2.utils.logging_utils import get_logger
-
 
 logger = get_logger(__name__)
 

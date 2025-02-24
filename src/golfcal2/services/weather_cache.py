@@ -2,13 +2,8 @@
 
 import os
 import sqlite3
-from datetime import datetime
-from datetime import timedelta
-from math import atan2
-from math import cos
-from math import radians
-from math import sin
-from math import sqrt
+from datetime import datetime, timedelta
+from math import atan2, cos, radians, sin, sqrt
 from typing import Any
 
 import requests

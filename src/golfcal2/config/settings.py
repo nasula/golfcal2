@@ -9,13 +9,8 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from golfcal2.config.env import EnvConfig
-from golfcal2.config.types import AppConfig
-from golfcal2.config.types import ClubConfig
-from golfcal2.config.types import GlobalConfig
-from golfcal2.config.types import UserConfig
-from golfcal2.config.utils import deep_merge
-from golfcal2.config.utils import resolve_path
-from golfcal2.config.utils import validate_api_key
+from golfcal2.config.types import AppConfig, ClubConfig, GlobalConfig, UserConfig
+from golfcal2.config.utils import deep_merge, resolve_path, validate_api_key
 
 
 class ConfigurationManager:

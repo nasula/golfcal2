@@ -5,21 +5,16 @@ API Documentation: https://open-meteo.com/en/docs
 """
 
 import os
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
 
-from golfcal2.exceptions import ErrorCode
-from golfcal2.exceptions import GolfCalError
-from golfcal2.exceptions import handle_errors
+from golfcal2.exceptions import ErrorCode, GolfCalError, handle_errors
 from golfcal2.services.base_service import WeatherService
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.services.weather_types import WeatherCode
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherCode, WeatherData, WeatherResponse
 
 
 @handle_errors(GolfCalError, service="weather", operation="open_meteo")
@@ -263,7 +258,7 @@ class OpenMeteoService(WeatherService):
                 return None
 
             # Determine forecast interval based on time range
-            interval = self.get_block_size(hours_ahead)
+            self.get_block_size(hours_ahead)
             
             # Fetch and parse forecast data
             response_data = self._fetch_forecasts(lat, lon, start_time, end_time)

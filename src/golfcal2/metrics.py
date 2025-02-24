@@ -4,8 +4,7 @@ import statistics
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 

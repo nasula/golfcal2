@@ -8,7 +8,6 @@ from contextvars import ContextVar
 from functools import wraps
 from typing import Any
 
-
 # Context variable for correlation ID
 correlation_id: ContextVar[str] = ContextVar('correlation_id', default='')
 

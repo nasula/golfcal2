@@ -1,8 +1,7 @@
 """Timezone utilities for the application."""
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
-from zoneinfo import available_timezones
+from zoneinfo import ZoneInfo, available_timezones
 
 
 class TimezoneManager:

@@ -3,12 +3,10 @@ Mock weather service strategy implementation for development mode.
 """
 
 import random
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from golfcal2.services.weather_service import WeatherStrategy
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherData, WeatherResponse
 
 
 class MockWeatherStrategy(WeatherStrategy):

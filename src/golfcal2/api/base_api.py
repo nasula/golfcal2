@@ -11,10 +11,12 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-from golfcal2.exceptions import APIError
-from golfcal2.exceptions import APIResponseError
-from golfcal2.exceptions import APITimeoutError
-from golfcal2.exceptions import APIValidationError
+from golfcal2.exceptions import (
+    APIError,
+    APIResponseError,
+    APITimeoutError,
+    APIValidationError,
+)
 from golfcal2.utils.logging_utils import LoggerMixin
 
 

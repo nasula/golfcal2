@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from golfcal2.config.settings import AppConfig
-from golfcal2.models.reservation import Player
-from golfcal2.models.reservation import Reservation
+from golfcal2.models.reservation import Player, Reservation
 from golfcal2.services.pushover_service import PushoverService
 from golfcal2.utils.logging_utils import LoggerMixin
 

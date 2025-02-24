@@ -1,7 +1,6 @@
 """Base class for weather services."""
 
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -9,16 +8,18 @@ import requests
 
 from golfcal2.error_codes import ErrorCode
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.services.weather_types import WeatherAuthError
-from golfcal2.services.weather_types import WeatherError
-from golfcal2.services.weather_types import WeatherLocationError
-from golfcal2.services.weather_types import WeatherResponse
-from golfcal2.services.weather_types import WeatherServiceError
-from golfcal2.services.weather_types import WeatherServiceInvalidResponse
-from golfcal2.services.weather_types import WeatherServiceRateLimited
-from golfcal2.services.weather_types import WeatherServiceTimeout
-from golfcal2.services.weather_types import WeatherServiceUnavailable
-from golfcal2.services.weather_types import WeatherValidationError
+from golfcal2.services.weather_types import (
+    WeatherAuthError,
+    WeatherError,
+    WeatherLocationError,
+    WeatherResponse,
+    WeatherServiceError,
+    WeatherServiceInvalidResponse,
+    WeatherServiceRateLimited,
+    WeatherServiceTimeout,
+    WeatherServiceUnavailable,
+    WeatherValidationError,
+)
 from golfcal2.utils.logging_utils import EnhancedLoggerMixin
 
 

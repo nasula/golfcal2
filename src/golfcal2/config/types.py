@@ -3,8 +3,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class WeatherApiConfig(TypedDict):

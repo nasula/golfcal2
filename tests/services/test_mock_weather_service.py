@@ -1,15 +1,12 @@
 """Tests for the mock weather service implementation."""
 
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherData, WeatherResponse
 from tests.services.mock_weather_service import MockWeatherService
 
 

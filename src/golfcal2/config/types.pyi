@@ -1,7 +1,6 @@
 """Type stubs for configuration types."""
 
-from typing import Any
-from typing import TypedDict
+from typing import Any, TypedDict
 
 class WeatherApiConfig(TypedDict):
     """Weather API configuration."""

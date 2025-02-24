@@ -1,7 +1,6 @@
 """Time-related utility functions."""
 
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 
 def round_to_hour(dt: datetime) -> datetime:

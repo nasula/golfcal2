@@ -4,27 +4,21 @@ import argparse
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from golfcal2.config.error_aggregator import ErrorAggregationConfig
-from golfcal2.config.error_aggregator import init_error_aggregator
-from golfcal2.config.logging import load_logging_config
-from golfcal2.config.logging import setup_logging
+from golfcal2.config.error_aggregator import (
+    ErrorAggregationConfig,
+    init_error_aggregator,
+)
+from golfcal2.config.logging import load_logging_config, setup_logging
 from golfcal2.config.settings import ConfigurationManager
-from golfcal2.metrics import Metrics
-from golfcal2.metrics import Timer
-from golfcal2.metrics import track_time
+from golfcal2.metrics import Metrics, Timer, track_time
 from golfcal2.models.user import User
 from golfcal2.server import HealthCheckServer
-from golfcal2.services import CalendarService
-from golfcal2.services import ExternalEventService
-from golfcal2.services import WeatherService
+from golfcal2.services import CalendarService, ExternalEventService, WeatherService
 from golfcal2.services.reservation_service import ReservationService
-from golfcal2.utils.cli_utils import CLIBuilder
-from golfcal2.utils.cli_utils import CLIContext
-from golfcal2.utils.cli_utils import add_common_options
+from golfcal2.utils.cli_utils import CLIBuilder, CLIContext
 from golfcal2.utils.logging_utils import get_logger
 
 
@@ -116,7 +110,7 @@ def get_next_event_time(calendar_service: CalendarService, service_state: Servic
     try:
         # Get all upcoming events
         now = datetime.now(service_state.timezone)
-        end = now + timedelta(days=7)  # Look ahead 7 days
+        now + timedelta(days=7)  # Look ahead 7 days
         
         # Process each user's reservations
         for user_name, user_config in calendar_service.config.users.items():
@@ -267,7 +261,7 @@ def main():
                             try:
                                 logger.info(f"Processing calendar for user {user_name}")
                                 args.user = user_name  # Set current user
-                                ctx = CLIContext(args=args, logger=logger, config=config, parser=parser)
+                                CLIContext(args=args, logger=logger, config=config, parser=parser)
                                 logger.info("Processing external events")
                                 external_events = external_event_service.process_events(user_name, dev_mode=args.dev)
                                 logger.info(f"Found {len(external_events)} external events")

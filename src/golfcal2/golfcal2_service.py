@@ -3,17 +3,17 @@
 import argparse
 import time
 from dataclasses import dataclass
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from golfcal2.cli import process_command
-from golfcal2.config.error_aggregator import ErrorAggregationConfig
-from golfcal2.config.error_aggregator import init_error_aggregator
+from golfcal2.config.error_aggregator import (
+    ErrorAggregationConfig,
+    init_error_aggregator,
+)
 from golfcal2.config.logging import setup_logging
 from golfcal2.config.settings import ConfigurationManager
-from golfcal2.services import CalendarService
-from golfcal2.services import WeatherService
+from golfcal2.services import CalendarService, WeatherService
 from golfcal2.utils.logging_utils import get_logger
 
 

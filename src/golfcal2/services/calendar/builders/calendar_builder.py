@@ -5,8 +5,7 @@ Calendar builder for golf calendar application.
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from icalendar import Calendar
-from icalendar import vText
+from icalendar import Calendar, vText
 
 from golfcal2.models.user import User
 from golfcal2.utils.logging_utils import LoggerMixin

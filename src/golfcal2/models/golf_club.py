@@ -4,27 +4,20 @@
 Golf club models for golf calendar application.
 """
 
-from abc import ABC
-from abc import abstractmethod
-from dataclasses import dataclass
-from dataclasses import field
-from datetime import datetime
-from datetime import timedelta
-from typing import Any
-from typing import Protocol
-from typing import TypeVar
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any, Protocol, TypeVar
 from zoneinfo import ZoneInfo
 
 from golfcal2.api.nex_golf import NexGolfAPI
 from golfcal2.api.teetime import TeeTimeAPI
-from golfcal2.api.wise_golf import WiseGolf0API
-from golfcal2.api.wise_golf import WiseGolfAPI
+from golfcal2.api.wise_golf import WiseGolf0API, WiseGolfAPI
 from golfcal2.models.mixins import PlayerFetchMixin
 from golfcal2.models.user import Membership
 from golfcal2.services.auth_service import AuthService
 from golfcal2.utils.logging_utils import LoggerMixin
 from golfcal2.utils.timezone_utils import TimezoneManager
-
 
 # Type definitions
 ApiClass = TypeVar('ApiClass', bound=WiseGolfAPI | WiseGolf0API)

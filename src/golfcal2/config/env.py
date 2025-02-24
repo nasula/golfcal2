@@ -1,13 +1,9 @@
 """Environment variable handling for configuration."""
 
 import os
-from typing import Any
-from typing import TypeVar
+from typing import Any, TypeVar
 
-from golfcal2.config.types import GlobalConfig
-from golfcal2.config.types import LoggingConfig
-from golfcal2.config.types import WeatherApiConfig
-
+from golfcal2.config.types import GlobalConfig, LoggingConfig, WeatherApiConfig
 
 T = TypeVar('T')
 

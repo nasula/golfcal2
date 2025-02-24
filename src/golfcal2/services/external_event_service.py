@@ -3,8 +3,7 @@ Service for handling external golf events.
 """
 
 import os
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo

@@ -3,16 +3,12 @@ Authentication service for golf calendar application.
 """
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING
-from typing import Any
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from urllib.parse import urljoin
 
-from golfcal2.config.types import AppConfig
-from golfcal2.config.types import ClubConfig
+from golfcal2.config.types import AppConfig, ClubConfig
 from golfcal2.models.user import Membership
 from golfcal2.utils.logging_utils import LoggerMixin
-
 
 # Use TYPE_CHECKING for imports only needed for type hints
 if TYPE_CHECKING:

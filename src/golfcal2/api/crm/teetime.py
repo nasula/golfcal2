@@ -3,9 +3,7 @@ from typing import Any
 import requests
 
 from golfcal2.api.crm.base import BaseCRM
-from golfcal2.api.models.reservation import CourseInfo
-from golfcal2.api.models.reservation import Player
-from golfcal2.api.models.reservation import Reservation
+from golfcal2.api.models.reservation import CourseInfo, Player, Reservation
 from golfcal2.models.mixins import APIAuthError
 
 

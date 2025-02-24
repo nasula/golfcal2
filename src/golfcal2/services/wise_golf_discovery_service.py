@@ -2,9 +2,7 @@
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError
-from concurrent.futures import as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
 from typing import Any
 

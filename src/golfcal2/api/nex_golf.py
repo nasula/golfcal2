@@ -3,19 +3,14 @@ NexGolf API client for golf calendar application.
 """
 
 import time
-from typing import TYPE_CHECKING
-from typing import Any
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 from urllib.parse import urljoin
 
 import requests
 
-from golfcal2.models.mixins import APIError
-from golfcal2.models.mixins import APIResponseError
-from golfcal2.models.mixins import RequestHandlerMixin
+from golfcal2.models.mixins import APIError, APIResponseError, RequestHandlerMixin
 from golfcal2.services.auth_service import AuthService
 from golfcal2.utils.logging_utils import LoggerMixin
-
 
 # Use TYPE_CHECKING to avoid circular imports
 if TYPE_CHECKING:

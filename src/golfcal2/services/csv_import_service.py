@@ -5,18 +5,15 @@ CSV import service for golf calendar application.
 import json
 import re
 from collections import defaultdict
-from datetime import datetime
-from datetime import time
+from datetime import datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from golfcal2.models.golf_club import ExternalGolfClub
 from golfcal2.models.reservation import Reservation
-from golfcal2.models.user import Membership
-from golfcal2.models.user import User
+from golfcal2.models.user import Membership, User
 from golfcal2.utils.logging_utils import get_logger
 from golfcal2.utils.timezone_utils import TimezoneManager
-
 
 logger = get_logger(__name__)
 
@@ -258,7 +255,7 @@ class CSVImportService:
                         continue
 
                 # Second pass: Create recurring events
-                for pattern_key, events in event_groups.items():
+                for _pattern_key, events in event_groups.items():
                     try:
                         # Sort events by date
                         events.sort(key=lambda x: x[1])

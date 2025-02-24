@@ -1,13 +1,10 @@
 """Mock weather service implementation for testing."""
 
 import math
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from golfcal2.services.base_service import WeatherService
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherData, WeatherResponse
 
 
 class MockWeatherService(WeatherService):

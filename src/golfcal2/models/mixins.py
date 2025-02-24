@@ -4,11 +4,8 @@ Mixins for golf club models.
 
 import logging
 from collections.abc import Iterator
-from datetime import datetime
-from datetime import timedelta
-from typing import Any
-from typing import TypeVar
-from typing import cast
+from datetime import datetime, timedelta
+from typing import Any, TypeVar, cast
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
@@ -18,7 +15,6 @@ import requests
 
 from golfcal2.models.user import Membership
 from golfcal2.utils.logging_utils import LoggerMixin
-
 
 # Type aliases for icalendar types
 ICalEvent = TypeVar('ICalEvent', bound=icalendar.Event)

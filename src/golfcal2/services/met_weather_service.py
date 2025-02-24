@@ -3,9 +3,7 @@ Weather service implementation for Norwegian Meteorological Institute (MET).
 """
 
 import os
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -14,13 +12,15 @@ import requests
 from golfcal2.exceptions import ErrorCode
 from golfcal2.services.base_service import WeatherService
 from golfcal2.services.weather_database import WeatherResponseCache
-from golfcal2.services.weather_types import WeatherCode
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherError
-from golfcal2.services.weather_types import WeatherResponse
-from golfcal2.services.weather_types import WeatherServiceRateLimited
-from golfcal2.services.weather_types import WeatherServiceTimeout
-from golfcal2.services.weather_types import WeatherServiceUnavailable
+from golfcal2.services.weather_types import (
+    WeatherCode,
+    WeatherData,
+    WeatherError,
+    WeatherResponse,
+    WeatherServiceRateLimited,
+    WeatherServiceTimeout,
+    WeatherServiceUnavailable,
+)
 
 
 class MetWeatherService(WeatherService):

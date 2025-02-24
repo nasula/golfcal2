@@ -1,17 +1,14 @@
 """Tests for the weather service implementation."""
 
 import math
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from golfcal2.services.weather_service import WeatherService
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import WeatherData, WeatherResponse
 
 
 class MockWeatherService(WeatherService):
@@ -517,7 +514,7 @@ def test_get_weather_cache_expiry_behavior(mock_weather_service, monkeypatch):
     }))
     
     # Initial call to populate cache
-    response1 = mock_weather_service.get_weather(
+    mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,
@@ -525,7 +522,7 @@ def test_get_weather_cache_expiry_behavior(mock_weather_service, monkeypatch):
     )
     
     # Verify cache hit with current time
-    response2 = mock_weather_service.get_weather(
+    mock_weather_service.get_weather(
         lat=60.2,
         lon=24.9,
         start_time=start_time,

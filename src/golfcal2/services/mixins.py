@@ -5,9 +5,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 # Since icalendar doesn't have type stubs, we need to import it this way
-from icalendar import Calendar  # type: ignore[import]
-from icalendar import Event  # type: ignore[import]
-from icalendar import vText  # type: ignore[import]
+from icalendar import (
+    Calendar,  # type: ignore[import]
+    Event,  # type: ignore[import]
+    vText,  # type: ignore[import]
+)
 
 from golfcal2.config.settings import AppConfig
 from golfcal2.models.reservation import Reservation
@@ -139,8 +141,7 @@ class CalendarHandlerMixin:
                 # Create a temporary Reservation object for weather handling
                 from golfcal2.models.golf_club import ExternalGolfClub
                 from golfcal2.models.reservation import Reservation
-                from golfcal2.models.user import Membership
-                from golfcal2.models.user import User
+                from golfcal2.models.user import Membership, User
                 
                 # Create minimal club object with coordinates
                 club = ExternalGolfClub(

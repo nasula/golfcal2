@@ -7,11 +7,9 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
-from typing import TypeGuard
+from typing import Any, TypeGuard
 
 import requests
-
 
 logger = logging.getLogger(__name__)
 

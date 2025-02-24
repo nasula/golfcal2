@@ -9,7 +9,6 @@ from typing import Any
 from golfcal2.config.settings import ConfigurationManager
 from golfcal2.utils.logging_utils import get_logger
 
-
 logger = get_logger(__name__)
 
 def check_directory_access(path: Path) -> tuple[bool, str]:
@@ -45,8 +44,7 @@ def check_config_access() -> tuple[bool, str]:
         Tuple of (success, message)
     """
     try:
-        config_manager = ConfigurationManager()
-        config = config_manager.config
+        ConfigurationManager()
         return True, "Configuration accessible"
     except Exception as e:
         return False, f"Configuration error: {e!s}"

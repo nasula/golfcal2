@@ -1,32 +1,21 @@
 """Event builder classes for calendar events."""
 
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
-from typing import Any
-from typing import TypeVar
+from datetime import UTC, datetime, timedelta
+from typing import Any, TypeVar
 from zoneinfo import ZoneInfo
 
-from icalendar import Event
-from icalendar import vDatetime
-from icalendar import vRecur
-from icalendar import vText
+from icalendar import Event, vDatetime, vRecur, vText
 
 from golfcal2.config.types import AppConfig
 from golfcal2.models.golf_club import ExternalGolfClub
 from golfcal2.models.reservation import Reservation
-from golfcal2.models.user import Membership
-from golfcal2.models.user import User
+from golfcal2.models.user import Membership, User
 from golfcal2.services.weather_formatter import WeatherFormatter
 from golfcal2.services.weather_service import WeatherService
-from golfcal2.services.weather_types import Location
-from golfcal2.services.weather_types import WeatherData
-from golfcal2.services.weather_types import WeatherResponse
+from golfcal2.services.weather_types import Location, WeatherData, WeatherResponse
 from golfcal2.utils.logging_utils import LoggerMixin
-
 
 T = TypeVar('T')
 

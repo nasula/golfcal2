@@ -2,38 +2,41 @@
 Command line interface for golf calendar application.
 """
 
-import sys
-import logging
 import argparse
-from typing import Optional, Dict, Any, Protocol, List, cast, TypeVar, Type, Union, Callable, Tuple
-from zoneinfo import ZoneInfo
-import os
-from pathlib import Path
 import json
+import os
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Protocol, cast
+from zoneinfo import ZoneInfo
+
 from icalendar import Calendar
 from tabulate import tabulate
 
+from golfcal2.config.error_aggregator import init_error_aggregator
+from golfcal2.config.logging import setup_logging
+from golfcal2.config.logging_config import ErrorAggregationConfig
 from golfcal2.config.settings import ConfigurationManager
 from golfcal2.config.types import AppConfig, UserConfig
-from golfcal2.utils.logging_utils import get_logger
-from golfcal2.config.logging import setup_logging
-from golfcal2.services.calendar_service import CalendarService
-from golfcal2.services.reservation_service import ReservationService
+from golfcal2.models.reservation import Reservation
 from golfcal2.models.user import User
-from golfcal2.config.error_aggregator import init_error_aggregator
-from golfcal2.config.logging_config import ErrorAggregationConfig
-from golfcal2.services.external_event_service import ExternalEventService
-from golfcal2.services.weather_service import WeatherService
-from golfcal2.services.weather_database import WeatherResponseCache
+from golfcal2.services.calendar_service import CalendarService
 from golfcal2.services.csv_import_service import CSVImportService
+from golfcal2.services.reservation_service import ReservationService
+from golfcal2.services.weather_database import WeatherResponseCache
+from golfcal2.services.weather_service import WeatherService
 from golfcal2.utils.cli_utils import (
-    CommandRegistry, CommandCategory, CLIOptionFactory, CLIBuilder,
-    create_command_group, ArgumentValidator, add_common_options, CLIContext
+    ArgumentValidator,
+    CLIBuilder,
+    CLIContext,
+    CLIOptionFactory,
+    CommandCategory,
+    CommandRegistry,
+    create_command_group,
 )
-from golfcal2.services.weather_formatter import WeatherFormatter
-from golfcal2.models.golf_club import ExternalGolfClub, GolfClub
-from golfcal2.models.reservation import Reservation, Player
+from golfcal2.utils.logging_utils import get_logger
+
 
 class GolfClubProtocol(Protocol):
     """Protocol for GolfClub attributes."""
@@ -48,7 +51,7 @@ class CalendarServiceProtocol(Protocol):
 
 class WeatherServiceProtocol(Protocol):
     """Protocol for WeatherService attributes."""
-    services: Dict[str, Any]
+    services: dict[str, Any]
 
 class ExternalEventServiceProtocol(Protocol):
     """Protocol for ExternalEventService attributes."""
@@ -139,7 +142,7 @@ class ListCommands:
             return 0
             
         except Exception as e:
-            ctx.logger.error(f"Failed to list courses: {str(e)}")
+            ctx.logger.error(f"Failed to list courses: {e!s}")
             return 1
     
     @staticmethod
@@ -199,7 +202,7 @@ class ListCommands:
             return 0
         
         except Exception as e:
-            ctx.logger.error(f"Failed to manage weather cache: {str(e)}")
+            ctx.logger.error(f"Failed to manage weather cache: {e!s}")
             return 1
 
 @create_command_group('get', 'Get commands')
@@ -283,7 +286,7 @@ class GetCommands:
             return 0
             
         except Exception as e:
-            ctx.logger.error(f"Failed to get weather data: {str(e)}")
+            ctx.logger.error(f"Failed to get weather data: {e!s}")
             return 1
 
 @create_command_group('process', 'Process management commands')
@@ -319,7 +322,7 @@ class ProcessCommands:
         """Process golf calendar."""
         try:
             # Get list of users to process
-            users: List[str] = [ctx.args.user] if ctx.args.user else list(ctx.config.users.keys())
+            users: list[str] = [ctx.args.user] if ctx.args.user else list(ctx.config.users.keys())
             if not users:
                 ctx.logger.error("No users configured")
                 return 1
@@ -333,7 +336,7 @@ class ProcessCommands:
                     ctx.logger.info(f"Processing calendar for user {username}")
                     
                     # Get the User object
-                    user_config: Optional[UserConfig] = ctx.config.users.get(username)
+                    user_config: UserConfig | None = ctx.config.users.get(username)
                     if not user_config:
                         ctx.logger.warning(f"User {username} not found in configuration")
                         continue
@@ -341,12 +344,12 @@ class ProcessCommands:
                     user: User = User.from_config(username, dict(user_config))
                     reservation_service: ReservationService = ReservationService(username, ctx.config)
                     calendar_service: CalendarService = CalendarService(ctx.config, dev_mode=ctx.args.dev)
-                    setattr(calendar_service, 'list_only', ctx.args.list_only)  # Set list_only flag
+                    calendar_service.list_only = ctx.args.list_only  # Set list_only flag
                     
                     # Get reservations
                     days: int = getattr(ctx.args, 'days', 1)  # Use days parameter if provided
                     exclude_other_wisegolf: bool = getattr(ctx.args, 'exclude_other_wisegolf', False)  # Get exclude_other_wisegolf flag
-                    reservations: List[Reservation] = reservation_service.list_reservations(days=days, exclude_other_wisegolf=exclude_other_wisegolf)
+                    reservations: list[Reservation] = reservation_service.list_reservations(days=days, exclude_other_wisegolf=exclude_other_wisegolf)
                     if not reservations:
                         ctx.logger.info(f"No reservations found for user {username}")
                     elif isinstance(reservations, list):
@@ -361,7 +364,7 @@ class ProcessCommands:
                         # If list-only mode, display events instead of writing calendar
                         if ctx.args.list_only:
                             # Get all events from the calendar
-                            all_events: List[Any] = calendar.walk('vevent')
+                            all_events: list[Any] = calendar.walk('vevent')
                             if not all_events:
                                 ctx.logger.info(f"No events found for user {username}")
                                 print("No events found")
@@ -371,7 +374,7 @@ class ProcessCommands:
 
                                 # Format output based on format
                                 if ctx.args.format == 'json':
-                                    events_json: List[Dict[str, Any]] = []
+                                    events_json: list[dict[str, Any]] = []
                                     for event in all_events:
                                         events_json.append({
                                             'summary': str(event.get('summary', '')),
@@ -381,22 +384,22 @@ class ProcessCommands:
                                         })
                                     print(json.dumps(events_json, indent=2))
                                 else:
-                                    table: List[List[str]] = []
+                                    table: list[list[str]] = []
                                     for event in all_events:
-                                        start_time: Optional[datetime] = event.get('dtstart').dt if event.get('dtstart') else None
+                                        start_time: datetime | None = event.get('dtstart').dt if event.get('dtstart') else None
                                         summary: str = str(event.get('summary', ''))
                                         location: str = str(event.get('location', ''))
                                         description: str = str(event.get('description', ''))
                                         
                                         # Extract player info from description
-                                        player_info: List[str] = []
+                                        player_info: list[str] = []
                                         for line in description.split('\n'):
                                             if line and not line.startswith('Teetime') and not line.startswith('Weather:'):
                                                 # Clean up the player info
                                                 player: str = line.strip()
                                                 if player:
                                                     # Format: "Name, Club, HCP: X.X"
-                                                    parts: List[str] = player.split(',', 2)
+                                                    parts: list[str] = player.split(',', 2)
                                                     if len(parts) >= 3:
                                                         name: str = parts[0].strip()
                                                         club: str = parts[1].strip()
@@ -410,7 +413,7 @@ class ProcessCommands:
                                             summary = summary.replace('Unknown', 'Vantaankoski')
                                         
                                         # Add player count to summary if not already there
-                                        if player_info and not '(' in summary:
+                                        if player_info and '(' not in summary:
                                             summary = summary + f" ({len(player_info)} Players)"
                                         
                                         # Extract weather info from description if present
@@ -489,7 +492,7 @@ class CheckCommands:
         """Check configuration and system health."""
         try:
             # Get list of users to check
-            users: List[str] = [ctx.args.user] if ctx.args.user else list(ctx.config.users.keys())
+            users: list[str] = [ctx.args.user] if ctx.args.user else list(ctx.config.users.keys())
             if not users:
                 ctx.logger.error("No users configured")
                 return 1
@@ -500,7 +503,7 @@ class CheckCommands:
             ctx.logger.info("Checking basic configuration")
             
             # Check directory permissions
-            dirs_to_check: List[Tuple[str, str]] = [
+            dirs_to_check: list[tuple[str, str]] = [
                 ('ICS', ctx.config.ics_dir),
                 ('Logs', ctx.config.get('logs_dir', 'logs')),
                 ('Config', ctx.config.config_dir)
@@ -519,7 +522,7 @@ class CheckCommands:
                             path.mkdir(parents=True, exist_ok=True)
                             ctx.logger.info(f"Created {dir_name} directory: {path}")
                         except Exception as e:
-                            ctx.logger.error(f"Failed to create {dir_name} directory {path}: {str(e)}")
+                            ctx.logger.error(f"Failed to create {dir_name} directory {path}: {e!s}")
                             success = False
                     
                     # Check if directory is writable
@@ -527,7 +530,7 @@ class CheckCommands:
                         ctx.logger.error(f"{dir_name} directory {path} is not writable")
                         success = False
                 except Exception as e:
-                    ctx.logger.error(f"Error checking {dir_name} directory: {str(e)}")
+                    ctx.logger.error(f"Error checking {dir_name} directory: {e!s}")
                     success = False
             
             # Check weather cache
@@ -535,14 +538,14 @@ class CheckCommands:
                 cache: WeatherResponseCache = WeatherResponseCache(os.path.join(ctx.config.get('data_dir', 'data'), 'weather_cache.db'))
                 cache.clear()  # Just clear the cache, don't check return value
             except Exception as e:
-                ctx.logger.error(f"Failed to check weather cache: {str(e)}")
+                ctx.logger.error(f"Failed to check weather cache: {e!s}")
                 success = False
             
             # Check user configurations
             for username in users:
                 try:
                     ctx.logger.info(f"Checking configuration for user {username}")
-                    user_config: Optional[UserConfig] = ctx.config.users.get(username)
+                    user_config: UserConfig | None = ctx.config.users.get(username)
                     
                     if not user_config:
                         ctx.logger.error(f"No configuration found for user {username}")
@@ -550,7 +553,7 @@ class CheckCommands:
                         continue
                     
                     # Check required user fields
-                    required_fields: List[str] = ['memberships']
+                    required_fields: list[str] = ['memberships']
                     for field in required_fields:
                         if field not in user_config:
                             ctx.logger.error(f"Missing required field '{field}' in user config for {username}")
@@ -596,17 +599,17 @@ class CheckCommands:
                                 else:
                                     ctx.logger.info(f"Weather service {service_name} is available")
                             except Exception as e:
-                                ctx.logger.error(f"Weather service {service_name} check failed: {str(e)}")
+                                ctx.logger.error(f"Weather service {service_name} check failed: {e!s}")
                                 success = False
                         
                         # Check club APIs
                         for membership in user_config.get('memberships', []):
-                            club_name: Optional[str] = membership.get('club')
+                            club_name: str | None = membership.get('club')
                             if not club_name:
                                 continue
                             
                             try:
-                                club: Optional[GolfClubProtocol] = cast(GolfClubProtocol, reservation_service.get_club(club_name))
+                                club: GolfClubProtocol | None = cast(GolfClubProtocol, reservation_service.get_club(club_name))
                                 if club:
                                     if hasattr(club, 'is_healthy') and not club.is_healthy:
                                         ctx.logger.error(f"Club API for {club_name} is not available")
@@ -617,7 +620,7 @@ class CheckCommands:
                                     ctx.logger.error(f"Club {club_name} not found in configuration")
                                     success = False
                             except Exception as e:
-                                ctx.logger.error(f"Club API check failed for {club_name}: {str(e)}")
+                                ctx.logger.error(f"Club API check failed for {club_name}: {e!s}")
                                 success = False
                         
                         # Check external calendar services if configured
@@ -630,7 +633,7 @@ class CheckCommands:
                                 else:
                                     ctx.logger.info("External calendar services are available")
                             except Exception as e:
-                                ctx.logger.error(f"External calendar services check failed: {str(e)}")
+                                ctx.logger.error(f"External calendar services check failed: {e!s}")
                                 success = False
                     
                 except Exception as e:
@@ -697,7 +700,7 @@ class ImportCommands:
         """Import events from a CSV file."""
         try:
             # Get or create user
-            username: Optional[str] = ctx.args.user or ctx.args.temp_user or ctx.config.get('default_user')
+            username: str | None = ctx.args.user or ctx.args.temp_user or ctx.config.get('default_user')
             if not username:
                 ctx.logger.error("No username specified and no default user configured")
                 return 1
@@ -713,14 +716,14 @@ class ImportCommands:
                 )
             else:
                 # Get user from config
-                user_config: Optional[UserConfig] = ctx.config.get_user_config(username)
+                user_config: UserConfig | None = ctx.config.get_user_config(username)
                 if not user_config:
                     ctx.logger.error(f"User {username} not found in configuration")
                     return 1
                 user = User.from_config(username, dict(user_config))
 
             # Parse recurring_until date if provided
-            recurring_until: Optional[datetime] = None
+            recurring_until: datetime | None = None
             if ctx.args.recurring_until:
                 try:
                     recurring_until = datetime.strptime(ctx.args.recurring_until, "%Y-%m-%d")
@@ -731,7 +734,7 @@ class ImportCommands:
                     return 1
 
             # Parse recurrence_end date if provided
-            recurrence_end: Optional[datetime] = None
+            recurrence_end: datetime | None = None
             if ctx.args.recurrence_end:
                 try:
                     recurrence_end = datetime.strptime(ctx.args.recurrence_end, "%Y-%m-%d")
@@ -746,7 +749,7 @@ class ImportCommands:
             calendar_service: CalendarService = CalendarService(ctx.config)
 
             # Import reservations from CSV
-            reservations: List[Reservation] = csv_service.import_from_csv(
+            reservations: list[Reservation] = csv_service.import_from_csv(
                 file_path=ctx.args.file,
                 user=user,
                 recurring_until=recurring_until,
@@ -760,7 +763,7 @@ class ImportCommands:
                 return 0
 
             # Create calendar with imported events
-            calendar: Calendar = calendar_service.process_user_reservations(user, reservations)
+            calendar_service.process_user_reservations(user, reservations)
 
             # Print summary
             print(f"\nImported {len(reservations)} events")
@@ -773,7 +776,7 @@ class ImportCommands:
             return 0
 
         except Exception as e:
-            ctx.logger.error(f"Failed to import CSV: {str(e)}")
+            ctx.logger.error(f"Failed to import CSV: {e!s}")
             return 1
 
 def create_parser() -> argparse.ArgumentParser:
@@ -847,7 +850,7 @@ def main() -> int:
         # Execute command handler with context
         return command.handler(ctx)
             
-    except Exception as e:
+    except Exception:
         logger = get_logger(__name__)
         logger.exception("Unhandled exception")
         return 1
