@@ -1,17 +1,4 @@
 events:
-  - name: "Cullinan Links (Olympos)"
-    location: "Cullinan Links Golf Club"
-    coordinates:
-      lat: 36.860432
-      lon: 30.969687
-    users:
-      - "Jarkko"
-      - "Seven"
-    start: "2024-12-01T10:00:00"
-    end: "2024-12-01T14:15:00"
-    timezone: "Europe/Istanbul"
-    address: "Üçkumtepesi Mevkii, Belek, Antalya, Türkiye"
-
   # Example of a weekly recurring event
   - name: "Winter Practice 50514#"
     location: "Golfluola"
@@ -267,13 +254,46 @@ events:
     timezone: "Africa/Casablanca"
     description: "Norwegian flight D8 5551 Marrakech-Helsinki. Check-in at Marrakech Menara Airport Terminal 1."
 
-    name: "KoKtails in the bar"
+  - name: "KoKtails in the bar"
     location: "Jaal Riad Resort Marrakech"
     users:
       - "Jarkko"
       - "KoK"
       - "Seven"
-    start: "2025-11-26T19:00:00"
-    end: "2025-11-26T22:40:00"
+    start: "2025-11-26T15:30:00"
+    end: "2025-11-26T16:45:00"
     timezone: "Africa/Casablanca"
     description: "Test the bartender's skills."
+
+  - name: "Dinner "  
+    location: "Jaal Riad Resort Marrakech"
+    users:
+      - "Jarkko"
+      - "KoK"
+      - "Seven"
+    start: "2025-11-26T17:00:00"
+    end: "2025-11-26T18:00:00"
+    timezone: "Africa/Casablanca"
+    description: "Consuming biomass"
+
+  - name: "KoKtails in the bar - again"  
+    location: "Jaal Riad Resort Marrakech"
+    users:
+      - "Jarkko"
+      - "KoK"
+      - "Seven"
+    start: "2025-11-26T18:15:00"
+    end: "2025-11-26T22:30:00"
+    timezone: "Africa/Casablanca"
+    description: "Test the bartender's patience"
+
+  - name: "Convert biomass to excrement"  
+    location: "Jaal Riad Resort Marrakech"
+    users:
+      - "Jarkko"
+      - "KoK"
+      - "Seven"
+    start: "2025-11-26T22:30:00"
+    end: "2025-11-27T08:00:00"
+    timezone: "Africa/Casablanca"
+    description: "Is the room at 27°C?"

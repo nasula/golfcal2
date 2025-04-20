@@ -352,10 +352,8 @@ class ProcessCommands:
                     reservations: list[Reservation] = reservation_service.list_reservations(days=days, exclude_other_wisegolf=exclude_other_wisegolf)
                     if not reservations:
                         ctx.logger.info(f"No reservations found for user {username}")
-                    elif isinstance(reservations, list):
-                        ctx.logger.info(f"Found {len(reservations)} reservations for user {username}")
                     else:
-                        ctx.logger.info(f"Found 1 reservation for user {username}")
+                        ctx.logger.info(f"Found {len(reservations)} reservations for user {username}")
                     
                     if not ctx.args.dry_run:
                         # Process reservations and external events
@@ -561,11 +559,18 @@ class CheckCommands:
                     
                     # Check club memberships
                     for membership in user_config.get('memberships', []):
-                        if 'club' not in membership:
+                        # Use Any type to avoid type errors with TypedDict
+                        membership_data: Any = membership
+                        if 'club' not in membership_data:
                             ctx.logger.error(f"Missing 'club' in membership config for user {username}")
                             success = False
-                        elif 'auth_details' not in membership:
-                            ctx.logger.error(f"Missing 'auth_details' in membership config for club {membership['club']} for user {username}")
+                            continue  # Skip further checks for this membership
+                        
+                        # We know 'club' exists in membership at this point
+                        club_id: str = membership_data['club']
+                        
+                        if 'auth_details' not in membership_data:
+                            ctx.logger.error(f"Missing 'auth_details' in membership config for club {club_id} for user {username}")
                             success = False
                     
                     # Initialize services for basic checks
@@ -603,24 +608,27 @@ class CheckCommands:
                                 success = False
                         
                         # Check club APIs
-                        for membership in user_config.get('memberships', []):
-                            club_name: str | None = membership.get('club')
-                            if not club_name:
+                        for membership_api in user_config.get('memberships', []):
+                            # Use Any type to avoid type errors with TypedDict
+                            membership_api_data: Any = membership_api
+                            if 'club' not in membership_api_data:
                                 continue
+                                
+                            club_id_api: str = membership_api_data['club']
                             
                             try:
-                                club: GolfClubProtocol | None = cast(GolfClubProtocol, reservation_service.get_club(club_name))
+                                club: GolfClubProtocol | None = cast(GolfClubProtocol, reservation_service.get_club(club_id_api))
                                 if club:
                                     if hasattr(club, 'is_healthy') and not club.is_healthy:
-                                        ctx.logger.error(f"Club API for {club_name} is not available")
+                                        ctx.logger.error(f"Club API for {club_id_api} is not available")
                                         success = False
                                     else:
-                                        ctx.logger.info(f"Club API for {club_name} is available")
+                                        ctx.logger.info(f"Club API for {club_id_api} is available")
                                 else:
-                                    ctx.logger.error(f"Club {club_name} not found in configuration")
+                                    ctx.logger.error(f"Club {club_id_api} not found in configuration")
                                     success = False
                             except Exception as e:
-                                ctx.logger.error(f"Club API check failed for {club_name}: {e!s}")
+                                ctx.logger.error(f"Club API check failed for {club_id_api}: {e!s}")
                                 success = False
                         
                         # Check external calendar services if configured

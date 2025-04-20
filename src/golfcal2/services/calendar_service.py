@@ -61,6 +61,7 @@ class CalendarService(EnhancedLoggerMixin, CalendarHandlerMixin):
         self.dev_mode = dev_mode
         self.local_tz = ZoneInfo(config.timezone)
         self.seen_uids: set[str] = set()
+        self.list_only: bool = False  # Add list_only attribute
         
         # Initialize services
         with handle_errors(
